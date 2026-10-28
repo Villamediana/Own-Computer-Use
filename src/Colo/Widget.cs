@@ -52,6 +52,10 @@ sealed class Widget : LayeredWindow
     readonly System.Windows.Forms.Timer _frame = new() { Interval = FrameMs };
     readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
     double _lastFrame;
+    // Rebotes: cuándo entró la frase, y el golpe de «gota» al cambiar de estado (fuerza y signo).
+    double _captionAt = -1e9, _kickAt = -1e9, _kickPower;
+    Mode _lastMode = Mode.Starting;
+    bool _lastHearing;
     Mode _mode = Mode.Starting;
     bool _hearing;
     double _t, _level, _target, _energy;
@@ -385,7 +389,11 @@ sealed class Widget : LayeredWindow
 
     void Wake(string why)
     {
-        if (!_awake) Log.Write("despierta: " + why);
+        if (!_awake)
+        {
+            Log.Write("despierta: " + why);
+            Kick(-0.9);     // aparece estirándose hacia arriba, como una gota que cae y rebota
+        }
         _awake = true;
         KeepAwake();
     }
@@ -548,6 +556,11 @@ sealed class Widget : LayeredWindow
             case AgentEventKind.Ignored:
                 Idle();
                 break;
+            case AgentEventKind.Listening:
+                // Espera a que termine la idea: la onda vuelve a escuchar (y no se duerme mientras).
+                KeepAwake();
+                _mode = Mode.Listening;
+                break;
             case AgentEventKind.Stopped:
                 Say("Detenido", Theme.Muted, 1500);
                 Idle();
@@ -600,6 +613,7 @@ sealed class Widget : LayeredWindow
 
     void Say(string text, Color color, int ms)
     {
+        if (text != _caption && text.Length > 0) _captionAt = _clock.Elapsed.TotalMilliseconds;
         _caption = text;
         _captionColor = color;
         _captionUntil = DateTime.Now.AddMilliseconds(ms);
@@ -620,19 +634,34 @@ sealed class Widget : LayeredWindow
             _settingsWindow = f;
             f.RecordTest += StartProbe;
             f.SayTest += TrySpeaking;
+            var testing = false;
+            bool CanTest() => _s.SpeechEngine == SpeechEngine.Local
+                || (_s.SpeechEngine == SpeechEngine.ElevenLabs && _s.ElevenLabsKey.Length > 0) || Configured();
             f.Ready += () =>
             {
                 if (_listening) f.VoiceStatus($"Escuchando con «{_mic.DeviceName}»");
-                else if (_s.SpeechEngine == SpeechEngine.Local
-                         || (_s.SpeechEngine == SpeechEngine.ElevenLabs && _s.ElevenLabsKey.Length > 0) || Configured())
+                else if (CanTest())
                 {
                     // Para la prueba se enciende aunque falte la key del modelo.
+                    testing = true;
                     f.VoiceStatus("Encendiendo el micrófono…");
                     _ = StartListeningAsync(forTest: true);
                 }
-                else f.VoiceStatus("Para probar esta voz, guarda primero su llave");
+                else f.VoiceStatus("Para probar esta voz, pon primero su llave");
             };
-            saved = f.ShowDialog() == DialogResult.OK;
+            // Cada cambio se guarda al momento (sin botón); si ahora ya se puede probar la voz, se enciende.
+            f.Saved += () =>
+            {
+                Store.Save(_s);
+                if (!_listening && !testing && CanTest())
+                {
+                    testing = true;
+                    f.VoiceStatus("Encendiendo el micrófono…");
+                    _ = StartListeningAsync(forTest: true);
+                }
+            };
+            f.ShowDialog();
+            saved = f.Changed;
         }
         finally
         {
@@ -640,7 +669,7 @@ sealed class Widget : LayeredWindow
             _settingsWindow = null;
         }
         if (!saved && !Configured()) StopListening();
-        Log.Write(saved ? $"ajustes guardados · {_s.Provider} · modelo {_s.Model} · voz {_s.SpeechEngine} · mic «{(_s.MicId.Length > 0 ? _s.MicId : "predeterminado")}» · ver {_s.Vision}" : "ajustes cerrados sin guardar");
+        Log.Write(saved ? $"ajustes guardados · {_s.Provider} · modelo {_s.Model} · voz {_s.SpeechEngine} · mic «{(_s.MicId.Length > 0 ? _s.MicId : "predeterminado")}» · ver {_s.Vision}" : "ajustes cerrados sin cambios");
         if (!saved) return;
 
         Store.Save(_s);
@@ -761,7 +790,19 @@ sealed class Widget : LayeredWindow
         _level += (goal - _level) * Ease(goal > _level ? 0.35 : 0.12);
         _energy += ((_mode == Mode.Busy ? 1 : 0) - _energy) * Ease(0.06);
         // En pausa y sin nada que mostrar, la onda queda quieta: se redibuja poco.
-        var still = _mode is Mode.Paused or Mode.Problem && _level < 0.01 && _caption.Length == 0;
+        // Cada cambio de estado sacude la gota: al ponerse a trabajar se aplasta fuerte, al oírte un poco.
+        if (_mode != _lastMode)
+        {
+            Kick(_mode == Mode.Busy ? 1 : _mode == Mode.Problem ? -0.8 : 0.55);
+            _lastMode = _mode;
+        }
+        if (_hearing != _lastHearing)
+        {
+            if (_hearing) Kick(0.45);
+            _lastHearing = _hearing;
+        }
+        var kicking = !Spring.Settled(_clock.Elapsed.TotalMilliseconds - _kickAt, 420, 0.32);
+        var still = _mode is Mode.Paused or Mode.Problem && _level < 0.01 && _caption.Length == 0 && !kicking;
         _frame.Interval = still ? 120 : FrameMs;
         CheckSilence();
         MaybeSleep();
@@ -793,6 +834,12 @@ sealed class Widget : LayeredWindow
         Say($"No me llega sonido de «{_mic.DeviceName}». Revisa el micrófono en Ajustes › Voz.", Theme.Danger, 7000);
     }
 
+    void Kick(double power)
+    {
+        _kickAt = _clock.Elapsed.TotalMilliseconds;
+        _kickPower = power;
+    }
+
     void Render()
     {
         _painter.Scale = S;
@@ -805,6 +852,13 @@ sealed class Widget : LayeredWindow
         _painter.Caption = _caption;
         _painter.CaptionColor = _captionColor;
         _painter.CaptionAlpha = (float)Math.Clamp(left / 350.0, 0, 1);
+        var now = _clock.Elapsed.TotalMilliseconds;
+        var sinceCaption = now - _captionAt;
+        _painter.CaptionAlpha *= (float)Math.Clamp(sinceCaption / 140, 0, 1);
+        // Sube desde abajo pasándose un poco y se asienta; al irse se eleva un pelo mientras se apaga.
+        _painter.CaptionRise = (float)((1 - Spring.Step(sinceCaption, 460, 0.5)) * 10 - (1 - Math.Clamp(left / 350.0, 0, 1)) * 4);
+        _painter.CaptionScale = (float)Spring.Lerp(0.86, 1, sinceCaption, 460, 0.5);
+        _painter.Squash = (float)(_kickPower * 0.75 * Spring.Kick(now - _kickAt, 420, 0.32) + _level * 0.18);
         using var bmp = _painter.Paint();
         var rise = (int)((1 - _presence) * 10 * S);
         Present(bmp, new Point(_pos.X, _pos.Y + rise), (byte)Math.Round(255 * Math.Clamp(_presence, 0, 1)));

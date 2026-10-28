@@ -17,7 +17,9 @@ namespace Colo;
 
 /// <summary>
 /// Ajustes: una página web (settings.html) dentro de WebView2, el motor de Edge que ya trae Windows.
-/// La página habla con esta ventana por mensajes JSON: ready / listModels / mcpTools / openFolder / save / cancel.
+/// La página habla con esta ventana por mensajes JSON: ready / listModels / mcpTools / openFolder / save / close.
+/// Sin botón de guardar: cada cambio llega como «save» y se guarda al momento; lo pesado (micrófono, MCP,
+/// atajos) se aplica al cerrar.
 /// </summary>
 sealed class SettingsWindow : Form
 {
@@ -28,6 +30,12 @@ sealed class SettingsWindow : Form
     readonly WebView2 _web = new() { Dock = DockStyle.Fill, DefaultBackgroundColor = Color.White };
     readonly CancellationTokenSource _closing = new();
     string _voiceStatus = "";
+
+    /// <summary>Hubo al menos un cambio guardado mientras estuvo abierta.</summary>
+    public bool Changed { get; private set; }
+    /// <summary>Llegó un cambio y ya está copiado a los ajustes.</summary>
+    public event Action? Saved;
+    bool _flushed;
 
     /// <summary>La página cargó y ya recibe mensajes.</summary>
     public event Action? Ready;
@@ -161,10 +169,7 @@ sealed class SettingsWindow : Form
                 break;
 
             case "save":
-                var edited = msg["settings"]?.Deserialize<Settings>(Json);
-                if (edited is null) return;
-                CopyEditable(edited, _s);
-                DialogResult = DialogResult.OK;
+                Apply(msg["settings"]);
                 break;
 
             case "forgetFact":
@@ -185,8 +190,8 @@ sealed class SettingsWindow : Form
                 RecordTest?.Invoke();
                 break;
 
-            case "cancel":
-                DialogResult = DialogResult.Cancel;
+            case "close":
+                Close();
                 break;
         }
     }
@@ -278,6 +283,36 @@ sealed class SettingsWindow : Form
         to.Vision = from.Vision;
         to.DisabledTools = from.DisabledTools ?? [];
         to.McpServers = from.McpServers ?? [];
+    }
+
+    void Apply(JsonNode? settings)
+    {
+        Settings? edited;
+        try { edited = settings?.Deserialize<Settings>(Json); } catch { return; }
+        if (edited is null) return;
+        CopyEditable(edited, _s);
+        Changed = true;
+        Saved?.Invoke();
+    }
+
+    /// <summary>
+    /// Antes de cerrar, recoge lo que la página aún no mandó (se escribe con una pausa de ~0,4 s): si se cierra
+    /// con la X justo después de teclear, también queda guardado.
+    /// </summary>
+    protected override async void OnFormClosing(FormClosingEventArgs e)
+    {
+        base.OnFormClosing(e);
+        if (_flushed || e.Cancel || _web.CoreWebView2 is null) return;
+        e.Cancel = true;
+        _flushed = true;
+        try
+        {
+            var json = await _web.ExecuteScriptAsync("window.flushSave ? flushSave() : null");
+            var node = JsonNode.Parse(json);
+            if (node is JsonObject) Apply(node);
+        }
+        catch (Exception ex) { Log.Write("ajustes: no pude recoger lo último al cerrar · " + ex.Message); }
+        BeginInvoke(Close);
     }
 
     protected override void OnFormClosed(FormClosedEventArgs e)

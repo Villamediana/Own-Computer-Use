@@ -58,6 +58,18 @@ jobs:
           $p.WaitForExit()
           exit $p.ExitCode
 
+      - name: Capturas de la onda y el cursor
+        shell: pwsh
+        run: |
+          $p = Start-Process out/preview/Preview.exe -ArgumentList "shots", "$PWD\out\shots" -NoNewWindow -PassThru
+          $p.WaitForExit()
+          exit $p.ExitCode
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shots
+          path: out/shots
+
       - name: Colo.exe
         run: dotnet publish src/Colo -c Release -o out/colo
 

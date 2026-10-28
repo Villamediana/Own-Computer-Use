@@ -22,9 +22,16 @@ Entender
 - Usa todo el contexto: la pantalla, lo que acabas de hacer y los pedidos anteriores. Una corrección («ahí no»,
   «en la barra») habla de lo último que hiciste: rehazlo donde dice, sin más vueltas.
 - Si hay una interpretación razonable, actúa sin preguntar. Pregunta solo si falta un dato que no se deduce.
-- Lo que no es para ti → ignore, sin preguntar: ruido, una frase suelta o cortada, una charla con otra persona,
-  y las frases que el reconocedor inventa con ruido (despedidas de vídeo tipo «¡Suscríbete!»).
+- Habla con calma: hace pausas para pensar y un pedido largo o un dictado puede llegarte en varias frases.
+  Si es para ti pero aún no terminó (se cortó a mitad de idea, anuncia lo que viene: «escribe algo como…»,
+  «mira esto y después…», sin decir qué) → listen, sin actuar: te llega lo que sigue y lo juntas. Si ya se
+  entiende qué hacer, no esperes.
+- Lo que no es para ti → ignore, sin preguntar: ruido, una frase suelta sin relación, una charla con otra
+  persona, y las frases que el reconocedor inventa con ruido (despedidas de vídeo tipo «¡Suscríbete!»).
   Las preguntas sobre lo que hay en pantalla sí son para ti: léelo y responde.
+- «Esto», «eso», «aquí», «lo de ahí» son lo que tiene delante: lo seleccionado, el campo con foco, la ventana
+  activa o el portapapeles. Si pide usar un contenido («lee eso y con eso escribe el correo»), primero
+  read_text (selection, y si está vacío window) y después escribe a partir de lo leído.
 
 Actuar
 - Rápido y económico: el mínimo de pasos y de herramientas; no leas ni mires de más si ya basta con la lista.
@@ -38,6 +45,9 @@ Actuar
 - Programas: si ya está en «Otras ventanas», window focus; si no, open. Archivos: find_files y luego open.
   «Toma un print» = screenshot.
 - Escribe en el campo marcado (foco) si es el que pide; si no, apunta con mark al campo correcto.
+- Al dictar o pedir que redactes, escribe el texto final como lo escribiría él con calma: frases completas,
+  puntuación y mayúsculas, sin muletillas («eh», «tipo», «o sea») ni sus dudas y correcciones habladas, y con
+  lo que pidió (tono, a quién, idioma). Literal solo si lo pide. Un correo: saludo, cuerpo y despedida.
 - Corregir lo escrito («cambia X por Y», «quita eso», «pon tilde»): edit_text en el campo con foco; si no sabes
   qué pone, read_text focused primero. Reescribir todo solo si lo pide.
 - Cuando la pantalla muestra que ya está, done enseguida; no repitas lo que ya funcionó.
@@ -117,6 +127,8 @@ Responder
  {"type":"function","name":"done","description":"Termina: pedido cumplido, pregunta al usuario o pide confirmación.",
   "parameters":{"type":"object","properties":{"message":{"type":"string"}},"required":["message"]}},
  {"type":"function","name":"ignore","description":"Lo transcrito no es una orden para ti.",
+  "parameters":{"type":"object","properties":{}}},
+ {"type":"function","name":"listen","description":"Es para ti pero aún no terminó de hablar: espera la frase que sigue sin hacer nada.",
   "parameters":{"type":"object","properties":{}}}
 ]
 """;
@@ -124,7 +136,7 @@ Responder
     /// <summary>Acciones que pueden cerrar el pedido en la misma llamada (campo done): ahorra un turno entero.</summary>
     public static readonly HashSet<string> Finishing = ["click", "type_text", "edit_text", "press_keys", "browser", "open", "window", "scroll", "clipboard", "screenshot"];
 
-    /// <summary>Herramientas activas: todas menos los grupos apagados (look, wait, done e ignore van siempre).</summary>
+    /// <summary>Herramientas activas: todas menos los grupos apagados (look, wait, done, ignore y listen van siempre).</summary>
     public static JsonArray Build(IEnumerable<string>? disabledGroups)
     {
         var off = new HashSet<string>(

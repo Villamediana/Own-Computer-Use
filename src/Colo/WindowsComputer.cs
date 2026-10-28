@@ -288,7 +288,7 @@ sealed class WindowsComputer : IComputer
                 var verb = c.Bool("double") ? "Doble clic" : c.Str("button") == "right" ? "Clic derecho" : "Clic";
                 Cursor?.Glide(p, verb + NameOf(c));
                 Input.Click(p, c.Str("button"), c.Bool("double"));
-                Cursor?.Pulse();
+                Cursor?.Pulse(c.Bool("double"));
                 return "ok";
             }
             case "type_text":

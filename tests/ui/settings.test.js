@@ -85,16 +85,18 @@ const assert = (c, m) => { if (!c) { console.log('FAIL:', m); process.exitCode =
   await page.evaluate(() => window.__deliver({ type: 'mcpTools', ok: true, tools: [{ name: 'read_file', description: 'Lee' }, { name: 'write_file', description: 'Escribe' }] }));
   await page.click('label.switch:has(#sAll)');       // apaga "Todas"
   await page.click('.tool:has([data-tool=write_file])');  // desmarca write_file
-  await page.click('#sSave');
-  assert(!(await page.isVisible('.sheet')), 'cierra la hoja');
+  await page.click('#sClose');
+  assert(!(await page.isVisible('.sheet')), 'cerrar la hoja la guarda');
   assert((await page.textContent('#servers')).includes('Archivos'), 'el servidor aparece en la lista');
   // URL inválida no guarda
   await page.click('#addServer');
   await page.click('#sKind button[data-v=Url]');
   await page.fill('#sTarget', 'no es url');
-  await page.click('#sSave');
-  assert(await page.isVisible('.sheet') && (await page.textContent('#sStatus')).includes('https'), 'URL inválida avisa y no guarda');
-  await page.click('#sCancel');
+  await page.click('#sClose');
+  assert(await page.isVisible('.sheet') && (await page.textContent('#sStatus')).includes('https'), 'URL inválida avisa y no cierra');
+  await page.fill('#sTarget', '');
+  await page.click('#sClose');
+  assert(!(await page.isVisible('.sheet')) && (await page.$$('.server')).length === 1, 'vacía se cierra sin añadir nada');
 
   // general
   await page.click('nav button[data-page=general]');
@@ -111,10 +113,13 @@ const assert = (c, m) => { if (!c) { console.log('FAIL:', m); process.exitCode =
   assert((await page.textContent('#facts')).includes('Su navegador es Comet'), 'muestra lo que Colo sabe');
   await page.click('[data-forget="0"]');
   assert((await last('forgetFact'))?.text === 'Su navegador es Comet' && !(await page.textContent('#facts')).includes('Comet'), 'olvidar un recuerdo');
-  assert(await page.isVisible('#dirty.on'), 'marca cambios sin guardar');
+  assert(!(await page.isVisible('footer')) && !(await page.$('#save')), 'sin botones de guardar');
 
-  await page.click('#save');
+  await page.waitForTimeout(600);
   const sv = (await last('save'))?.settings;
+  assert(!!(await page.$('#sideFoot.flash')), '«Guardado» aparece un momento');
+  await page.waitForTimeout(1500);
+  assert(!(await page.$('#sideFoot.flash')), 'y se va solo');
   const checks = {
     Provider: sv?.Provider === 'OpenAI', ApiKey: sv?.ApiKey === 'sk-nueva', Model: sv?.Model === 'gpt-4.1', Effort: sv?.ReasoningEffort === 'none',
     Speak: sv?.SpeakReplies === true, Mic: sv?.MicId === 'id-b', Engine: sv?.SpeechEngine === 'Api', Voice: sv?.TranscribeModel === 'whisper',
@@ -126,7 +131,20 @@ const assert = (c, m) => { if (!c) { console.log('FAIL:', m); process.exitCode =
     Keeps: sv?.WidgetX === 5,
     Wake: sv?.WakeWord === true && sv?.WakeHotkey === 'Ctrl+Shift+K',
   };
-  for (const [k, v] of Object.entries(checks)) assert(v, 'guardar lleva ' + k);
+  for (const [k, v] of Object.entries(checks)) assert(v, 'se guarda solo con ' + k);
+
+  // Lo tecleado justo antes de cerrar con la X no se pierde: Colo lo recoge con flushSave().
+  await page.click('nav button[data-page=model]');
+  await page.fill('#endpoint', 'https://otro.openai.azure.com');
+  const pending = await page.evaluate(() => flushSave());
+  assert(pending?.Endpoint === 'https://otro.openai.azure.com', 'al cerrar recoge lo pendiente');
+  assert(await page.evaluate(() => flushSave()) === null, 'y no lo repite');
+  const before = (await sent()).filter(m => m.type === 'save').length;
+  await page.click('nav button[data-page=tools]');
+  await page.click('[data-bind=Vision] button[data-v=Auto]');
+  await page.keyboard.press('Escape');
+  const after = await sent();
+  assert(after.filter(m => m.type === 'save').length === before + 1 && after.pop().type === 'close', 'Esc guarda lo pendiente y cierra');
   await page.screenshot({ path: process.argv[2] + '/after-mcp.png' });
   await browser.close();
 })();

@@ -50,10 +50,41 @@ if (args[0] == "shots")
             using var bmp = p.Paint();
             Save(bmp, $"wave-{name}@{s}", s);
         }
-        using var c1 = AiCursor.Draw("Clic «Buscar»", 0, 0, s);
+        // La gota sacudida (aplastada y estirada) y la frase a media entrada.
+        p.Mode = Mode.Busy; p.Level = 0.38; p.Energy = 1; p.Caption = "«abre chrome»";
+        foreach (var (name, sq, rise, scale) in new[] { ("squash", 0.9f, 5f, 0.93f), ("stretch", -0.8f, -1.5f, 1.03f) })
+        {
+            p.Squash = sq; p.CaptionRise = rise; p.CaptionScale = scale;
+            using var bmp = p.Paint();
+            Save(bmp, $"wave-{name}@{s}", s);
+        }
+        p.Squash = 0; p.CaptionRise = 0; p.CaptionScale = 1;
+
+        using var c1 = AiCursor.Draw("Clic «Buscar»", s);
         Save(c1, $"cursor@{s}", s);
-        using var c2 = AiCursor.Draw("Escribiendo…", 14, 0.5f, s);
-        Save(c2, $"cursor-click@{s}", s);
+        // El clic cuadro a cuadro: se hunde, ondas y chispas que se abren y se apagan.
+        foreach (var t in new[] { 0.08f, 0.22f, 0.4f, 0.65f })
+        {
+            var look = AiCursor.Look.Still;
+            look.Clicks = [t];
+            look.Arrow = t < 0.15f ? 0.85f : t < 0.3f ? 1.05f : 1;
+            using var c = AiCursor.Draw("Clic «Buscar»", s, look);
+            Save(c, $"cursor-click-{(int)(t * 100):00}@{s}", s);
+        }
+        // La etiqueta brotando y cambiando de texto.
+        foreach (var (scale, mix, width) in new[] { (0.55f, 1f, 0f), (1.06f, 1f, 0f) })
+        {
+            var look = AiCursor.Look.Still;
+            look.TagScale = scale; look.TagAlpha = Math.Min(1, scale);
+            using var c = AiCursor.Draw("Escribiendo…", s, look);
+            Save(c, $"cursor-tag-{(int)(scale * 100)}@{s}", s);
+        }
+        {
+            var look = AiCursor.Look.Still;
+            look.Prev = "Clic «Buscar»"; look.Mix = 0.5f; look.TagWidth = 0;
+            using var c = AiCursor.Draw("Escribiendo…", s, look);
+            Save(c, $"cursor-tag-mix@{s}", s);
+        }
     }
     Console.WriteLine("ok");
     return 0;
@@ -98,7 +129,8 @@ if (args[0] == "glide")
         return w.Elapsed.TotalMilliseconds / 30;
     }
     var cursor = AiCursor.Create();
-    Console.WriteLine($"refresco solo: {Cadence(null):0.0} ms · moviendo el ratón: {Cadence(() => Colo.Native.SetCursorPos(300, 300)):0.0} ms" +
+    var refresh = Cadence(null);
+    Console.WriteLine($"refresco solo: {refresh:0.0} ms · moviendo el ratón: {Cadence(() => Colo.Native.SetCursorPos(300, 300)):0.0} ms" +
         $" · pintando el cursor: {Cadence(() => cursor.Follow(new Point(300, 300))):0.0} ms");
     cursor.Say("Probando");
     Thread.Sleep(300);
@@ -127,7 +159,9 @@ if (args[0] == "glide")
         var worst = gaps.Count > 0 ? gaps.Max() : 0;
         var mean = gaps.Count > 0 ? gaps.Average() : 0;
         var expected = Motion.Duration(Math.Sqrt(Math.Pow(to.X - from.X, 2) + Math.Pow(to.Y - from.Y, 2)));
-        var fine = end.x == to.X && end.y == to.Y && (expected == 0 || (worst < 50 && stamps.Count >= expected / 25));
+        // Termina exacto y sin tirones: cada paso cerca del refresco de esta pantalla (las VM sin GPU componen
+        // a la mitad cuando algo se mueve), y ningún hueco grande.
+        var fine = end.x == to.X && end.y == to.Y && (expected == 0 || (worst < 70 && mean <= refresh * 2.2));
         Console.WriteLine($"{from} → {to}: {sw.ElapsedMilliseconds} ms (esperado {expected:0}), {stamps.Count} cuadros, " +
             $"cada {mean:0.0} ms (peor {worst:0.0}), termina en ({end.x},{end.y}) {(fine ? "" : "← FALLA")}");
         ok &= fine;

@@ -23,6 +23,11 @@
     --font: "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, sans-serif;
     --font-display: "Segoe UI Variable Display", "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, sans-serif;
     --mono: "Cascadia Mono", "Cascadia Code", Consolas, ui-monospace, monospace;
+    /* muelles: el mismo rebote que la onda y el cursor de Colo */
+    --spring: linear(0.000, 0.049, 0.173, 0.341, 0.524, 0.702, 0.859, 0.986, 1.080, 1.141, 1.172, 1.179, 1.167, 1.143, 1.112, 1.079, 1.048, 1.021, 0.999, 0.983, 0.973, 0.969, 0.968, 0.971, 0.975, 0.981, 0.987, 0.992, 1);
+    --spring-soft: linear(0.000, 0.035, 0.123, 0.241, 0.371, 0.502, 0.623, 0.731, 0.822, 0.896, 0.953, 0.995, 1.024, 1.042, 1.051, 1.054, 1.053, 1.048, 1.042, 1.035, 1.028, 1.021, 1.015, 1.010, 1.006, 1.003, 1.001, 0.999, 1);
+    --t-spring: .62s;
+    --t-soft: .48s;
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
@@ -53,28 +58,45 @@
     display: grid; place-items: center;
   }
   .brand b { font: 600 15px var(--font-display); letter-spacing: -.01em; }
-  nav { display: flex; flex-direction: column; gap: 2px; }
+  nav { display: flex; flex-direction: column; gap: 2px; position: relative; }
+  nav .pill {
+    position: absolute; left: 0; right: 0; top: 0; height: 37px; border-radius: 9px; background: var(--fill-2);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.7), 0 1px 2px rgba(0,0,0,.04);
+    transition: transform var(--t-spring) var(--spring); pointer-events: none;
+  }
   nav button {
     all: unset; cursor: pointer;
     display: flex; align-items: center; gap: 11px;
     padding: 8px 10px; border-radius: 9px;
-    color: var(--ink-2); font-size: 14px;
-    transition: background .12s;
+    color: var(--ink-2); font-size: 14px; position: relative; z-index: 1;
+    transition: background .12s, transform var(--t-soft) var(--spring);
   }
+  nav button:active { transform: scale(.97); transition-duration: .08s; }
   nav button svg { width: 18px; height: 18px; stroke: var(--muted); flex: none; }
   nav button:hover { background: #f0f0f2; }
-  nav button[aria-current="page"] { background: var(--fill-2); color: var(--ink); font-weight: 600; }
+  nav button[aria-current="page"] { color: var(--ink); font-weight: 600; }
+  nav button[aria-current="page"]:hover { background: transparent; }
   nav button[aria-current="page"] svg { stroke: var(--ink); }
   nav button:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
-  .side-foot { margin-top: auto; padding: 0 10px; color: var(--muted); font-size: 12px; }
+  .side-foot { margin-top: auto; padding: 0 10px; color: var(--muted); font-size: 12px; position: relative; height: 18px; }
+  .side-foot > span { position: absolute; left: 10px; transition: opacity .25s, transform var(--t-spring) var(--spring); }
+  /* «Guardado» aparece un momento en lugar de la versión y se va solo; no queda texto fijo */
+  .saved { display: inline-flex; align-items: center; gap: 6px; color: var(--green); opacity: 0; transform: translateY(8px) scale(.9); }
+  .saved svg { width: 13px; height: 13px; stroke: currentColor; }
+  .side-foot.flash .saved { opacity: 1; transform: none; }
+  .side-foot.flash .ver { opacity: 0; transform: translateY(-8px); }
 
   /* ── contenido */
   main { display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100vh; }
   .scroll { flex: 1; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; }
   .still *, .still *::before, .still *::after { animation: none !important; transition: none !important; }
   .page { max-width: 640px; margin: 0 auto; padding: 34px 44px 32px; display: none; }
-  .page.on { display: block; animation: in .18s ease-out; }
-  @keyframes in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+  .page.on { display: block; animation: in var(--t-spring) var(--spring) both; }
+  .page.on > * { animation: in var(--t-spring) var(--spring) both; }
+  .page.on > :nth-child(2) { animation-delay: .03s; } .page.on > :nth-child(3) { animation-delay: .06s; }
+  .page.on > :nth-child(4) { animation-delay: .09s; } .page.on > :nth-child(5) { animation-delay: .12s; }
+  .page.on > :nth-child(n+6) { animation-delay: .15s; }
+  @keyframes in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
   h1 { font: 600 24px/1.2 var(--font-display); letter-spacing: -.02em; margin: 0 0 4px; }
   .lead { color: var(--muted); margin: 0 0 26px; }
   h2 { font: 600 13px var(--font); color: var(--ink-2); margin: 26px 0 8px 2px; }
@@ -82,6 +104,7 @@
 
   .group {
     border: 1px solid var(--line); border-radius: var(--radius); background: #fff;
+    box-shadow: 0 1px 2px rgba(15,15,20,.03), 0 4px 14px rgba(15,15,20,.025);
   }
   .row {
     display: flex; align-items: center; gap: 16px;
@@ -131,9 +154,10 @@
     background: #fff; border-radius: 12px; box-shadow: var(--shadow-pop); border: 1px solid var(--line);
     padding: 5px; max-height: 260px; overflow-y: auto; display: none;
   }
-  .combo.open .pop { display: block; animation: pop .12s ease-out; }
+  .combo.open .pop { display: block; animation: pop var(--t-soft) var(--spring); transform-origin: top center; }
+  .combo.up .pop { transform-origin: bottom center; }
   .combo.up .pop { top: auto; bottom: calc(100% + 6px); }
-  @keyframes pop { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
+  @keyframes pop { from { opacity: 0; transform: translateY(-6px) scale(.96); } to { opacity: 1; transform: none; } }
   .opt { display: flex; align-items: baseline; gap: 10px; padding: 8px 10px; border-radius: 8px; cursor: pointer; }
   .opt:hover, .opt.active { background: var(--fill); }
   .opt .id { font-weight: 500; }
@@ -157,19 +181,25 @@
   .seg .knob {
     position: absolute; top: 3px; bottom: 3px; left: 3px; border-radius: 8px; background: #fff;
     box-shadow: 0 1px 3px rgba(0,0,0,.1), 0 0 0 .5px rgba(0,0,0,.04);
-    transition: transform .22s cubic-bezier(.3,.7,.2,1), width .22s;
+    transition: transform var(--t-spring) var(--spring), width .22s;
   }
+  .seg button:active { transform: scale(.95); }
+  .seg button { transition: color .15s, transform var(--t-soft) var(--spring); }
 
   /* interruptor */
   .switch { position: relative; width: 44px; height: 26px; flex: none; }
   .switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; z-index: 1; }
   .switch span {
-    position: absolute; inset: 0; border-radius: 99px; background: #dcdce0; transition: background .18s;
+    position: absolute; inset: 0; border-radius: 99px; background: #dcdce0; transition: background .25s;
   }
   .switch span::after {
     content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%;
-    background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.2); transition: transform .2s cubic-bezier(.3,.7,.2,1);
+    background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.2), 0 0 0 .5px rgba(0,0,0,.04);
+    transition: transform var(--t-spring) var(--spring), width .18s var(--spring-soft);
   }
+  /* al pulsarlo la bolita se estira hacia donde va, como en iOS */
+  .switch input:active + span::after { width: 25px; }
+  .switch input:checked:active + span::after { transform: translateX(13px); }
   .switch input:checked + span { background: var(--blue); }
   .switch input:checked + span::after { transform: translateX(18px); }
   .switch input:focus-visible + span { box-shadow: 0 0 0 4px var(--blue-soft); }
@@ -177,7 +207,9 @@
   /* casilla */
   .check { position: relative; width: 18px; height: 18px; flex: none; }
   .check input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; z-index: 1; }
-  .check span { position: absolute; inset: 0; border-radius: 5px; border: 1.5px solid #c9c9d0; background: #fff; transition: .12s; }
+  .check span { position: absolute; inset: 0; border-radius: 5px; border: 1.5px solid #c9c9d0; background: #fff; transition: background .12s, border-color .12s, transform var(--t-spring) var(--spring); }
+  .check input:checked + span { transform: scale(1); animation: tick var(--t-spring) var(--spring); }
+  @keyframes tick { from { transform: scale(.7); } }
   .check input:checked + span { background: var(--blue); border-color: var(--blue); }
   .check input:checked + span::after {
     content: ""; position: absolute; left: 5px; top: 1.5px; width: 4px; height: 9px;
@@ -200,10 +232,10 @@
   .btn {
     all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 8px;
     height: 36px; padding: 0 16px; border-radius: 99px; font-weight: 600; font-size: 13.5px;
-    background: var(--fill); color: var(--ink); transition: background .12s, transform .06s;
+    background: var(--fill); color: var(--ink); transition: background .12s, transform var(--t-soft) var(--spring);
   }
   .btn:hover { background: var(--fill-2); }
-  .btn:active { transform: scale(.98); }
+  .btn:active { transform: scale(.95); transition-duration: .07s; }
   .btn.primary { background: var(--ink); color: #fff; }
   .btn.primary:hover { background: #2a2a2e; }
   .btn.ghost { background: transparent; }
@@ -219,14 +251,6 @@
   .status.ok { color: var(--green); }
   .status.err { color: var(--red); }
 
-  /* pie */
-  footer {
-    display: flex; align-items: center; gap: 10px; justify-content: flex-end;
-    padding: 14px 28px; border-top: 1px solid var(--line); background: rgba(255,255,255,.92);
-  }
-  footer .dirty { margin-right: auto; color: var(--muted); font-size: 12.5px; opacity: 0; transition: opacity .2s; }
-  footer .dirty.on { opacity: 1; }
-
   /* MCP */
   .server { display: flex; align-items: center; gap: 14px; padding: 14px 16px; }
   .server + .server { border-top: 1px solid var(--line); }
@@ -237,7 +261,9 @@
   .empty-state { padding: 28px 24px; text-align: center; color: var(--muted); }
   .empty-state b { display: block; color: var(--ink); font-weight: 600; margin-bottom: 4px; }
   .icon-btn { all: unset; cursor: pointer; width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; color: var(--muted); }
+  .icon-btn { transition: background .12s, transform var(--t-soft) var(--spring); }
   .icon-btn:hover { background: var(--fill); color: var(--ink); }
+  .icon-btn:active { transform: scale(.88); transition-duration: .07s; }
   .icon-btn svg { width: 17px; height: 17px; stroke: currentColor; }
 
   /* hoja modal */
@@ -245,15 +271,19 @@
     position: fixed; inset: 0; background: rgba(20, 20, 24, .28); backdrop-filter: blur(3px);
     display: none; place-items: center; z-index: 50; padding: 24px;
   }
-  .scrim.on { display: grid; animation: fade .15s ease-out; }
+  .scrim.on { display: grid; animation: fade .2s ease-out; }
   @keyframes fade { from { opacity: 0; } }
   .sheet {
     width: min(560px, 100%); max-height: calc(100vh - 48px); display: flex; flex-direction: column;
     background: #fff; border-radius: 18px; box-shadow: 0 24px 60px rgba(0,0,0,.22);
-    animation: rise .2s cubic-bezier(.3,.7,.2,1);
+    animation: rise var(--t-spring) var(--spring);
   }
-  @keyframes rise { from { opacity: 0; transform: translateY(10px) scale(.985); } }
-  .sheet header { padding: 22px 24px 4px; }
+  @keyframes rise { from { opacity: 0; transform: translateY(18px) scale(.94); } }
+  .sheet.shake { animation: shake .42s var(--spring-soft); }
+  @keyframes shake { 20% { transform: translateX(-8px); } 45% { transform: translateX(6px); } 70% { transform: translateX(-3px); } }
+  .sheet header { padding: 22px 18px 4px 24px; display: flex; align-items: center; gap: 12px; }
+  .sheet header h3 { flex: 1; }
+  .sheet .body { padding-bottom: 22px !important; }
   .sheet header h3 { margin: 0; font: 600 19px var(--font-display); letter-spacing: -.01em; }
   .sheet .body { padding: 6px 24px 8px; overflow-y: auto; }
   .sheet .foot { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 20px 18px; border-top: 1px solid var(--line); }
@@ -277,20 +307,21 @@
   .path { font-family: var(--mono); font-size: 12px; color: var(--muted); word-break: break-all; }
 
   .toast {
-    position: fixed; left: 50%; bottom: 84px; transform: translateX(-50%) translateY(8px);
+    position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%) translateY(14px) scale(.92);
     background: var(--ink); color: #fff; padding: 9px 16px; border-radius: 99px; font-size: 13px;
-    opacity: 0; pointer-events: none; transition: .2s; z-index: 80; white-space: nowrap;
+    opacity: 0; pointer-events: none; transition: opacity .2s, transform var(--t-spring) var(--spring); z-index: 80; white-space: nowrap;
   }
   .toast.on { opacity: 1; transform: translateX(-50%); }
   [hidden] { display: none !important; }
 
   /* prueba del micrófono */
-  .dot { width: 10px; height: 10px; border-radius: 50%; background: #c9c9d0; flex: none; transition: .15s; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: #c9c9d0; flex: none; transition: background .15s, box-shadow var(--t-soft) var(--spring), transform var(--t-soft) var(--spring); }
+  .dot.talk { transform: scale(1.15); }
   .dot.live { background: var(--green); box-shadow: 0 0 0 4px rgba(22,163,74,.15); }
   .dot.talk { background: var(--blue); box-shadow: 0 0 0 6px var(--blue-soft); }
   .dot.err { background: var(--red); }
   .meter { height: 8px; border-radius: 8px; background: var(--fill); overflow: hidden; }
-  .meter i { display: block; height: 100%; width: 0; border-radius: 8px; background: linear-gradient(90deg, #60a5fa, var(--blue)); transition: width .08s linear; }
+  .meter i { display: block; height: 100%; width: 0; border-radius: 8px; background: linear-gradient(90deg, #60a5fa, var(--blue)); transition: width .12s var(--spring-soft); }
   .heard { min-height: 40px; padding: 10px 12px; border-radius: 10px; background: var(--fill); font-size: 14.5px; user-select: text; }
   .heard .placeholder { color: #a5a5ad; }
   .probe { font-size: 13px; line-height: 1.6; background: var(--fill); border-radius: 10px; padding: 10px 12px; user-select: text; }
@@ -319,6 +350,8 @@
     <symbol id="i-edit" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/></symbol>
     <symbol id="i-memory" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3.5h10a1.5 1.5 0 0 1 1.5 1.5v15.5L12 16.5l-6.5 4V5A1.5 1.5 0 0 1 7 3.5z"/></symbol>
     <symbol id="i-trash" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 7h15M10 7V4.5h4V7M6.5 7l1 12.5h9l1-12.5"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
     <symbol id="i-link" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></symbol>
   </defs>
 </svg>
@@ -332,13 +365,14 @@
       <b>Colo</b>
     </div>
     <nav id="nav">
+      <div class="pill" id="navPill"></div>
       <button data-page="model"><svg><use href="#i-model"/></svg>Modelo</button>
       <button data-page="voice"><svg><use href="#i-mic"/></svg>Voz</button>
       <button data-page="tools"><svg><use href="#i-tools"/></svg>Herramientas</button>
       <button data-page="mcp"><svg><use href="#i-plug"/></svg>MCP</button>
       <button data-page="general"><svg><use href="#i-gear"/></svg>General</button>
     </nav>
-    <div class="side-foot" id="version"></div>
+    <div class="side-foot" id="sideFoot"><span class="ver" id="version"></span><span class="saved"><svg><use href="#i-check"/></svg>Guardado</span></div>
   </aside>
 
   <main>
@@ -559,18 +593,13 @@
       </section>
     </div>
 
-    <footer>
-      <span class="dirty" id="dirty">Cambios sin guardar</span>
-      <button class="btn ghost" id="cancel">Cancelar</button>
-      <button class="btn primary" id="save">Guardar</button>
-    </footer>
   </main>
 </div>
 
 <!-- hoja de servidor MCP -->
 <div class="scrim" id="scrim">
   <div class="sheet" role="dialog" aria-modal="true">
-    <header><h3 id="sheetTitle">Servidor MCP</h3></header>
+    <header><h3 id="sheetTitle">Servidor MCP</h3><button class="icon-btn" id="sClose" title="Cerrar (se guarda solo)"><svg><use href="#i-x"/></svg></button></header>
     <div class="body">
       <label class="t" for="sName">Nombre</label>
       <input class="input" id="sName" placeholder="Archivos, Correo, CRM…" autocomplete="off">
@@ -590,10 +619,6 @@
         <label class="switch"><input type="checkbox" id="sAll"><span></span></label>
       </div>
       <div class="tools" id="sTools"></div>
-    </div>
-    <div class="foot">
-      <button class="btn ghost" id="sCancel">Cancelar</button>
-      <button class="btn primary" id="sSave">Guardar servidor</button>
     </div>
   </div>
 </div>
@@ -623,10 +648,38 @@ function go(page) {
   $$("#nav button").forEach(b => b.setAttribute("aria-current", b.dataset.page === page ? "page" : "false"));
   $$(".page").forEach(p => p.classList.toggle("on", p.id === "p-" + page));
   $(".scroll").scrollTop = 0;
+  const b = $(`#nav button[data-page="${page}"]`);
+  if (b) { $("#navPill").style.height = b.offsetHeight + "px"; $("#navPill").style.transform = `translateY(${b.offsetTop}px)`; }
 }
 $$("#nav button").forEach(b => b.onclick = () => go(b.dataset.page));
 
-function touch() { dirty = true; $("#dirty").classList.add("on"); }
+// ── se guarda solo: cada cambio sale ~0,4 s después del último (al teclear no manda letra por letra)
+function touch() {
+  dirty = true;
+  clearTimeout(touch.h);
+  touch.h = setTimeout(saveNow, 400);
+}
+function saveNow() {
+  clearTimeout(touch.h);
+  if (!dirty) return;
+  dirty = false;
+  host.send({ type: "save", settings: S });
+  const f = $("#sideFoot");
+  f.classList.add("flash");
+  clearTimeout(saveNow.h);
+  saveNow.h = setTimeout(() => f.classList.remove("flash"), 1300);
+}
+// Colo lo llama al cerrar la ventana: devuelve lo pendiente para que no se pierda nada.
+window.flushSave = () => {
+  clearTimeout(touch.h);
+  if (!dirty) return null;
+  dirty = false;
+  return S;
+};
+function closeWindow() {
+  saveNow();
+  host.send({ type: "close" });
+}
 
 // ── segmentados
 function seg(el, value, onChange) {
@@ -663,7 +716,7 @@ function combo(root, getList, onPick) {
   const place = () => {
     // Si no cabe debajo (cerca del pie), se abre hacia arriba.
     const r = input.getBoundingClientRect();
-    const room = $("footer").getBoundingClientRect().top - r.bottom;
+    const room = window.innerHeight - r.bottom;
     root.classList.toggle("up", room < 220 && r.top > 260);
   };
   input.onfocus = () => { active = -1; render(); place(); root.classList.add("open"); };
@@ -881,7 +934,6 @@ function init(msg) {
   renderServers();
   sw("autostart", "StartWithWindows");
   dirty = false;
-  $("#dirty").classList.remove("on");
   go("model");
 }
 
@@ -948,6 +1000,7 @@ function openSheet(index) {
   $("#sStatus").textContent = "";
   $("#sStatus").className = "status";
   renderTools();
+  $(".sheet").classList.remove("shake");
   $("#scrim").classList.add("on");
   setTimeout(() => $("#sName").focus(), 30);
 }
@@ -1019,17 +1072,26 @@ function onMcpTools(msg) {
   renderTools();
 }
 
-const closeSheet = () => $("#scrim").classList.remove("on");
-$("#sCancel").onclick = closeSheet;
-$("#scrim").onmousedown = e => { if (e.target.id === "scrim") closeSheet(); };
-$("#sSave").onclick = () => {
-  const problem = readSheet();
-  if (problem) { $("#sStatus").className = "status err"; $("#sStatus").textContent = problem; return; }
+// Al cerrar la hoja se guarda lo que tenga. Vacía, no se guarda nada; con algo mal, avisa y se queda.
+function closeSheet() {
+  const sheet = $(".sheet");
+  const empty = !$("#sTarget").value.trim();
+  const problem = empty ? null : readSheet();
+  if (problem) {
+    $("#sStatus").className = "status err";
+    $("#sStatus").textContent = problem;
+    sheet.classList.remove("shake"); void sheet.offsetWidth; sheet.classList.add("shake");
+    return;
+  }
+  $("#scrim").classList.remove("on");
+  if (empty) return;
   if (editing >= 0) S.McpServers[editing] = draft; else S.McpServers.push(draft);
-  closeSheet();
+  editing = S.McpServers.indexOf(draft);
   renderServers();
   touch();
-};
+}
+$("#sClose").onclick = closeSheet;
+$("#scrim").onmousedown = e => { if (e.target.id === "scrim") closeSheet(); };
 
 // ── general
 $("#openPrints").onclick = () => host.send({ type: "openFolder" });
@@ -1075,13 +1137,10 @@ function voiceHeard(text, ms) {
     : '<span class="placeholder">Oí algo, pero no entendí palabras</span>';
 }
 
-// ── guardar / cancelar
-$("#save").onclick = () => host.send({ type: "save", settings: S });
-$("#cancel").onclick = () => host.send({ type: "cancel" });
+// ── Esc cierra (lo pendiente se guarda antes)
 document.addEventListener("keydown", e => {
   if (e.key === "Escape" && $("#scrim").classList.contains("on")) { closeSheet(); e.preventDefault(); }
-  else if (e.key === "Escape" && !document.activeElement?.closest(".combo")) host.send({ type: "cancel" });
-  else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); $("#save").click(); }
+  else if (e.key === "Escape" && !document.activeElement?.closest(".combo")) closeWindow();
 });
 
 host.on(msg => {
@@ -1152,8 +1211,7 @@ function demoHost() {
         reply(m.key ? { type: "voices", ok: true, voices: [{ id: "v1", name: "Luna", about: "female · warm" }, { id: "v2", name: "Mateo", about: "male · calm" }] }
                     : { type: "voices", ok: false, error: "Pon la API key de ElevenLabs" });
       } else if (m.type === "sayTest") toast("Hablando (demo)");
-      else if (m.type === "save") toast("Guardado (demo)");
-      else if (m.type === "cancel") toast("Cancelado (demo)");
+      else if (m.type === "close") toast("Cerrado (demo)");
     },
   };
 }

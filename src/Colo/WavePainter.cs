@@ -19,6 +19,10 @@ sealed class WavePainter
     public string Caption = "";
     public Color CaptionColor = Theme.Ink;
     public float CaptionAlpha = 1;
+    /// <summary>Desplazamiento (px a 96 ppp) y escala de la frase mientras entra con rebote.</summary>
+    public float CaptionRise, CaptionScale = 1;
+    /// <summary>Gota que se aplasta y estira: &gt;0 más ancha y baja, &lt;0 más alta y estrecha.</summary>
+    public float Squash;
 
     public static RectangleF PillRect(float s) =>
         new((CanvasW - PillW) / 2f * s, (CanvasH - PillH - 14) * s, PillW * s, PillH * s);
@@ -33,30 +37,100 @@ sealed class WavePainter
         g.PixelOffsetMode = PixelOffsetMode.HighQuality;
         g.Clear(Color.Transparent);
         var pill = PillRect(s);
-        DrawShadow(g, pill, s);
-        using (var white = new SolidBrush(Color.FromArgb(252, 255, 255, 255)))
-        using (var p = Theme.Round(pill, pill.Height / 2))
+
+        // Gota: se aplasta y estira alrededor de su centro sin cambiar de volumen a ojo.
+        var state = g.Save();
+        var cx = pill.X + pill.Width / 2;
+        var cy = pill.Y + pill.Height / 2;
+        var sq = Math.Clamp(Squash, -1, 1);
+        g.TranslateTransform(cx, cy);
+        g.ScaleTransform(1 + 0.07f * sq, 1 - 0.09f * sq);
+        g.TranslateTransform(-cx, -cy);
+        using (var body = Theme.Round(pill, pill.Height / 2))
         {
-            g.FillPath(white, p);
-            using var edge = new Pen(Color.FromArgb(18, 0, 0, 0), 1f);
-            g.DrawPath(edge, p);
+            DrawShadow(g, pill, body, s);
+            DrawGlass(g, pill, body, s);
         }
         DrawWave(g, pill, s);
+        g.Restore(state);
         DrawCaption(g, pill, s);
         return bmp;
     }
 
-    static void DrawShadow(Graphics g, RectangleF pill, float s)
+    static void DrawShadow(Graphics g, RectangleF pill, GraphicsPath body, float s)
     {
-        for (var i = 8; i >= 1; i--)
+        // Fuera de la gota: con el cuerpo translúcido, la sombra debajo lo ensuciaría de gris.
+        var state = g.Save();
+        g.SetClip(body, CombineMode.Exclude);
+        for (var i = 9; i >= 1; i--)
         {
             var r = pill;
-            r.Inflate(i * 1.3f * s, i * 1.1f * s);
-            r.Offset(0, 4 * s);
-            using var b = new SolidBrush(Color.FromArgb(4, 15, 23, 42));
+            r.Inflate(i * 1.4f * s, i * 1.1f * s);
+            r.Offset(0, 3.5f * s + i * 0.25f * s);
+            using var b = new SolidBrush(Color.FromArgb(5, 15, 23, 60));
             using var p = Theme.Round(r, r.Height / 2);
             g.FillPath(b, p);
         }
+        g.Restore(state);
+    }
+
+    /// <summary>
+    /// Vidro como una gota de agua: cuerpo blanco translúcido (se ve un poco lo de detrás), brillo
+    /// especular arriba, luz que se junta en el borde de abajo, canto fino de luz y un tinte del color de
+    /// la onda que se nota más cuando oye o trabaja.
+    /// </summary>
+    void DrawGlass(Graphics g, RectangleF pill, GraphicsPath body, float s)
+    {
+        using (var fill = new LinearGradientBrush(new PointF(0, pill.Top), new PointF(0, pill.Bottom),
+                   Color.FromArgb(222, 255, 255, 255), Color.FromArgb(200, 244, 248, 255)))
+            g.FillPath(fill, body);
+
+        var state = g.Save();
+        g.SetClip(body, CombineMode.Intersect);
+
+        // Tinte desde el borde hacia dentro: azul al oír, violeta al trabajar.
+        var tint = (float)Math.Clamp(0.25 + Level * 0.6 + Energy * 0.5, 0, 1);
+        using (var glow = new PathGradientBrush(body))
+        {
+            var edge = Color.FromArgb((int)(70 * tint), Energy > 0.5 ? Color.FromArgb(167, 139, 250) : Color.FromArgb(125, 183, 255));
+            glow.CenterColor = Color.FromArgb(0, 255, 255, 255);
+            glow.SurroundColors = [edge];
+            glow.FocusScales = new PointF(0.82f, 0.25f);
+            g.FillPath(glow, body);
+        }
+
+        // Luz que atraviesa la gota y se junta abajo.
+        var low = new RectangleF(pill.X + pill.Width * 0.16f, pill.Bottom - pill.Height * 0.42f, pill.Width * 0.68f, pill.Height * 0.5f);
+        using (var caustic = new GraphicsPath())
+        {
+            caustic.AddEllipse(low);
+            using var cb = new PathGradientBrush(caustic)
+            {
+                CenterColor = Color.FromArgb(120, 255, 255, 255),
+                SurroundColors = [Color.FromArgb(0, 255, 255, 255)],
+                CenterPoint = new PointF(low.X + low.Width / 2, low.Bottom - low.Height * 0.2f),
+            };
+            g.FillPath(cb, caustic);
+        }
+
+        // Brillo especular: una franja ancha arriba, más blanca al centro y que se apaga hacia abajo.
+        var hi = new RectangleF(pill.X + pill.Height * 0.32f, pill.Y + 2.2f * s, pill.Width - pill.Height * 0.64f, pill.Height * 0.42f);
+        using (var hp = Theme.Round(hi, hi.Height / 2))
+        using (var hb = new LinearGradientBrush(new PointF(0, hi.Top), new PointF(0, hi.Bottom),
+                   Color.FromArgb(205, 255, 255, 255), Color.FromArgb(0, 255, 255, 255)))
+            g.FillPath(hb, hp);
+        g.Restore(state);
+
+        // Canto: luz arriba, casi nada abajo.
+        using var rimBrush = new LinearGradientBrush(new PointF(0, pill.Top - 1), new PointF(0, pill.Bottom + 1),
+            Color.FromArgb(240, 255, 255, 255), Color.FromArgb(40, 120, 130, 160));
+        using var rim = new Pen(rimBrush, 1.1f * s);
+        g.DrawPath(rim, body);
+        using var outline = new Pen(Color.FromArgb(16, 15, 23, 42), 0.8f * s);
+        var o = pill;
+        o.Inflate(0.9f * s, 0.9f * s);
+        using var op = Theme.Round(o, o.Height / 2);
+        g.DrawPath(outline, op);
     }
 
     void DrawWave(Graphics g, RectangleF pill, float s)
@@ -120,8 +194,15 @@ sealed class WavePainter
         var maxW = (CanvasW - 20) * s;
         using var fmt = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Far, Trimming = StringTrimming.EllipsisWord };
         var size = g.MeasureString(text, font, (int)maxW, fmt);
-        var r = new RectangleF((CanvasW * s - maxW) / 2, pill.Y - size.Height - 6 * s, maxW, size.Height + 2);
+        var r = new RectangleF((CanvasW * s - maxW) / 2, pill.Y - size.Height - 6 * s + CaptionRise * s, maxW, size.Height + 2);
         if (r.Y < 1) r.Y = 1;
+        // Entra desde abajo con un rebote; crece desde el centro de su línea de base.
+        var state = g.Save();
+        var bx = r.X + r.Width / 2;
+        var by = r.Bottom;
+        g.TranslateTransform(bx, by);
+        g.ScaleTransform(CaptionScale, CaptionScale);
+        g.TranslateTransform(-bx, -by);
         // Un halo blanco muy suave para que se lea sobre fondos oscuros sin parecer una caja.
         using (var halo = new SolidBrush(Color.FromArgb((int)(70 * alpha), 255, 255, 255)))
             foreach (var (dx, dy) in new[] { (-1f, 0f), (1f, 0f), (0f, -1f), (0f, 1f) })
@@ -129,6 +210,7 @@ sealed class WavePainter
         var tone = CaptionColor == Theme.Danger ? Color.FromArgb(200, 70, 70) : Color.FromArgb(105, 105, 115);
         using var ink = new SolidBrush(Color.FromArgb((int)(185 * alpha), tone));
         g.DrawString(text, font, ink, r, fmt);
+        g.Restore(state);
     }
 
 }

@@ -4,6 +4,13 @@ Controla el PC con Windows hablando, sin manos. Una onda blanca flotante, siempr
 escucha todo el tiempo; cada frase se ejecuta al terminar de decirla. Un cursor azul muestra
 dónde va a hacer clic y qué está haciendo.
 
+- **Movimiento**: el ratón real y el cursor azul se deslizan juntos al ritmo del monitor (DwmFlush), con curva de
+  jerk mínimo y un arco leve (`Motion`). Todo lo que aparece entra con muelle (`Spring`): la flecha rebota al
+  aparecer, la etiqueta se estira al texto nuevo, el clic hunde la flecha y suelta ondas y chispas; la onda es una
+  gota de vidrio que se aplasta y estira al cambiar de estado, y la frase sube con rebote.
+- **Escucha con calma**: si la orden quedó a medias («escribe algo como…» y una pausa), el modelo llama a `listen`
+  y espera la frase siguiente (7 s) para juntarlas en vez de actuar o ignorar.
+
 - **Voz**: detector por volumen + una de tres transcripciones: Whisper en el propio PC (base o small, sin tokens,
   con glosario y los programas abiertos como pista), el modelo de transcripción de OpenAI/Foundry, o ElevenLabs Scribe.
 - **«Luna»**: dormida no se ve nada (ni la onda ni el icono de la bandeja) y solo un detector local oye su nombre (el de la Luna del celular:
@@ -20,7 +27,8 @@ dónde va a hacer clic y qué está haciendo.
 - **Económico**: las acciones traen un campo `done` opcional; si con la última acción el pedido queda hecho,
   termina sin otra llamada al modelo (una orden simple = una llamada). Tope de 25 pasos por orden.
 - **Tokens**: el menú de la onda muestra los de hoy y el total (`%APPDATA%\Colo\usage.json`); el registro, los de cada orden.
-- **Ajustes**: página web (`src/Colo/settings.html`) dentro de WebView2; prueba del micrófono en vivo en Voz.
+- **Ajustes**: página web (`src/Colo/settings.html`) dentro de WebView2, sin botón de guardar: cada cambio se guarda
+  solo (~0,4 s) y lo pesado (micrófono, MCP, atajos) se aplica al cerrar; prueba del micrófono en vivo en Voz.
   Probar la página: `node tests/ui/settings.test.js <carpeta>` (playwright-core).
 - **Registro**: `%LOCALAPPDATA%\Colo\colo.log` (micrófono, frases, órdenes, errores).
 - **Cerebro**: Azure AI Foundry (`/openai/v1/responses`, nombre del deployment) u OpenAI.
