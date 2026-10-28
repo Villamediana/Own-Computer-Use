@@ -13,6 +13,8 @@ using Colo.Core;
 //      Preview run <endpoint> "<orden>"  → bucle real contra un endpoint (OpenAI-compatible)
 //      Preview e2e <carpeta> <prueba.html>  → Colo entero en Windows real con órdenes de texto (ver E2e.cs)
 if (args[0] == "e2e") return E2e.Run(args[1], args[2]);
+//      Preview marks <prueba.html>  → elementos de UI Automation del Bloc y de Chrome (sin modelo)
+if (args[0] == "marks") return E2e.Marks(args[1]);
 var outDir = args.Length > 1 ? args[1] : ".";
 if (args[0] == "shots")
 {

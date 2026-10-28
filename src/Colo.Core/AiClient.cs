@@ -117,14 +117,28 @@ public sealed class AiClient
     /// Responses API en streaming: devuelve cada elemento de salida (mensaje o function_call) en cuanto
     /// el modelo lo termina, para empezar a actuar sin esperar la respuesta completa.
     /// </summary>
+    static readonly TimeSpan MaxRetryWait = TimeSpan.FromSeconds(10);
+
     public async IAsyncEnumerable<JsonNode> StreamAsync(JsonObject body, [EnumeratorCancellation] CancellationToken ct)
     {
         body["stream"] = true;
-        using var req = Req(HttpMethod.Post, V1 + "/responses");
-        req.Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json");
-        using var resp = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
-        if (!resp.IsSuccessStatusCode)
-            throw new AiException($"HTTP {(int)resp.StatusCode}: {ErrorText(await resp.Content.ReadAsStringAsync(ct))}");
+        var json = body.ToJsonString();
+        HttpResponseMessage resp;
+        // Límite por minuto del proveedor (429): se espera lo que pide y se reintenta, hasta 3 veces.
+        for (var attempt = 1; ; attempt++)
+        {
+            var req = Req(HttpMethod.Post, V1 + "/responses");
+            req.Content = new StringContent(json, Encoding.UTF8, "application/json");
+            resp = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+            if (resp.IsSuccessStatusCode) break;
+            var error = $"HTTP {(int)resp.StatusCode}: {ErrorText(await resp.Content.ReadAsStringAsync(ct))}";
+            var wait = resp.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(2 * attempt);
+            resp.Dispose();
+            req.Dispose();
+            if ((int)resp.StatusCode != 429 || attempt > 3) throw new AiException(error);
+            await Task.Delay(wait > MaxRetryWait ? MaxRetryWait : wait, ct);
+        }
+        using var _resp = resp;
         using var reader = new StreamReader(await resp.Content.ReadAsStreamAsync(ct));
         // HttpClient.Timeout no cubre la lectura del stream: si el servidor se calla, se corta aquí.
         using var idle = CancellationTokenSource.CreateLinkedTokenSource(ct);

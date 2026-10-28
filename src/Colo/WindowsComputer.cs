@@ -171,9 +171,11 @@ sealed class WindowsComputer : IComputer
             cr.Add(AutomationElement.BoundingRectangleProperty);
             cr.Add(AutomationElement.IsPasswordProperty);
             cr.Add(ValuePattern.ValueProperty);
+            // La raíz se pide antes de activar la caché: con AutomationElementMode.None quedaría sin
+            // referencia viva y FindAll falla («SafeHandle cannot be null»), o sea, nunca había marcas.
+            var root = AutomationElement.FromHandle(h);
             using (cr.Activate())
             {
-                var root = AutomationElement.FromHandle(h);
                 foreach (AutomationElement e in root.FindAll(TreeScope.Descendants, Interactive))
                 {
                     var br = e.Cached.BoundingRectangle;

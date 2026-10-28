@@ -34,6 +34,12 @@ jobs:
           Get-Content "$env:LOCALAPPDATA\Colo\colo.log"
           if (-not (Select-String -Path voice.txt -Pattern "^ok$")) { exit 1 }
 
+      - name: Elementos de UI Automation (Bloc y Chrome)
+        shell: pwsh
+        run: |
+          $p = Start-Process out/preview/Preview.exe -ArgumentList "marks", "$PWD\tests\e2e\prueba.html" -NoNewWindow -PassThru -Wait
+          exit $p.ExitCode
+
       - name: Colo.exe
         run: dotnet publish src/Colo -c Release -o out/colo
 

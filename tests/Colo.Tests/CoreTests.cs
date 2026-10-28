@@ -526,6 +526,23 @@ public class CoreTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public async Task Rate_limit_is_retried()
+    {
+        // Visto en Windows real: Foundry contestó 429 («exceeded token rate limit») y la orden se perdía.
+        var step = 0;
+        var h = new FakeHandler((_, _) => Interlocked.Increment(ref step) == 1
+            ? ((HttpStatusCode)429, """{"error":{"message":"exceeded token rate limit"}}""")
+            : (HttpStatusCode.OK, Calls(("done", """{"message":"ok"}"""))));
+        var s = Azure();
+        var agent = new Agent(new AiClient(s, new HttpClient(h)), s, new FakeComputer()) { SettleMs = 0 };
+        var events = new List<AgentEvent>();
+        agent.Event += e => { lock (events) events.Add(e); };
+        await agent.Hear("abre una pestaña");
+        Assert.Equal(AgentEventKind.Done, events[^1].Kind);
+        Assert.Equal(2, step);
+    }
+
+    [Fact]
     public async Task Same_click_over_and_over_warns_then_stops()
     {
         // Visto en Windows real: el clic funcionó, la página no cambió a la vista y el modelo clicaba sin fin.

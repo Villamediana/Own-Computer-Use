@@ -148,6 +148,34 @@ static class E2e
         return failed;
     }
 
+    /// <summary>Sin modelo: abre el Bloc y la página de prueba y lista los elementos que ve UI Automation.</summary>
+    public static int Marks(string page)
+    {
+        var pc = new WindowsComputer();
+        var failed = 0;
+        void Show(string name, string process)
+        {
+            Focus(WaitWindow(process, 60_000));
+            Thread.Sleep(1500);
+            var obs = pc.ObserveAsync(false, CancellationToken.None).Result;
+            Console.WriteLine($"{name}: {obs.Marks.Count} elementos · {obs.Window}");
+            foreach (var m in obs.Marks.Take(25)) Console.WriteLine($"   [{m.Id}] {m.Role} «{m.Name}» {m.Value}");
+            if (!obs.Marks.Any(m => m.Name.Length > 0)) failed++;
+        }
+        Process.Start("notepad.exe")?.Dispose();
+        Show("Bloc", "notepad");
+        var chrome = @"C:\Program Files\Google\Chrome\Application\chrome.exe";
+        if (File.Exists(chrome))
+        {
+            var profile = Path.Combine(Path.GetTempPath(), "colo-marks-chrome");
+            Process.Start(chrome, $"--no-first-run --no-default-browser-check --start-maximized --user-data-dir=\"{profile}\" \"{new Uri(Path.GetFullPath(page)).AbsoluteUri}\"")?.Dispose();
+            WaitTitle("chrome", "Prueba Colo", 60_000);
+            Show("Chrome", "chrome");
+        }
+        try { Console.WriteLine(File.ReadAllText(Log.FilePath)); } catch { }
+        return failed;
+    }
+
     static IntPtr WaitWindow(string process, int ms)
     {
         var sw = Stopwatch.StartNew();
