@@ -38,6 +38,10 @@ public sealed class Agent
         _pc = pc;
     }
 
+    /// <summary>Tras este tiempo sin pedidos, los anteriores dejan de contar: el contexto se limpia solo.</summary>
+    public TimeSpan ContextTtl { get; init; } = TimeSpan.FromMinutes(10);
+    DateTime _lastTask = DateTime.MinValue;
+
     public bool Busy { get { lock (_lock) return _running; } }
 
     /// <summary>Lo que dijo el usuario: arranca una tarea o, si hay una en marcha, se suma a ella.</summary>
@@ -51,6 +55,7 @@ public sealed class Agent
                 return Task.CompletedTask;
             }
             _running = true;
+            if (DateTime.Now - _lastTask > ContextTtl) _past.Clear();
             _cts = new CancellationTokenSource();
             var ct = _cts.Token;
             return Task.Run(() => RunAsync(text, ct));
@@ -60,11 +65,6 @@ public sealed class Agent
     public void Stop()
     {
         lock (_lock) _cts?.Cancel();
-    }
-
-    public void ForgetContext()
-    {
-        lock (_lock) _past.Clear();
     }
 
     async Task RunAsync(string first, CancellationToken ct)
@@ -98,6 +98,7 @@ public sealed class Agent
                 var acted = false;
                 var finished = false;
                 var ignored = false;
+                var closed = false;
                 // Cada herramienta se ejecuta en cuanto llega del stream, sin esperar al resto.
                 try
                 {
@@ -112,15 +113,18 @@ public sealed class Agent
                             continue;
                         }
                         if (type != "function_call") continue;
+                        // Tras done/ignore/look no se ejecuta nada más, pero se lee hasta el final del stream:
+                        // ahí llega el uso de tokens del paso.
+                        if (closed) continue;
                         anyCall = true;
                         var call = ParseCall(item);
-                        if (call.Name == "done") { final = call.Str("message"); finished = true; break; }
-                        if (call.Name == "ignore") { ignored = finished = true; break; }
+                        if (call.Name == "done") { final = call.Str("message"); finished = closed = true; continue; }
+                        if (call.Name == "ignore") { ignored = finished = closed = true; continue; }
                         if (call.Name == "look")
                         {
-                            look = true;
+                            look = closed = true;
                             log.Add("look → la captura va en este turno");
-                            break;
+                            continue;
                         }
 
                         var label = Describe(call, obs);
@@ -151,7 +155,7 @@ public sealed class Agent
                         did.Add(result.StartsWith("error", StringComparison.Ordinal) ? $"{label} (falló)" : label);
                         if (repeats == MaxRepeats)
                             log.Add($"Ya hiciste «{label}» {repeats} veces seguidas. Si el pedido está cumplido, done; si no tuvo efecto, prueba de otra forma.");
-                        if (result.StartsWith("error", StringComparison.Ordinal)) break;
+                        if (result.StartsWith("error", StringComparison.Ordinal)) closed = true;
                     }
                 }
                 catch (AiException ex) when (AiClient.IsRateLimit(ex.Message) && !anyCall && message.Length == 0 && waits < 4)
@@ -238,8 +242,9 @@ public sealed class Agent
         var steps = did.Count == 0 ? "" : " → hiciste: " + string.Join("; ", did.TakeLast(6));
         lock (_lock)
         {
-            _past.Add($"«{string.Join(" / ", heard)}»{steps} → {(string.IsNullOrWhiteSpace(outcome) ? "hecho" : outcome)}");
-            if (_past.Count > 6) _past.RemoveAt(0);
+            _past.Add($"«{string.Join(" / ", heard)}»{steps} → {(string.IsNullOrWhiteSpace(outcome) ? "hecho" : Expressive.Clean(outcome))}");
+            if (_past.Count > 8) _past.RemoveAt(0);
+            _lastTask = DateTime.Now;
         }
     }
 
@@ -300,7 +305,7 @@ public sealed class Agent
         var body = new JsonObject
         {
             ["model"] = _s.Model,
-            ["instructions"] = Tools.System,
+            ["instructions"] = SpeaksExpressively() ? Tools.System + Expressive.Note : Tools.System,
             ["tools"] = tools,
             ["tool_choice"] = "auto",
             ["parallel_tool_calls"] = true,
@@ -311,6 +316,10 @@ public sealed class Agent
             body["reasoning"] = new JsonObject { ["effort"] = _s.ReasoningEffort };
         return body;
     }
+
+    /// <summary>La respuesta la dirá una voz que interpreta etiquetas de emoción.</summary>
+    bool SpeaksExpressively() => _s.SpeakReplies && _s.ReplyVoice == ReplyVoice.ElevenLabs
+        && !string.IsNullOrWhiteSpace(_s.ElevenLabsKey) && ElevenLabsTts.ActsTags(_s.ElevenTtsModel);
 
     static ToolCall ParseCall(JsonNode item)
     {

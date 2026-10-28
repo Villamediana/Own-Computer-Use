@@ -526,6 +526,56 @@ public class CoreTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public async Task Tokens_are_counted_even_on_the_final_step()
+    {
+        // usage llega en response.completed, después del done: hay que leer el stream hasta el final.
+        var h = new FakeHandler((_, _) => (HttpStatusCode.OK, Calls(("done", """{"message":"[cheerfully] Listo"}""")).Replace(
+            "\"type\":\"response.completed\"", "\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":1800,\"input_tokens_details\":{\"cached_tokens\":1600},\"output_tokens\":30}}")));
+        var s = Azure();
+        var ai = new AiClient(s, new HttpClient(h));
+        var used = new List<Usage>();
+        ai.Used += u => used.Add(u);
+        var agent = new Agent(ai, s, new FakeComputer()) { SettleMs = 0 };
+        var events = new List<AgentEvent>();
+        agent.Event += e => { lock (events) events.Add(e); };
+        await agent.Hear("abre una pestaña");
+        Assert.Equal(new Usage(1800, 1600, 30), Assert.Single(used));
+
+        var path = Path.Combine(Path.GetTempPath(), $"colo-usage-{Guid.NewGuid():N}.json");
+        var meter = new TokenMeter(path);
+        meter.Add(used[0]);
+        meter.Add(new Usage(1000, 0, 70));
+        Assert.Equal(2900, new TokenMeter(path).AllTokens);
+        Assert.Equal(2900, new TokenMeter(path).TodayTokens);
+        Assert.Equal("2,9 mil", TokenMeter.Short(2900).Replace('.', ','));
+        File.Delete(path);
+    }
+
+    [Fact]
+    public void Emotion_tags_never_reach_the_screen()
+    {
+        Assert.Equal("¡Listo! Pestaña nueva abierta.", Expressive.Clean("[cheerfully] ¡Listo! [warmly] Pestaña nueva abierta."));
+        Assert.Equal("Vale, ya está.", Expressive.Clean("Vale [laughs], ya está."));
+        Assert.True(ElevenLabsTts.ActsTags("eleven_v4"));
+        Assert.False(ElevenLabsTts.ActsTags("eleven_multilingual_v2"));
+    }
+
+    [Fact]
+    public async Task Context_is_forgotten_by_itself_after_a_while()
+    {
+        var bodies = new List<string>();
+        var h = new FakeHandler((_, body) => { lock (bodies) bodies.Add(body); return (HttpStatusCode.OK, Calls(("done", """{"message":"ok"}"""))); });
+        var s = Azure();
+        var agent = new Agent(new AiClient(s, new HttpClient(h)), s, new FakeComputer()) { SettleMs = 0, ContextTtl = TimeSpan.FromMilliseconds(300) };
+        await agent.Hear("escribe fresh");
+        await agent.Hear("no, en la barra");
+        Assert.Contains("escribe fresh", bodies[1]);
+        await Task.Delay(400);
+        await agent.Hear("abre el bloc");
+        Assert.DoesNotContain("escribe fresh", bodies[2]);
+    }
+
+    [Fact]
     public async Task Rate_limit_is_retried()
     {
         // Visto en Windows real: Foundry contestó 429 («exceeded token rate limit») y la orden se perdía.

@@ -49,6 +49,17 @@ const assert = (c, m) => { if (!c) { console.log('FAIL:', m); process.exitCode =
   await page.click('[data-bind=SpeechEngine] button[data-v=Api]');
   assert(await page.isVisible('#voiceModel'), 'modelo de transcripción aparece con API');
   await page.fill('#voiceModel', 'whisper');
+  // respuestas habladas con ElevenLabs: la llave sigue visible con transcripción por API
+  assert(await page.isVisible('#elevenReply') && await page.isVisible('#elevenKey'), 'responder hablando muestra voz y llave de ElevenLabs');
+  await page.waitForTimeout(700);
+  const lv = await last('listVoices');
+  assert(lv?.key === 'xi-abc', 'pide las voces con la llave');
+  await page.evaluate(() => window.__deliver({ type: 'voices', ok: true, voices: [{ id: 'v1', name: 'Luna', about: 'warm' }, { id: 'v2', name: 'Mateo', about: '' }] }));
+  await page.selectOption('#elevenVoiceSel', 'v2');
+  await page.click('[data-bind=ElevenTtsModel] button[data-v=eleven_v4_turbo]');
+  await page.click('#sayTest');
+  assert((await last('sayTest'))?.settings?.ElevenVoiceId === 'v2', 'probar voz manda la voz elegida');
+  await page.screenshot({ path: process.argv[2] + '/voz-respuestas.png', fullPage: true });
   await page.evaluate(() => window.__deliver({ type: 'voiceStatus', text: 'Escuchando con «Mic A»' }));
   await page.evaluate(() => window.__deliver({ type: 'voiceHeard', text: 'hola colo', ms: 300 }));
   assert((await page.textContent('#vHeard')).includes('hola colo') && (await page.textContent('#vStatus')).includes('Mic A'), 'prueba del micrófono muestra lo oído');
@@ -94,6 +105,7 @@ const assert = (c, m) => { if (!c) { console.log('FAIL:', m); process.exitCode =
     Speak: sv?.SpeakReplies === true, Mic: sv?.MicId === 'id-b', Engine: sv?.SpeechEngine === 'Api', Voice: sv?.TranscribeModel === 'whisper',
     Tools: JSON.stringify(sv?.DisabledTools) === '["browser"]', Vision: sv?.Vision === 'Always', Autostart: sv?.StartWithWindows === false,
     Eleven: sv?.ElevenLabsKey === 'xi-abc',
+    Reply: sv?.ReplyVoice === 'ElevenLabs' && sv?.ElevenVoiceId === 'v2' && sv?.ElevenVoiceName === 'Mateo' && sv?.ElevenTtsModel === 'eleven_v4_turbo',
     Whisper: sv?.LocalModel === 'small' && sv?.Language === 'pt',
     Mcp: sv?.McpServers?.length === 1 && JSON.stringify(sv.McpServers[0].Tools) === '["read_file"]' && sv.McpServers[0].Enabled === true,
     Keeps: sv?.WidgetX === 5,

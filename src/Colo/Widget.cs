@@ -56,8 +56,9 @@ sealed class Widget : LayeredWindow
     DateTime _captionUntil;
     Point _pos;
     readonly NotifyIcon _tray = new();
-    readonly ContextMenuStrip _menu = new();
-    ToolStripMenuItem? _pauseItem;
+    readonly PopMenu _menu = new();
+    readonly TokenMeter _tokens = new(System.IO.Path.Combine(Store.Dir, "usage.json"));
+    long _orderTokens;
 
     // ── arrastre
     bool _pressed, _moved;
@@ -160,7 +161,6 @@ sealed class Widget : LayeredWindow
         if (!_listening) return;
         _listening = false;
         _hearing = false;
-        UpdateMenu();
         // Bluetooth que se desconecta, otro programa que toma el micrófono…: se reintenta solo.
         if (++_micRetries > 5)
         {
@@ -297,12 +297,11 @@ sealed class Widget : LayeredWindow
         VoiceStatus($"Escuchando con «{_mic.DeviceName}»");
         _micRetries = 0;
         _mode = _agent.Busy ? Mode.Busy : Mode.Listening;
-        UpdateMenu();
     }
 
-    static Speaker? TryCreateSpeaker()
+    Speaker? TryCreateSpeaker()
     {
-        try { return new Speaker(); } catch { return null; }
+        try { return new Speaker(_s); } catch { return null; }
     }
 
     void StopListening()
@@ -312,7 +311,6 @@ sealed class Widget : LayeredWindow
         _hearing = false;
         _target = 0;
         if (!_agent.Busy) _mode = Mode.Paused;
-        UpdateMenu();
     }
 
     void ToggleListening()
@@ -459,6 +457,8 @@ sealed class Widget : LayeredWindow
     void OnAgent(AgentEvent ev)
     {
         if (ev.Kind != AgentEventKind.Thinking) Log.Write($"agente {ev.Kind}: {ev.Text}");
+        if (ev.Kind is AgentEventKind.Done or AgentEventKind.Error or AgentEventKind.Ignored or AgentEventKind.Stopped)
+            Log.Write($"tokens: {Interlocked.Exchange(ref _orderTokens, 0):N0} esta orden · hoy {_tokens.TodayTokens:N0} · total {_tokens.AllTokens:N0}");
         switch (ev.Kind)
         {
             case AgentEventKind.Thinking:
@@ -466,10 +466,13 @@ sealed class Widget : LayeredWindow
                 _mode = Mode.Busy;
                 break;
             case AgentEventKind.Message:
-                Say(ev.Text, Theme.Ink, 2500 + ev.Text.Length * 50);
+                var said = Expressive.Clean(ev.Text);
+                Say(said, Theme.Ink, 2500 + said.Length * 50);
                 break;
             case AgentEventKind.Done:
-                Say(ev.Text, Theme.Ink, Math.Min(9000, 2500 + ev.Text.Length * 60));
+                // Las [etiquetas] de emoción son para la voz; en la onda va el texto limpio.
+                var reply = Expressive.Clean(ev.Text);
+                Say(reply, Theme.Ink, Math.Min(9000, 2500 + reply.Length * 60));
                 if (_s.SpeakReplies) _speaker?.Say(ev.Text);
                 Idle();
                 break;
@@ -486,6 +489,22 @@ sealed class Widget : LayeredWindow
                 break;
         }
         SetClickThroughIfBusy();
+    }
+
+    /// <summary>«Probar voz» en Ajustes: habla con la voz elegida aunque aún no se haya guardado.</summary>
+    void TrySpeaking(Settings trial)
+    {
+        var sample = trial.Language == "pt"
+            ? "[cheerfully] Oi! [warmly] É assim que eu vou te responder."
+            : "[cheerfully] ¡Hola! [warmly] Así es como te voy a responder.";
+        try
+        {
+            var speaker = new Speaker(trial);
+            speaker.Say(sample);
+            // Se suelta solo al terminar; un objeto por prueba, para no tocar el que usa la escucha.
+            _ = Task.Delay(15_000).ContinueWith(_ => speaker.Dispose());
+        }
+        catch (Exception ex) { Log.Write("voz: prueba falló · " + ex.Message); }
     }
 
     void Idle()
@@ -531,6 +550,7 @@ sealed class Widget : LayeredWindow
             using var f = new SettingsWindow(_s);
             _settingsWindow = f;
             f.RecordTest += StartProbe;
+            f.SayTest += TrySpeaking;
             f.Ready += () =>
             {
                 if (_listening) f.VoiceStatus($"Escuchando con «{_mic.DeviceName}»");
@@ -573,37 +593,33 @@ sealed class Widget : LayeredWindow
 
     void BuildMenu()
     {
-        _menu.Renderer = new MenuRenderer();
-        _menu.Font = Theme.Text(10f);
-        _menu.ShowImageMargin = false;
-        _menu.ShowCheckMargin = false;
-        _menu.Padding = new Padding(0, 5, 0, 5);
-        _menu.BackColor = Color.White;
-        ToolStripMenuItem Item(string text, Action onClick, string? tag = null)
+        _ai.Used += u =>
         {
-            var item = new ToolStripMenuItem(text, null, (_, _) => onClick()) { Padding = new Padding(6, 5, 18, 5), Tag = tag };
-            _menu.Items.Add(item);
-            return item;
-        }
-        _pauseItem = Item("Pausar", ToggleListening);
-        Item("Detener lo que hace", () => _agent.Stop());
-        Item("Olvidar contexto", () => { _agent.ForgetContext(); Say("Contexto olvidado", Theme.Muted, 1500); });
-        _menu.Items.Add(new ToolStripSeparator());
-        Item("Ajustes…", OpenSettings);
-        Item("Salir", Close, "danger");
-        // Esquinas redondeadas de Windows 11 en el menú.
-        _menu.Opening += (_, _) => Native.RoundCorners(_menu.Handle);
-
+            _tokens.Add(u);
+            Interlocked.Add(ref _orderTokens, u.Total);
+        };
         _tray.Text = "Colo";
         _tray.Icon = Icon ?? SystemIcons.Application;
-        _tray.ContextMenuStrip = _menu;
         _tray.Visible = true;
-        _tray.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) ToggleListening(); };
+        _tray.MouseClick += (_, e) =>
+        {
+            if (e.Button == MouseButtons.Left) ToggleListening();
+            else if (e.Button == MouseButtons.Right) ShowMenu();
+        };
     }
 
-    void UpdateMenu()
+    void ShowMenu()
     {
-        if (_pauseItem is not null) _pauseItem.Text = _listening ? "Pausar" : "Escuchar";
+        var (title, dot) = _agent.Busy ? ("Trabajando…", Color.FromArgb(245, 158, 11))
+            : _listening ? ("Escuchando", Theme.Blue) : ("En pausa", Color.FromArgb(161, 161, 170));
+        var detail = $"Tokens · hoy {TokenMeter.Short(_tokens.TodayTokens)} · total {TokenMeter.Short(_tokens.AllTokens)}";
+        _menu.Open(Cursor.Position, title, detail, dot,
+        [
+            new(_listening ? "Pausar" : "Escuchar", _listening ? PopMenu.Icon.Pause : PopMenu.Icon.Play, ToggleListening),
+            new("Detener lo que hace", PopMenu.Icon.Stop, () => _agent.Stop()),
+            new("Ajustes…", PopMenu.Icon.Settings, OpenSettings, GapBefore: true),
+            new("Salir", PopMenu.Icon.Power, Close, Danger: true),
+        ]);
     }
 
     // ───────────────────────── ratón
@@ -637,7 +653,7 @@ sealed class Widget : LayeredWindow
         base.OnMouseUp(e);
         if (e.Button == MouseButtons.Right)
         {
-            _menu.Show(Cursor.Position);
+            ShowMenu();
             return;
         }
         if (!_pressed) return;

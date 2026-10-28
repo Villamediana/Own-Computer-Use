@@ -4,9 +4,13 @@ Controla el PC con Windows hablando, sin manos. Una onda blanca flotante, siempr
 escucha todo el tiempo; cada frase se ejecuta al terminar de decirla. Un cursor azul muestra
 dónde va a hacer clic y qué está haciendo.
 
-- **Voz**: Silero VAD + una de tres transcripciones: Parakeet TDT 0.6B v3 en el propio PC (sherpa-onnx, sin tokens,
-  ~670 MB la primera vez a `%LOCALAPPDATA%\Colo\models`), el modelo de transcripción de OpenAI/Foundry,
-  o ElevenLabs Scribe (`scribe_v2`).
+- **Voz**: detector por volumen + una de tres transcripciones: Whisper en el propio PC (base o small, sin tokens,
+  con glosario y los programas abiertos como pista), el modelo de transcripción de OpenAI/Foundry, o ElevenLabs Scribe.
+- **Respuestas habladas** (opcional): ElevenLabs v4 con etiquetas de emoción ([laughs], [warmly]…) que la voz
+  interpreta y no se ven en pantalla, o la voz de Windows. El micrófono se pausa mientras habla.
+- **Contexto**: recuerda los últimos pedidos y lo que hizo en cada uno («ahí no, en la barra»); se olvida solo
+  tras 10 minutos sin pedidos.
+- **Tokens**: el menú de la onda muestra los de hoy y el total (`%APPDATA%\Colo\usage.json`); el registro, los de cada orden.
 - **Ajustes**: página web (`src/Colo/settings.html`) dentro de WebView2; prueba del micrófono en vivo en Voz.
   Probar la página: `node tests/ui/settings.test.js <carpeta>` (playwright-core).
 - **Registro**: `%LOCALAPPDATA%\Colo\colo.log` (micrófono, frases, órdenes, errores).

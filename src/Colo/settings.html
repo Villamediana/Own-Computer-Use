@@ -429,22 +429,10 @@
           <p class="hint">Usa la llave y el endpoint de la sección Modelo.</p>
         </div>
         <div id="elevenVoice" hidden>
-          <h2>ElevenLabs</h2>
-          <div class="group">
-            <div class="row stack">
-              <div class="label"><b>API key de ElevenLabs</b></div>
-              <div class="field with-btn">
-                <input class="input mono" id="elevenKey" type="password" spellcheck="false" autocomplete="off" placeholder="sk_…">
-                <button class="inline-btn" id="revealEleven" title="Mostrar"><svg><use href="#i-eye"/></svg></button>
-              </div>
-            </div>
-            <div class="row stack">
-              <div class="label"><b>Modelo</b></div>
-              <div class="field combo" id="elevenCombo">
-                <input class="input" id="elevenModel" spellcheck="false" autocomplete="off" placeholder="scribe_v2">
-                <div class="pop"></div>
-              </div>
-            </div>
+          <h2>Modelo de Scribe</h2>
+          <div class="field combo" id="elevenCombo">
+            <input class="input" id="elevenModel" spellcheck="false" autocomplete="off" placeholder="scribe_v2">
+            <div class="pop"></div>
           </div>
         </div>
 
@@ -458,9 +446,43 @@
             <input type="range" id="sens" min="1" max="10" step="1">
             <div class="range-ends"><span>Menos</span><span>Más</span></div>
           </div>
+        </div>
+
+        <h2>Respuestas en voz alta</h2>
+        <div class="group">
           <div class="row">
-            <div class="label"><b>Leer las respuestas en voz alta</b><small>Mientras habla, el micrófono se pausa.</small></div>
+            <div class="label"><b>Responder hablando</b><small>Frases cortas. Mientras habla, el micrófono se pausa.</small></div>
             <label class="switch"><input type="checkbox" id="speak"><span></span></label>
+          </div>
+          <div class="row stack" id="replyVoiceRow">
+            <div class="seg" data-bind="ReplyVoice" data-options="ElevenLabs:ElevenLabs · con emociones|Windows:Voz de Windows"></div>
+          </div>
+          <div id="elevenReply">
+            <div class="row stack">
+              <div class="label"><b>Voz</b><small id="voicesStatus">Pon la API key de ElevenLabs y se cargan tus voces.</small></div>
+              <select class="input" id="elevenVoiceSel"></select>
+            </div>
+            <div class="row stack">
+              <div class="label"><b>Modelo</b></div>
+              <div class="seg" data-bind="ElevenTtsModel" data-options="eleven_v4:v4 · actúa las emociones|eleven_v4_turbo:v4 turbo · más rápida|eleven_flash_v2_5:Flash · la más rápida"></div>
+            </div>
+            <div class="row">
+              <div class="label"><b>Probar</b><small>Dice una frase con la voz elegida.</small></div>
+              <button class="btn" id="sayTest">Escuchar</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="elevenAccount" hidden>
+          <h2>Cuenta de ElevenLabs</h2>
+          <div class="group">
+            <div class="row stack">
+              <div class="label"><b>API key</b><small>La misma para escuchar (Scribe) y para hablar.</small></div>
+              <div class="field with-btn">
+                <input class="input mono" id="elevenKey" type="password" spellcheck="false" autocomplete="off" placeholder="sk_…">
+                <button class="inline-btn" id="revealEleven" title="Mostrar"><svg><use href="#i-eye"/></svg></button>
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -644,7 +666,39 @@ function combo(root, getList, onPick) {
 }
 
 // ── interruptor helper
-const sw = (id, key) => { const el = $("#" + id); el.checked = !!S[key]; el.onchange = () => { S[key] = el.checked; touch(); }; };
+const sw = (id, key, after) => { const el = $("#" + id); el.checked = !!S[key]; el.onchange = () => { S[key] = el.checked; touch(); after?.(); }; };
+
+// ── voz de las respuestas
+function syncReply() {
+  const speak = !!S.SpeakReplies, eleven = speak && S.ReplyVoice === "ElevenLabs";
+  $("#replyVoiceRow").hidden = !speak;
+  $("#elevenReply").hidden = !eleven;
+  $("#elevenAccount").hidden = !(eleven || S.SpeechEngine === "ElevenLabs");
+  $("#sayTest").disabled = eleven && !S.ElevenVoiceId;
+}
+function loadVoices() {
+  $("#voicesStatus").textContent = "Cargando tus voces…";
+  $("#voicesStatus").className = "status";
+  host.send({ type: "listVoices", key: S.ElevenLabsKey || "" });
+}
+function loadVoicesSoon() { clearTimeout(loadVoicesSoon.h); loadVoicesSoon.h = setTimeout(loadVoices, 600); }
+function showVoices(voices) {
+  const sel = $("#elevenVoiceSel");
+  const list = voices.slice();
+  if (S.ElevenVoiceId && !list.some(v => v.id === S.ElevenVoiceId)) list.unshift({ id: S.ElevenVoiceId, name: S.ElevenVoiceName || S.ElevenVoiceId, about: "" });
+  sel.innerHTML = (list.length ? "" : '<option value="">— sin voces —</option>') + list.map(v =>
+    `<option value="${esc(v.id)}" data-name="${esc(v.name)}">${esc(v.name)}${v.about ? " · " + esc(v.about) : ""}</option>`).join("");
+  if (S.ElevenVoiceId) sel.value = S.ElevenVoiceId;
+  else if (list.length) { S.ElevenVoiceId = list[0].id; S.ElevenVoiceName = list[0].name; sel.value = list[0].id; }
+  syncReply();
+}
+function onVoices(msg) {
+  const st = $("#voicesStatus");
+  if (!msg.ok) { st.textContent = msg.error; st.className = "status err"; return; }
+  st.textContent = `${msg.voices.length} voces en tu cuenta`;
+  st.className = "status ok";
+  showVoices(msg.voices);
+}
 
 function toast(text) {
   const t = $("#toast");
@@ -682,6 +736,7 @@ function init(msg) {
     $("#localVoice").hidden = S.SpeechEngine !== "Local";
     $("#apiVoice").hidden = S.SpeechEngine !== "Api";
     $("#elevenVoice").hidden = S.SpeechEngine !== "ElevenLabs";
+    syncReply();
     $("#engineHint").textContent = {
       Local: "Whisper en tu PC: sin internet y sin gastar tokens. Se descarga una vez.",
       Api: "Cada frase se manda al modelo de transcripción de tu proveedor.",
@@ -700,7 +755,7 @@ function init(msg) {
   $("#language").value = S.Language || "es";
   $("#language").onchange = e => { S.Language = e.target.value; touch(); };
   $("#elevenKey").value = S.ElevenLabsKey || "";
-  $("#elevenKey").oninput = e => { S.ElevenLabsKey = e.target.value.trim(); touch(); };
+  $("#elevenKey").oninput = e => { S.ElevenLabsKey = e.target.value.trim(); touch(); loadVoicesSoon(); };
   $("#revealEleven").onclick = () => { const k = $("#elevenKey"); k.type = k.type === "password" ? "text" : "password"; };
   $("#elevenModel").value = S.ElevenLabsModel || "scribe_v2";
   combo($("#elevenCombo"), () => [{ id: "scribe_v2", base: "el más nuevo" }, { id: "scribe_v1", base: "anterior" }], v => { S.ElevenLabsModel = v; touch(); });
@@ -716,7 +771,21 @@ function init(msg) {
   sens.value = S.Sensitivity || 6;
   paint();
   sens.oninput = () => { S.Sensitivity = +sens.value; paint(); touch(); };
-  sw("speak", "SpeakReplies");
+  sw("speak", "SpeakReplies", syncReply);
+  S.ReplyVoice ||= "ElevenLabs";
+  S.ElevenTtsModel ||= "eleven_v4";
+  seg($("[data-bind=ReplyVoice]"), S.ReplyVoice, v => { S.ReplyVoice = v; syncReply(); touch(); });
+  seg($("[data-bind=ElevenTtsModel]"), S.ElevenTtsModel, v => { S.ElevenTtsModel = v; touch(); });
+  showVoices([]);
+  $("#elevenVoiceSel").onchange = e => {
+    const o = e.target.selectedOptions[0];
+    S.ElevenVoiceId = o?.value || "";
+    S.ElevenVoiceName = o?.dataset.name || "";
+    touch();
+  };
+  $("#sayTest").onclick = () => host.send({ type: "sayTest", settings: S });
+  syncReply();
+  if (S.ElevenLabsKey) loadVoices();
 
   const syncVision = () => $("#visionHint").textContent = S.Vision === "Always"
     ? "Manda la captura en cada paso: más preciso en apps raras, pero más lento y caro."
@@ -952,6 +1021,7 @@ host.on(msg => {
   else if (msg.type === "voiceVad") voiceVad(msg.on);
   else if (msg.type === "voiceHeard") voiceHeard(msg.text, msg.ms);
   else if (msg.type === "probe") onProbe(msg.result);
+  else if (msg.type === "voices") onVoices(msg);
 });
 host.send({ type: "ready" });
 
@@ -980,8 +1050,9 @@ function demoHost() {
             ],
             settings: {
               Provider: "Azure", Endpoint: "https://latamfoundryai.openai.azure.com", ApiKey: "sk-demo-123", Model: "gpt-5.6-luna",
-              ReasoningEffort: "low", SpeechEngine: page.get("engine") || "Local", LocalModel: "base", Language: "es", TranscribeModel: "", ElevenLabsKey: "", ElevenLabsModel: "scribe_v2", MicId: "", Sensitivity: 6,
-              SpeakReplies: false, StartWithWindows: true, Vision: "Auto", DisabledTools: ["files"],
+              ReasoningEffort: "low", SpeechEngine: page.get("engine") || "Local", LocalModel: "base", Language: "es", TranscribeModel: "", ElevenLabsKey: page.has("speak") ? "sk_demo" : "", ElevenLabsModel: "scribe_v2", MicId: "", Sensitivity: 6,
+              SpeakReplies: page.has("speak"), ReplyVoice: "ElevenLabs", ElevenVoiceId: "", ElevenVoiceName: "", ElevenTtsModel: "eleven_v4",
+              StartWithWindows: true, Vision: "Auto", DisabledTools: ["files"],
               McpServers: [
                 { Name: "Archivos", Kind: "Command", Command: "npx -y @modelcontextprotocol/server-filesystem C:\\Users\\miguel", Env: "", Url: "", Headers: "", Enabled: true, Tools: ["read_file", "list_directory"] },
                 { Name: "CRM", Kind: "Url", Command: "", Env: "", Url: "https://crm.vertis.com.br/mcp", Headers: "Authorization: Bearer x", Enabled: false, Tools: null },
@@ -1003,7 +1074,11 @@ function demoHost() {
           { name: "list_directory", description: "Get a detailed listing of all files and directories in a specified path." },
           { name: "search_files", description: "Recursively search for files and directories matching a pattern." },
         ] });
-      } else if (m.type === "save") toast("Guardado (demo)");
+      } else if (m.type === "listVoices") {
+        reply(m.key ? { type: "voices", ok: true, voices: [{ id: "v1", name: "Luna", about: "female · warm" }, { id: "v2", name: "Mateo", about: "male · calm" }] }
+                    : { type: "voices", ok: false, error: "Pon la API key de ElevenLabs" });
+      } else if (m.type === "sayTest") toast("Hablando (demo)");
+      else if (m.type === "save") toast("Guardado (demo)");
       else if (m.type === "cancel") toast("Cancelado (demo)");
     },
   };

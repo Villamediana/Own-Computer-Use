@@ -8,6 +8,9 @@ public enum Provider { Azure, OpenAI }
 /// </summary>
 public enum SpeechEngine { Local, Api, ElevenLabs }
 
+/// <summary>Voz con que se leen las respuestas: la de Windows o una de ElevenLabs.</summary>
+public enum ReplyVoice { Windows, ElevenLabs }
+
 /// <summary>Auto = solo la lista de elementos (texto) y la captura cuando el modelo la pide. Always = captura en cada paso.</summary>
 public enum Vision { Auto, Always }
 
@@ -31,6 +34,11 @@ public sealed class Settings
     /// <summary>ID del micrófono en Windows (WASAPI); vacío = el predeterminado.</summary>
     public string MicId { get; set; } = "";
     public bool SpeakReplies { get; set; }
+    public ReplyVoice ReplyVoice { get; set; } = ReplyVoice.ElevenLabs;
+    public string ElevenVoiceId { get; set; } = "";
+    public string ElevenVoiceName { get; set; } = "";
+    /// <summary>eleven_v4 interpreta [etiquetas] de emoción; turbo y flash, más rápidos.</summary>
+    public string ElevenTtsModel { get; set; } = "eleven_v4";
     public bool StartWithWindows { get; set; } = true;
     public Vision Vision { get; set; } = Vision.Auto;
     /// <summary>Grupos de herramientas propias apagados (ver <see cref="Tools.Groups"/>).</summary>

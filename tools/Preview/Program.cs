@@ -61,24 +61,28 @@ if (args[0] == "shots")
 
 if (args[0] == "menu")
 {
-    // El menú contextual dibujado en un bitmap para revisar su aspecto.
+    // El menú de la onda dibujado en PNG: abierto con el ratón encima de una fila, y a media animación.
     Directory.CreateDirectory(outDir);
-    var menu = new System.Windows.Forms.ContextMenuStrip
+    using var menu = new PopMenu();
+    menu.Load("Escuchando", "Tokens · hoy 48,2 mil · total 1,3 M", Theme.Blue,
+    [
+        new("Pausar", PopMenu.Icon.Pause, () => { }),
+        new("Detener lo que hace", PopMenu.Icon.Stop, () => { }),
+        new("Ajustes…", PopMenu.Icon.Settings, () => { }, GapBefore: true),
+        new("Salir", PopMenu.Icon.Power, () => { }, Danger: true),
+    ], hover: 1);
+    foreach (var (name, shown) in new[] { ("menu", 1f), ("menu-entrando", 0.55f) })
     {
-        Renderer = new MenuRenderer(), Font = Theme.Text(10f), ShowImageMargin = false, ShowCheckMargin = false,
-        Padding = new System.Windows.Forms.Padding(0, 5, 0, 5), BackColor = Color.White,
-    };
-    foreach (var t in new[] { "Pausar", "Detener lo que hace", "Olvidar contexto", "-", "Ajustes…", "Salir" })
-    {
-        if (t == "-") { menu.Items.Add(new System.Windows.Forms.ToolStripSeparator()); continue; }
-        menu.Items.Add(new System.Windows.Forms.ToolStripMenuItem(t) { Padding = new System.Windows.Forms.Padding(6, 5, 18, 5), Tag = t == "Salir" ? "danger" : null });
+        using var fg = menu.Draw(shown);
+        using var bg = new Bitmap(fg.Width + 40, fg.Height + 40);
+        using (var g = Graphics.FromImage(bg))
+        {
+            using var lg = new LinearGradientBrush(new Rectangle(0, 0, bg.Width, bg.Height), Color.FromArgb(236, 239, 244), Color.FromArgb(214, 220, 230), 70f);
+            g.FillRectangle(lg, 0, 0, bg.Width, bg.Height);
+            g.DrawImage(fg, 20, 20);
+        }
+        bg.Save(Path.Combine(outDir, name + ".png"), ImageFormat.Png);
     }
-    menu.Show(new Point(100, 100));
-    ((System.Windows.Forms.ToolStripMenuItem)menu.Items[1]).Select();
-    System.Windows.Forms.Application.DoEvents();
-    using var bmp = new Bitmap(menu.Width, menu.Height);
-    menu.DrawToBitmap(bmp, new Rectangle(Point.Empty, menu.Size));
-    bmp.Save(Path.Combine(outDir, "menu.png"), ImageFormat.Png);
     Console.WriteLine("ok");
     return 0;
 }

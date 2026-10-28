@@ -119,6 +119,9 @@ public sealed class AiClient
     /// </summary>
     static readonly TimeSpan MaxRetryWait = TimeSpan.FromSeconds(10);
 
+    /// <summary>Tokens de cada respuesta terminada (para el contador).</summary>
+    public event Action<Usage>? Used;
+
     /// <summary>Error de límite por minuto (429 o «exceeded … rate limit», que Azure también manda dentro del stream).</summary>
     public static bool IsRateLimit(string message) =>
         message.Contains("rate limit", StringComparison.OrdinalIgnoreCase) || message.StartsWith("HTTP 429", StringComparison.Ordinal);
@@ -176,6 +179,11 @@ public sealed class AiClient
                     if (ev["item"] is JsonNode item) yield return item;
                     break;
                 case "response.completed":
+                    if (ev["response"]?["usage"] is JsonNode u)
+                        Used?.Invoke(new Usage(
+                            u["input_tokens"]?.GetValue<long>() ?? 0,
+                            u["input_tokens_details"]?["cached_tokens"]?.GetValue<long>() ?? 0,
+                            u["output_tokens"]?.GetValue<long>() ?? 0));
                     yield break;
                 case "error":
                     throw new AiException(ev["message"]?.GetValue<string>() ?? ev["error"]?["message"]?.GetValue<string>() ?? data);

@@ -33,6 +33,8 @@ sealed class SettingsWindow : Form
     /// <summary>Pidieron «Grabar 5 s y analizar».</summary>
     public event Action? RecordTest;
     public void ProbeResult(object result) => Post(new { type = "probe", result });
+    /// <summary>Pidieron «Probar voz» con lo que hay en pantalla (aún sin guardar).</summary>
+    public event Action<Settings>? SayTest;
 
     // Prueba del micrófono en vivo (Ajustes › Voz). Se llaman desde el hilo de la interfaz.
     public void VoiceLevel(double rms) => Post(new { type = "voiceLevel", v = Math.Clamp(Math.Sqrt(rms) * 3.4, 0, 1) });
@@ -162,6 +164,15 @@ sealed class SettingsWindow : Form
                 DialogResult = DialogResult.OK;
                 break;
 
+            case "listVoices":
+                await ListVoicesAsync(msg["key"]?.GetValue<string>() ?? "");
+                break;
+
+            case "sayTest":
+                var trial = msg["settings"]?.Deserialize<Settings>(Json);
+                if (trial is not null) SayTest?.Invoke(trial);
+                break;
+
             case "recordTest":
                 RecordTest?.Invoke();
                 break;
@@ -195,6 +206,20 @@ sealed class SettingsWindow : Form
         {
             var hint = probe.Provider == Provider.Azure ? " · puedes escribir el nombre del deployment a mano" : "";
             Post(new { type = "models", ok = false, error = Short(ex.Message) + hint });
+        }
+    }
+
+    async Task ListVoicesAsync(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key)) { Post(new { type = "voices", ok = false, error = "Pon la API key de ElevenLabs" }); return; }
+        try
+        {
+            var voices = await new ElevenLabsTts().VoicesAsync(key, _closing.Token);
+            Post(new { type = "voices", ok = true, voices = voices.Select(v => new { id = v.Id, name = v.Name, about = v.About }) });
+        }
+        catch (Exception ex) when (!_closing.IsCancellationRequested)
+        {
+            Post(new { type = "voices", ok = false, error = Short(ex.Message) });
         }
     }
 
@@ -235,6 +260,10 @@ sealed class SettingsWindow : Form
         to.MicId = from.MicId ?? "";
         to.Sensitivity = Math.Clamp(from.Sensitivity, 1, 10);
         to.SpeakReplies = from.SpeakReplies;
+        to.ReplyVoice = from.ReplyVoice;
+        to.ElevenVoiceId = from.ElevenVoiceId?.Trim() ?? "";
+        to.ElevenVoiceName = from.ElevenVoiceName?.Trim() ?? "";
+        to.ElevenTtsModel = string.IsNullOrWhiteSpace(from.ElevenTtsModel) ? ElevenLabsTts.Models[0] : from.ElevenTtsModel.Trim();
         to.StartWithWindows = from.StartWithWindows;
         to.Vision = from.Vision;
         to.DisabledTools = from.DisabledTools ?? [];

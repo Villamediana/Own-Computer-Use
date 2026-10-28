@@ -10,6 +10,8 @@ using System.Threading;
 using Colo.Core;
 using System.Linq;
 using System.Threading.Tasks;
+using System.Diagnostics;
+using NAudio.Wave.SampleProviders;
 using NAudio.CoreAudioApi;
 using NAudio.Wave;
 
@@ -202,14 +204,24 @@ sealed class Mic : IDisposable
     public void Dispose() => Stop();
 }
 
-/// <summary>Voz de Windows para leer las respuestas (opcional). Silencia el micrófono mientras habla.</summary>
+/// <summary>
+/// Lee las respuestas en voz alta: con una voz de ElevenLabs (expresiva, con [etiquetas]) o con la de Windows,
+/// que también es el respaldo si ElevenLabs falla. Silencia el micrófono mientras habla.
+/// </summary>
 sealed class Speaker : IDisposable
 {
+    readonly Settings _s;
     readonly SpeechSynthesizer _tts = new();
+    readonly ElevenLabsTts _eleven = new();
+    readonly object _gate = new();
+    CancellationTokenSource? _cts;
+    WasapiOut? _out;
+    int _turn;
     public Listener? Listener { get; set; }
 
-    public Speaker()
+    public Speaker(Settings s)
     {
+        _s = s;
         _tts.SetOutputToDefaultAudioDevice();
         // Al cancelar una frase para decir otra también llega SpeakCompleted: solo se reabre el
         // micrófono cuando de verdad terminó de hablar, para que no se escuche a sí misma.
@@ -219,13 +231,104 @@ sealed class Speaker : IDisposable
         };
     }
 
+    bool UseEleven => _s.ReplyVoice == ReplyVoice.ElevenLabs
+        && !string.IsNullOrWhiteSpace(_s.ElevenLabsKey) && !string.IsNullOrWhiteSpace(_s.ElevenVoiceId);
+
     public void Say(string text)
     {
         if (string.IsNullOrWhiteSpace(text)) return;
-        _tts.SpeakAsyncCancelAll();
+        Stop();
         if (Listener is not null) Listener.Muted = true;
-        _tts.SpeakAsync(text);
+        if (!UseEleven) { _tts.SpeakAsync(Expressive.Clean(text)); return; }
+        var cts = new CancellationTokenSource();
+        int turn;
+        lock (_gate) { _cts = cts; turn = ++_turn; }
+        _ = ElevenAsync(text, turn, cts.Token);
     }
 
-    public void Dispose() => _tts.Dispose();
+    async Task ElevenAsync(string text, int turn, CancellationToken ct)
+    {
+        var model = string.IsNullOrWhiteSpace(_s.ElevenTtsModel) ? ElevenLabsTts.Models[0] : _s.ElevenTtsModel;
+        try
+        {
+            var sw = Stopwatch.StartNew();
+            var pcm = await _eleven.SpeechAsync(_s.ElevenLabsKey, _s.ElevenVoiceId, model, text, ct);
+            Log.Write($"voz: ElevenLabs {model} «{text}» → {pcm.Length / 2.0 / ElevenLabsTts.Rate:0.0} s de audio en {sw.ElapsedMilliseconds} ms");
+            ct.ThrowIfCancellationRequested();
+            Play(pcm, turn);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            Log.Write("voz: ElevenLabs falló, uso la voz de Windows · " + ex.Message);
+            if (!ct.IsCancellationRequested) _tts.SpeakAsync(Expressive.Clean(text));
+        }
+    }
+
+    void Play(byte[] pcm, int turn)
+    {
+        using var devices = new MMDeviceEnumerator();
+        var device = devices.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+        var mix = device.AudioClient.MixFormat;
+        var source = new RawSourceWaveStream(new MemoryStream(pcm), new WaveFormat(ElevenLabsTts.Rate, 16, 1));
+        ISampleProvider samples = source.ToSampleProvider();
+        if (mix.SampleRate != ElevenLabsTts.Rate) samples = new WdlResamplingSampleProvider(samples, mix.SampleRate);
+        // Al formato del altavoz (float, sus canales): WASAPI compartido no convierte solo.
+        var output = new WasapiOut(device, AudioClientShareMode.Shared, true, 80);
+        output.Init(new SampleToWaveProvider(new Fan(samples, mix.Channels)));
+        output.PlaybackStopped += async (_, _) =>
+        {
+            output.Dispose();
+            source.Dispose();
+            // Un poco de margen para que la cola del audio no entre por el micrófono.
+            await Task.Delay(250);
+            lock (_gate) if (turn != _turn) return;
+            if (Listener is not null) Listener.Muted = false;
+        };
+        lock (_gate)
+        {
+            if (turn != _turn) { output.Dispose(); source.Dispose(); return; }
+            _out = output;
+        }
+        output.Play();
+    }
+
+    public void Stop()
+    {
+        WasapiOut? playing;
+        lock (_gate)
+        {
+            _cts?.Cancel();
+            _cts = null;
+            playing = _out;
+            _out = null;
+            _turn++;
+        }
+        try { playing?.Stop(); } catch { }
+        _tts.SpeakAsyncCancelAll();
+    }
+
+    public void Dispose()
+    {
+        Stop();
+        _tts.Dispose();
+    }
+
+    /// <summary>Mono repetido en cada canal del altavoz.</summary>
+    sealed class Fan(ISampleProvider mono, int channels) : ISampleProvider
+    {
+        float[] _buf = [];
+        public WaveFormat WaveFormat { get; } = WaveFormat.CreateIeeeFloatWaveFormat(mono.WaveFormat.SampleRate, channels);
+
+        public int Read(float[] buffer, int offset, int count)
+        {
+            var frames = count / channels;
+            if (_buf.Length < frames) _buf = new float[frames];
+            var n = mono.Read(_buf, 0, frames);
+            for (var i = 0; i < n; i++)
+                for (var c = 0; c < channels; c++)
+                    buffer[offset + i * channels + c] = _buf[i];
+            return n * channels;
+        }
+    }
 }
