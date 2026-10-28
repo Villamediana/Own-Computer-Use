@@ -8,6 +8,9 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using Colo.Core;
+using System.Linq;
+using System.Threading.Tasks;
+using NAudio.CoreAudioApi;
 using NAudio.Wave;
 
 namespace Colo;
@@ -85,48 +88,44 @@ static class Store
     }
 }
 
-/// <summary>Micrófono 16 kHz mono que alimenta al Listener.</summary>
+/// <summary>
+/// Micrófono por WASAPI (la API de audio actual de Windows) en su formato real, convertido a 16 kHz mono
+/// para el Listener. La API vieja (WinMM) entregaba los headsets de 48 kHz sin convertir y no se detectaba voz.
+/// </summary>
 sealed class Mic : IDisposable
 {
-    WaveInEvent? _wave;
+    WasapiCapture? _capture;
     Listener? _listener;
     ManualResetEventSlim? _stopped;
 
     /// <summary>El micrófono se cortó solo (desconectado, otro programa lo tomó…).</summary>
     public event Action<string>? Failed;
 
-    public static List<string> Devices()
+    public sealed record Device(string Id, string Name);
+
+    public static List<Device> Devices()
     {
-        var list = new List<string>();
-        for (var i = 0; i < WaveInEvent.DeviceCount; i++) list.Add(WaveInEvent.GetCapabilities(i).ProductName);
-        return list;
+        var en = new MMDeviceEnumerator();
+        return en.EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active)
+            .Select(d => new Device(d.ID, d.FriendlyName)).ToList();
     }
 
-    public bool Running => _wave is not null;
+    public bool Running => _capture is not null;
     public string DeviceName { get; private set; } = "";
 
-    public static string NameOf(int device)
-    {
-        try { return device < 0 ? "Predeterminado de Windows" : WaveInEvent.GetCapabilities(device).ProductName; }
-        catch { return $"dispositivo {device}"; }
-    }
-
-    /// <param name="device">-1 = predeterminado de Windows.</param>
-    public void Start(int device, Listener listener)
+    /// <param name="id">ID de WASAPI; vacío (o ya no conectado) = el predeterminado de Windows.</param>
+    public void Start(string id, Listener listener)
     {
         Stop();
         _listener = listener;
+        // Se crea y arranca fuera del hilo de la interfaz: así RecordingStopped no queda esperando en la cola
+        // de la UI mientras Stop() espera por él.
+        var (capture, name) = Task.Run(() => Open(id)).GetAwaiter().GetResult();
+        var converter = new AudioConverter(capture.WaveFormat);
         var stopped = new ManualResetEventSlim(false);
-        var wave = new WaveInEvent
-        {
-            DeviceNumber = device,
-            WaveFormat = new WaveFormat(Listener.Rate, 16, 1),
-            BufferMilliseconds = 40,
-            NumberOfBuffers = 3,
-        };
         var errors = 0;
         var first = true;
-        wave.DataAvailable += (_, e) =>
+        capture.DataAvailable += (_, e) =>
         {
             if (first)
             {
@@ -134,45 +133,59 @@ sealed class Mic : IDisposable
                 Log.Write($"micrófono: llegan datos ({e.BytesRecorded} bytes por bloque)");
             }
             // Un error procesando el audio no puede matar la grabación en silencio.
-            try
-            {
-                var pcm = MemoryMarshal.Cast<byte, short>(e.Buffer.AsSpan(0, e.BytesRecorded));
-                listener.Feed(pcm);
-            }
+            try { converter.Push(e.Buffer, e.BytesRecorded, pcm => listener.Feed(pcm)); }
             catch (Exception ex)
             {
                 if (errors++ < 3) Log.Write("audio: error procesando · " + ex);
                 if (errors == 1) Failed?.Invoke("error procesando el audio: " + ex.Message);
             }
         };
-        wave.RecordingStopped += (_, e) =>
+        capture.RecordingStopped += (_, e) =>
         {
             stopped.Set();
             // Parada que no pedimos: avisar para reintentar.
-            if (ReferenceEquals(_wave, wave))
+            if (ReferenceEquals(_capture, capture))
             {
                 Log.Write("micrófono: se detuvo solo · " + (e.Exception?.Message ?? "sin error"));
                 Failed?.Invoke(e.Exception?.Message ?? "el micrófono se detuvo");
             }
         };
-        _wave = wave;
+        _capture = capture;
         _stopped = stopped;
-        DeviceName = NameOf(device);
-        wave.StartRecording();
-        Log.Write($"micrófono: abierto «{DeviceName}» (dispositivos: {WaveInEvent.DeviceCount})");
+        DeviceName = name;
+        Task.Run(capture.StartRecording).GetAwaiter().GetResult();
+        Log.Write($"micrófono: abierto «{name}» · {converter.Describe()}");
+    }
+
+    static (WasapiCapture, string) Open(string id)
+    {
+        var en = new MMDeviceEnumerator();
+        MMDevice? device = null;
+        if (!string.IsNullOrEmpty(id))
+        {
+            try
+            {
+                device = en.GetDevice(id);
+                if (device.State != DeviceState.Active) device = null;
+            }
+            catch { device = null; }
+            if (device is null) Log.Write("micrófono: el elegido no está conectado, uso el predeterminado");
+        }
+        device ??= en.GetDefaultAudioEndpoint(DataFlow.Capture, Role.Console);
+        return (new WasapiCapture(device, true, 50), device.FriendlyName);
     }
 
     /// <summary>Para y espera a que el hilo de audio termine: después se puede liberar el Listener sin riesgo.</summary>
     public void Stop()
     {
-        var w = _wave;
+        var c = _capture;
         var stopped = _stopped;
-        _wave = null;
+        _capture = null;
         _stopped = null;
-        if (w is null) return;
-        try { w.StopRecording(); } catch { }
+        if (c is null) return;
+        try { c.StopRecording(); } catch { }
         stopped?.Wait(1500);
-        w.Dispose();
+        c.Dispose();
         stopped?.Dispose();
         _listener?.Reset();
     }

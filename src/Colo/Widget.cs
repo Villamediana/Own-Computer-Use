@@ -272,7 +272,7 @@ sealed class Widget : LayeredWindow
         l.Level += OnLevel;
         _speaker ??= TryCreateSpeaker();
         if (_speaker is not null) _speaker.Listener = l;
-        try { _mic.Start(_s.MicDevice, l); }
+        try { _mic.Start(_s.MicId, l); }
         catch (Exception ex)
         {
             Log.Write("micrófono: no abrió · " + ex);
@@ -488,7 +488,7 @@ sealed class Widget : LayeredWindow
             _settingsWindow = null;
         }
         if (!saved && !Configured()) StopListening();
-        Log.Write(saved ? $"ajustes guardados · {_s.Provider} · modelo {_s.Model} · voz {_s.SpeechEngine} · mic {_s.MicDevice} · ver {_s.Vision}" : "ajustes cerrados sin guardar");
+        Log.Write(saved ? $"ajustes guardados · {_s.Provider} · modelo {_s.Model} · voz {_s.SpeechEngine} · mic «{(_s.MicId.Length > 0 ? _s.MicId : "predeterminado")}» · ver {_s.Vision}" : "ajustes cerrados sin guardar");
         if (!saved) return;
 
         Store.Save(_s);

@@ -685,11 +685,11 @@ function init(msg) {
   combo($("#elevenCombo"), () => [{ id: "scribe_v2", base: "el más nuevo" }, { id: "scribe_v1", base: "anterior" }], v => { S.ElevenLabsModel = v; touch(); });
 
   const mic = $("#mic");
-  mic.innerHTML = ['<option value="-1">Predeterminado de Windows</option>']
-    .concat((msg.mics || []).map((m, i) => `<option value="${i}">${esc(m)}</option>`)).join("");
-  mic.value = String(S.MicDevice ?? -1);
-  if (mic.selectedIndex < 0) mic.value = "-1";
-  mic.onchange = () => { S.MicDevice = +mic.value; touch(); };
+  mic.innerHTML = ['<option value="">Predeterminado de Windows</option>']
+    .concat((msg.mics || []).map(m => `<option value="${esc(m.id)}">${esc(m.name)}</option>`)).join("");
+  mic.value = S.MicId || "";
+  if (mic.selectedIndex < 0) mic.value = "";
+  mic.onchange = () => { S.MicId = mic.value; touch(); };
   const sens = $("#sens");
   const paint = () => sens.style.setProperty("--p", ((sens.value - 1) / 9 * 100) + "%");
   sens.value = S.Sensitivity || 6;
@@ -920,7 +920,7 @@ function demoHost() {
         setTimeout(() => {
           handler({
             type: "init", version: "demo", printsDir: "C:\\Users\\miguel\\Pictures\\Colo",
-            mics: ["Micrófono (Realtek Audio)", "Auriculares (AirPods)"],
+            mics: [{ id: "{0.0.1.00000000}.{a}", name: "Micrófono (Realtek Audio)" }, { id: "{0.0.1.00000000}.{b}", name: "Microfone do Headset (Plantronics)" }],
             groups: [
               { id: "mouse", title: "Ratón", summary: "Clic, doble clic, arrastrar y scroll" },
               { id: "keyboard", title: "Teclado", summary: "Escribir, atajos y teclas" },
@@ -932,7 +932,7 @@ function demoHost() {
             ],
             settings: {
               Provider: "Azure", Endpoint: "https://latamfoundryai.openai.azure.com", ApiKey: "sk-demo-123", Model: "gpt-5.6-luna",
-              ReasoningEffort: "low", SpeechEngine: page.get("engine") || "Local", TranscribeModel: "", ElevenLabsKey: "", ElevenLabsModel: "scribe_v2", MicDevice: -1, Sensitivity: 6,
+              ReasoningEffort: "low", SpeechEngine: page.get("engine") || "Local", TranscribeModel: "", ElevenLabsKey: "", ElevenLabsModel: "scribe_v2", MicId: "", Sensitivity: 6,
               SpeakReplies: false, StartWithWindows: true, Vision: "Auto", DisabledTools: ["files"],
               McpServers: [
                 { Name: "Archivos", Kind: "Command", Command: "npx -y @modelcontextprotocol/server-filesystem C:\\Users\\miguel", Env: "", Url: "", Headers: "", Enabled: true, Tools: ["read_file", "list_directory"] },

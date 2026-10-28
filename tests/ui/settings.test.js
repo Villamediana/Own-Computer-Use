@@ -18,10 +18,10 @@ const assert = (c, m) => { if (!c) { console.log('FAIL:', m); process.exitCode =
   const last = async t => (await sent()).filter(m => m.type === t).pop();
   assert((await sent())[0]?.type === 'ready', 'pide init al cargar');
   await page.evaluate(() => window.__deliver({
-    type: 'init', version: '1.2.0', printsDir: 'C:\\x', mics: ['Mic A', 'Mic B'],
+    type: 'init', version: '1.2.0', printsDir: 'C:\\x', mics: [{ id: 'id-a', name: 'Mic A' }, { id: 'id-b', name: 'Mic B' }],
     groups: [{ id: 'mouse', title: 'Ratón', summary: 's' }, { id: 'browser', title: 'Navegador', summary: 's' }],
     settings: { Provider: 'Azure', Endpoint: 'https://a.openai.azure.com', ApiKey: 'k1', Model: '', ReasoningEffort: 'low', SpeechEngine: 'Local',
-      TranscribeModel: '', MicDevice: -1, Sensitivity: 6, SpeakReplies: false, StartWithWindows: true, Vision: 'Auto', DisabledTools: [], McpServers: [], WidgetX: 5 },
+      TranscribeModel: '', MicId: '', Sensitivity: 6, SpeakReplies: false, StartWithWindows: true, Vision: 'Auto', DisabledTools: [], McpServers: [], WidgetX: 5 },
   }));
 
   // proveedor + key + conectar + elegir modelo
@@ -40,7 +40,7 @@ const assert = (c, m) => { if (!c) { console.log('FAIL:', m); process.exitCode =
   await page.click('nav button[data-page=voice]');
   assert(await page.isVisible('#p-voice'), 'navega a Voz');
   await page.click('label.switch:has(#speak)');
-  await page.selectOption('#mic', '1');
+  await page.selectOption('#mic', 'id-b');
   await page.click('[data-bind=SpeechEngine] button[data-v=ElevenLabs]');
   assert(await page.isVisible('#elevenKey') && !(await page.isVisible('#voiceModel')), 'ElevenLabs muestra su llave');
   await page.fill('#elevenKey', 'xi-abc');
@@ -89,7 +89,7 @@ const assert = (c, m) => { if (!c) { console.log('FAIL:', m); process.exitCode =
   const sv = (await last('save'))?.settings;
   const checks = {
     Provider: sv?.Provider === 'OpenAI', ApiKey: sv?.ApiKey === 'sk-nueva', Model: sv?.Model === 'gpt-4.1', Effort: sv?.ReasoningEffort === 'none',
-    Speak: sv?.SpeakReplies === true, Mic: sv?.MicDevice === 1, Engine: sv?.SpeechEngine === 'Api', Voice: sv?.TranscribeModel === 'whisper',
+    Speak: sv?.SpeakReplies === true, Mic: sv?.MicId === 'id-b', Engine: sv?.SpeechEngine === 'Api', Voice: sv?.TranscribeModel === 'whisper',
     Tools: JSON.stringify(sv?.DisabledTools) === '["browser"]', Vision: sv?.Vision === 'Always', Autostart: sv?.StartWithWindows === false,
     Eleven: sv?.ElevenLabsKey === 'xi-abc',
     Mcp: sv?.McpServers?.length === 1 && JSON.stringify(sv.McpServers[0].Tools) === '["read_file"]' && sv.McpServers[0].Enabled === true,

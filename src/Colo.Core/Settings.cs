@@ -24,7 +24,8 @@ public sealed class Settings
     /// <summary>"" = no se envía (modelos sin razonamiento).</summary>
     public string ReasoningEffort { get; set; } = "low";
     public int Sensitivity { get; set; } = 6;
-    public int MicDevice { get; set; }
+    /// <summary>ID del micrófono en Windows (WASAPI); vacío = el predeterminado.</summary>
+    public string MicId { get; set; } = "";
     public bool SpeakReplies { get; set; }
     public bool StartWithWindows { get; set; } = true;
     public Vision Vision { get; set; } = Vision.Auto;

@@ -485,6 +485,65 @@ public class CoreTests(ITestOutputHelper output)
         Assert.Contains("Invalid API key", ex.Message);
     }
 
+    /// <summary>Remuestreo lineal simple solo para fabricar entradas de prueba.</summary>
+    static float[] Resample(float[] x, int from, int to)
+    {
+        var n = (int)((long)x.Length * to / from);
+        var y = new float[n];
+        for (var i = 0; i < n; i++)
+        {
+            var p = (double)i * from / to;
+            var k = (int)p;
+            var t = (float)(p - k);
+            y[i] = k + 1 < x.Length ? x[k] * (1 - t) + x[k + 1] * t : x[^1];
+        }
+        return y;
+    }
+
+    [Theory]
+    [InlineData(48000, 2, true)]    // headset USB típico por WASAPI: 48 kHz estéreo float
+    [InlineData(44100, 2, false)]   // 44,1 kHz estéreo PCM 16
+    [InlineData(48000, 1, true)]
+    [InlineData(16000, 1, false)]
+    public void Mic_formats_are_converted_and_speech_is_detected(int rate, int channels, bool isFloat)
+    {
+        var dir = ModelsDir();
+        if (dir is null) return;
+        var speech = Wav.Read(Path.Combine(dir, "es.wav"), out _).Select(f => f * 0.15f).ToArray();
+        var signal = new float[16000].Concat(speech).Concat(new float[24000]).ToArray();
+        var native = Resample(signal, 16000, rate);
+
+        var format = isFloat
+            ? (NAudio.Wave.WaveFormat)new NAudio.Wave.WaveFormatExtensible(rate, 32, channels)
+            : new NAudio.Wave.WaveFormat(rate, 16, channels);
+        var conv = new AudioConverter(format);
+        using var l = new Listener(Path.Combine(dir, "silero_vad.onnx"), 7);
+        var phrases = new List<float[]>();
+        l.Utterance += phrases.Add;
+
+        // Bloques de 10 ms, como los manda WASAPI.
+        var frames = rate / 100;
+        var bytesPerSample = isFloat ? 4 : 2;
+        var block = new byte[frames * channels * bytesPerSample];
+        for (var i = 0; i < native.Length; i += frames)
+        {
+            var n = Math.Min(frames, native.Length - i);
+            var b = 0;
+            for (var k = 0; k < n; k++)
+                for (var c = 0; c < channels; c++)
+                {
+                    if (isFloat) { BitConverter.TryWriteBytes(block.AsSpan(b), native[i + k]); b += 4; }
+                    else { BitConverter.TryWriteBytes(block.AsSpan(b), (short)(native[i + k] * 32767)); b += 2; }
+                }
+            conv.Push(block, b, pcm => l.Feed(pcm));
+        }
+        Assert.Single(phrases);
+        using var stt = new LocalStt(new SpeechModels(dir));
+        var text = stt.Transcribe(phrases[0]);
+        output.WriteLine($"{conv.Describe()}: «{text}»");
+        Assert.Contains("país", text);
+    }
+
     [Fact]
     public void Keys_parse()
     {

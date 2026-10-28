@@ -165,9 +165,10 @@ sealed class SettingsWindow : Form
         }
     }
 
-    static string[] SafeMics()
+    static object[] SafeMics()
     {
-        try { return Mic.Devices().ToArray(); } catch { return []; }
+        try { return Mic.Devices().Select(d => (object)new { id = d.Id, name = d.Name }).ToArray(); }
+        catch (Exception ex) { Log.Write("micrófonos: no pude listarlos · " + ex.Message); return []; }
     }
 
     async Task ListModelsAsync(JsonNode msg)
@@ -222,7 +223,7 @@ sealed class SettingsWindow : Form
         to.TranscribeModel = from.TranscribeModel?.Trim() ?? "";
         to.ElevenLabsKey = from.ElevenLabsKey?.Trim() ?? "";
         to.ElevenLabsModel = string.IsNullOrWhiteSpace(from.ElevenLabsModel) ? "scribe_v2" : from.ElevenLabsModel.Trim();
-        to.MicDevice = from.MicDevice;
+        to.MicId = from.MicId ?? "";
         to.Sensitivity = Math.Clamp(from.Sensitivity, 1, 10);
         to.SpeakReplies = from.SpeakReplies;
         to.StartWithWindows = from.StartWithWindows;

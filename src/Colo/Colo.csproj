@@ -11,7 +11,7 @@
     <LangVersion>latest</LangVersion>
     <AssemblyName>Colo</AssemblyName>
     <Product>Colo</Product>
-    <Version>1.2.0</Version>
+    <Version>1.2.1</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>colo.ico</ApplicationIcon>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
@@ -23,7 +23,7 @@
     <SatelliteResourceLanguages>es;pt</SatelliteResourceLanguages>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="NAudio.WinMM" Version="2.2.1" />
+    <PackageReference Include="NAudio.Wasapi" Version="2.2.1" />
     <PackageReference Include="System.Speech" Version="8.0.0" />
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4258.31" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
