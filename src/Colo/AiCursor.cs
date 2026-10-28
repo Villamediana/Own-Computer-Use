@@ -150,7 +150,11 @@ sealed class AiCursor : LayeredWindow
     public void Follow(Point q) => Ui(() =>
     {
         _tip = q;
-        Frame();
+        // Si nada cambia de aspecto, basta mover la ventana: repintar la capa entera cada paso esperaba
+        // al compositor y el deslizamiento bajaba a 30 cuadros. Con fundido u onda, la anima Animate.
+        if (!_visible || Volatile.Read(ref _animating) == 1) return;
+        var s = Dpi;
+        SetWindowPos(Hwnd, HWND_TOPMOST, q.X - (int)(Pad * s), q.Y - (int)(Pad * s), 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
     });
 
     /// <summary>Cambia la etiqueta sin moverse (escribir, teclas, print…).</summary>

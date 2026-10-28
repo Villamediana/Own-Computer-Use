@@ -100,9 +100,17 @@ if (args[0] == "glide")
     var cursor = AiCursor.Create();
     Console.WriteLine($"refresco solo: {Cadence(null):0.0} ms · moviendo el ratón: {Cadence(() => Colo.Native.SetCursorPos(300, 300)):0.0} ms" +
         $" · pintando el cursor: {Cadence(() => cursor.Follow(new Point(300, 300))):0.0} ms");
-    var paint = System.Diagnostics.Stopwatch.StartNew();
+    cursor.Say("Probando");
+    Thread.Sleep(300);
+    var move = System.Diagnostics.Stopwatch.StartNew();
     for (var i = 0; i < 30; i++) cursor.Follow(new Point(300 + i, 300));
-    Console.WriteLine($"pintar un cuadro: {paint.Elapsed.TotalMilliseconds / 30:0.0} ms");
+    var moveMs = move.Elapsed.TotalMilliseconds / 30;
+    cursor.Pulse();
+    var paint = System.Diagnostics.Stopwatch.StartNew();
+    for (var i = 0; i < 30; i++) cursor.Say("Probando " + i);
+    Console.WriteLine($"mover el cursor visible: {moveMs:0.00} ms · repintarlo: {paint.Elapsed.TotalMilliseconds / 30:0.00} ms" +
+        $" · deslizando con el cursor: {Cadence(() => cursor.Follow(new Point(320, 300))):0.0} ms por cuadro");
+    Thread.Sleep(400);
     var ok = true;
     var targets = new[] { new Point(200, 200), new Point(900, 600), new Point(910, 605), new Point(150, 500) };
     var from = new Point(500, 300);
