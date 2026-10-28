@@ -7,7 +7,7 @@ namespace Colo.Core;
 public sealed record WhisperModel(string Id, string File, long Size, string Title);
 
 /// <summary>Modelos de Whisper (whisper.cpp, formato ggml) que se bajan una vez a %LOCALAPPDATA%\Colo\models\whisper.</summary>
-public sealed class SpeechModels(string dir)
+public sealed class SpeechModels(string dir, string? bundledDir = null)
 {
     const string Url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/";
 
@@ -21,14 +21,27 @@ public sealed class SpeechModels(string dir)
 
     public static WhisperModel Find(string? id) => Whisper.FirstOrDefault(m => m.Id == id) ?? Whisper[0];
 
-    public string PathOf(WhisperModel m) => Path.Combine(Dir, "whisper", m.File);
+    /// <summary>El que trae el instalador (junto a Colo.exe) si está entero; si no, el descargado.</summary>
+    public string PathOf(WhisperModel m)
+    {
+        if (bundledDir is not null)
+        {
+            var bundled = Path.Combine(bundledDir, "whisper", m.File);
+            if (Valid(bundled, m)) return bundled;
+        }
+        return DownloadPath(m);
+    }
+
+    string DownloadPath(WhisperModel m) => Path.Combine(Dir, "whisper", m.File);
+
+    static bool Valid(string path, WhisperModel m) => File.Exists(path) && new FileInfo(path).Length == m.Size;
 
     /// <summary>Existe y con el tamaño exacto (un archivo cortado o una página de error no cuentan).</summary>
-    public bool Ready(WhisperModel m) => File.Exists(PathOf(m)) && new FileInfo(PathOf(m)).Length == m.Size;
+    public bool Ready(WhisperModel m) => Valid(PathOf(m), m);
 
     public async Task DownloadAsync(WhisperModel m, IProgress<double>? progress, CancellationToken ct)
     {
-        var path = PathOf(m);
+        var path = DownloadPath(m);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var part = path + ".part";
         using var http = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };

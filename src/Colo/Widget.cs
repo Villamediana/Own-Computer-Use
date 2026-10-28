@@ -30,7 +30,7 @@ sealed class Widget : LayeredWindow
     readonly WindowsComputer _pc = new();
     readonly AiCursor _cursor = new();
     readonly Mic _mic = new();
-    readonly SpeechModels _models = new(Store.ModelsDir);
+    readonly SpeechModels _models = new(Store.ModelsDir, System.IO.Path.Combine(AppContext.BaseDirectory, "models"));
     readonly Channel<float[]> _phrases = Channel.CreateUnbounded<float[]>(new UnboundedChannelOptions { SingleReader = true });
     Speaker? _speaker;
     Listener? _listener;
