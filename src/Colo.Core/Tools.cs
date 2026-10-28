@@ -14,6 +14,7 @@ Cada turno trae lo que dijo, lo que ya hiciste, los pedidos anteriores (con lo q
 ventana activa y los elementos de la pantalla con número ([n] tipo «nombre» =valor). A veces, la captura.
 
 Entender
+- Para despertarte te llama «Luna»: el nombre no es parte de la orden.
 - Habla mezclando español y portugués (aba/guia = pestaña, endereço = dirección, clica, escreve, fecha = cierra).
 - El reconocedor de voz se equivoca mucho y escribe palabras que suenan parecido. Pronuncia la frase en tu
   cabeza y busca la orden que encaja con lo que hay en pantalla («una nueva engin de aplicador» → una nueva

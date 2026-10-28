@@ -57,6 +57,13 @@ sealed class Widget : LayeredWindow
     Point _pos;
     readonly NotifyIcon _tray = new();
     readonly PopMenu _menu = new();
+
+    // ── «Luna»: dormida no transcribe nada ni se ve; despierta 45 s desde lo último que oye o hace.
+    static readonly TimeSpan AwakeFor = TimeSpan.FromSeconds(45);
+    WakeWord? _wake;
+    volatile bool _awake;
+    DateTime _awakeUntil;
+    double _presence = 1;
     readonly TokenMeter _tokens = new(System.IO.Path.Combine(Store.Dir, "usage.json"));
     readonly Memory _memory = new(System.IO.Path.Combine(Store.Dir, "memory.json"));
     long _orderTokens;
@@ -284,6 +291,7 @@ sealed class Widget : LayeredWindow
         l.Raw += OnRaw;
         _speaker ??= TryCreateSpeaker();
         if (_speaker is not null) _speaker.Listener = l;
+        EnsureWake();
         try { _mic.Start(_s.MicId, l); }
         catch (Exception ex)
         {
@@ -296,6 +304,7 @@ sealed class Widget : LayeredWindow
         _listenSince = _lastSilenceWarning = DateTime.Now;
         _lastSound = DateTime.MinValue;
         VoiceStatus($"Escuchando con «{_mic.DeviceName}»");
+        if (Asleep && !forTest) Say($"Di «Luna» o {_s.WakeHotkey} para hablarme", Theme.Muted, 3500);
         _micRetries = 0;
         _mode = _agent.Busy ? Mode.Busy : Mode.Listening;
     }
@@ -351,11 +360,62 @@ sealed class Widget : LayeredWindow
         });
     }
 
-    void OnUtterance(float[] samples) => _phrases.Writer.TryWrite(samples);
+    /// <summary>Dormida: lo que se oye no se transcribe ni va al modelo (salvo la prueba en Ajustes).</summary>
+    bool Asleep => _s.WakeWord && _wake is not null && !_awake && _settingsWindow is null;
+
+    void EnsureWake()
+    {
+        if (!_s.WakeWord || _wake is not null) return;
+        try
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            _wake = new WakeWord(WakeModel.Bundled());
+            _wake.Woke += score => Post(() => Wake($"«Luna» ({score:0.00})"));
+            Log.Write($"voz: «Luna» lista en {sw.ElapsedMilliseconds} ms");
+        }
+        catch (Exception ex)
+        {
+            // Sin detector no se queda sorda: escucha siempre, como antes.
+            Log.Write("voz: «Luna» no arrancó, escucho siempre · " + ex);
+        }
+    }
+
+    void Wake(string why)
+    {
+        if (!_awake) Log.Write("despierta: " + why);
+        _awake = true;
+        KeepAwake();
+    }
+
+    void KeepAwake() => _awakeUntil = DateTime.Now + AwakeFor;
+
+    /// <summary>45 s sin hablarle ni trabajar: vuelve a dormir y la onda se va.</summary>
+    void MaybeSleep()
+    {
+        if (!_awake || !_s.WakeWord || _wake is null) return;
+        if (_agent.Busy || _hearing || _listener?.Muted == true || _settingsOpen) { if (_agent.Busy || _hearing) KeepAwake(); return; }
+        if (DateTime.Now < _awakeUntil) return;
+        _awake = false;
+        _wake.Settle();
+        Log.Write($"duerme: {AwakeFor.TotalSeconds:0} s sin hablarle");
+    }
+
+    void OnUtterance(float[] samples)
+    {
+        if (Asleep)
+        {
+            Log.Write($"voz: {samples.Length / 16000.0:0.0} s sin «Luna», no se transcribe");
+            return;
+        }
+        Post(KeepAwake);
+        _phrases.Writer.TryWrite(samples);
+    }
 
     // Hilo de audio: junta 5 s para la prueba «Grabar y analizar».
     void OnRaw(ReadOnlySpan<short> pcm)
     {
+        // Mientras duerme, solo el detector de «Luna» oye (en el PC, sin mandar nada).
+        if (_wake is not null && _s.WakeWord && !_awake && _listener is { Muted: false }) _wake.Feed(pcm);
         short[]? done = null;
         lock (_probeLock)
         {
@@ -432,6 +492,8 @@ sealed class Widget : LayeredWindow
                 {
                     // Con Ajustes abierto es la prueba del micrófono: se muestra, no se ejecuta.
                     if (_settingsWindow is not null) { _settingsWindow.VoiceHeard(text, ms); return; }
+                    // Solo su nombre: ya está despierta, no hace falta preguntarle nada al modelo.
+                    if (WindowsComputer.Fold(text).Trim(' ', '.', ',', '!', '¡', '?', '¿') == "luna") { Log.Write("voz: solo «Luna», escuchando"); return; }
                     // Una letra suelta («¡Y!», «Eh.») es ruido: ni se manda al modelo. «Sí» o «no» sí pasan.
                     if (text.Count(char.IsLetter) < 2) { if (text.Length > 0) Log.Write($"voz: descartado «{text}» (sin palabras)"); return; }
                     Command(text);
@@ -459,6 +521,8 @@ sealed class Widget : LayeredWindow
     void OnAgent(AgentEvent ev)
     {
         if (ev.Kind != AgentEventKind.Thinking) Log.Write($"agente {ev.Kind}: {ev.Text}");
+        if (ev.Kind is AgentEventKind.Done or AgentEventKind.Error or AgentEventKind.Ignored or AgentEventKind.Stopped)
+            KeepAwake();
         if (ev.Kind is AgentEventKind.Done or AgentEventKind.Error or AgentEventKind.Ignored or AgentEventKind.Stopped)
             Log.Write($"tokens: {Interlocked.Exchange(ref _orderTokens, 0):N0} esta orden · hoy {_tokens.TodayTokens:N0} · total {_tokens.AllTokens:N0}");
         switch (ev.Kind)
@@ -577,6 +641,8 @@ sealed class Widget : LayeredWindow
         if (!saved) return;
 
         Store.Save(_s);
+        RegisterHotkeys();
+        if (!_s.WakeWord) { _wake?.Dispose(); _wake = null; }
         _ = StartMcpAsync();
         ApplyAutostart();
         StopListening();
@@ -689,6 +755,18 @@ sealed class Widget : LayeredWindow
         var still = _mode is Mode.Paused or Mode.Problem && _level < 0.01 && _caption.Length == 0;
         _frame.Interval = still ? 120 : 16;
         CheckSilence();
+        MaybeSleep();
+        // Dormida y sin nada que contar, la onda se desvanece; al despertar vuelve subiendo un poco.
+        var shown = !_s.WakeWord || _wake is null || _awake || _agent.Busy || !_listening || _settingsOpen
+            || _mode == Mode.Problem || _caption.Length > 0;
+        _presence += ((shown ? 1 : 0) - _presence) * (shown ? 0.22 : 0.12);
+        if (!shown && _presence < 0.02)
+        {
+            _presence = 0;
+            if (Visible) Hide();
+            _frame.Interval = 120;
+            return;
+        }
         Render();
     }
 
@@ -717,18 +795,31 @@ sealed class Widget : LayeredWindow
         _painter.CaptionColor = _captionColor;
         _painter.CaptionAlpha = (float)Math.Clamp(left / 350.0, 0, 1);
         using var bmp = _painter.Paint();
-        Present(bmp, _pos);
+        var rise = (int)((1 - _presence) * 10 * S);
+        Present(bmp, new Point(_pos.X, _pos.Y + rise), (byte)Math.Round(255 * Math.Clamp(_presence, 0, 1)));
         if (!Visible) Show();
     }
 
     // ───────────────────────── atajos
 
-    const int HotToggle = 1, HotStop = 2;
+    const int HotToggle = 1, HotStop = 2, HotWake = 3;
 
     void RegisterHotkeys()
     {
+        Native.UnregisterHotKey(Handle, HotWake);
+        if (Colo.Core.Keys.Hotkey(_s.WakeHotkey, out var mods, out var vk)
+            && !Native.RegisterHotKey(Handle, HotWake, mods | Native.MOD_NOREPEAT, vk))
+            Log.Write($"atajo: «{_s.WakeHotkey}» ya lo usa otro programa");
         Native.RegisterHotKey(Handle, HotToggle, Native.MOD_CONTROL | Native.MOD_ALT | Native.MOD_NOREPEAT, 0x20);
         Native.RegisterHotKey(Handle, HotStop, Native.MOD_CONTROL | Native.MOD_ALT | Native.MOD_NOREPEAT, 0x58);
+    }
+
+    /// <summary>El atajo: despierta y escucha sin decir «Luna» (si estaba en pausa, también vuelve a escuchar).</summary>
+    void WakeByKey()
+    {
+        if (!_listening) _ = StartListeningAsync();
+        Wake("atajo " + _s.WakeHotkey);
+        Say("Te escucho", Theme.Muted, 1400);
     }
 
     protected override void WndProc(ref Message m)
@@ -737,6 +828,7 @@ sealed class Widget : LayeredWindow
         {
             if (m.WParam == HotToggle) ToggleListening();
             else if (m.WParam == HotStop) _agent.Stop();
+            else if (m.WParam == HotWake) WakeByKey();
         }
         base.WndProc(ref m);
     }
@@ -745,6 +837,7 @@ sealed class Widget : LayeredWindow
     {
         Native.UnregisterHotKey(Handle, HotToggle);
         Native.UnregisterHotKey(Handle, HotStop);
+        Native.UnregisterHotKey(Handle, HotWake);
         _frame.Stop();
         _agent.Stop();
         _mic.Dispose();

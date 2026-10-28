@@ -39,6 +39,9 @@ const assert = (c, m) => { if (!c) { console.log('FAIL:', m); process.exitCode =
   // voz
   await page.click('nav button[data-page=voice]');
   assert(await page.isVisible('#p-voice'), 'navega a Voz');
+  await page.click('[data-bind=WakeWord] button[data-v=off]');
+  await page.click('[data-bind=WakeWord] button[data-v=on]');
+  assert((await page.textContent('#wakeHint')).includes('Luna'), 'explica la activación con «Luna»');
   await page.click('label.switch:has(#speak)');
   await page.selectOption('#mic', 'id-b');
   await page.click('[data-bind=LocalModel] button[data-v=small]');
@@ -96,6 +99,15 @@ const assert = (c, m) => { if (!c) { console.log('FAIL:', m); process.exitCode =
   // general
   await page.click('nav button[data-page=general]');
   await page.click('label.switch:has(#autostart)');
+  assert((await page.textContent('#wakeKeys')).includes('L'), 'muestra el atajo para despertarla');
+  await page.click('#recordKey');
+  await page.keyboard.press('Control+Shift+KeyK');
+  assert((await page.textContent('#wakeKeys')).replace(/\s/g, '') === 'CtrlShiftK', 'graba un atajo nuevo');
+  await page.click('#recordKey');
+  await page.keyboard.press('KeyJ');
+  assert((await page.textContent('#wakeKeyHint')).includes('Añade'), 'sin modificador no se acepta');
+  await page.keyboard.press('Escape');
+  assert(await page.isVisible('#p-general'), 'Esc cancela la grabación sin cerrar Ajustes');
   assert((await page.textContent('#facts')).includes('Su navegador es Comet'), 'muestra lo que Colo sabe');
   await page.click('[data-forget="0"]');
   assert((await last('forgetFact'))?.text === 'Su navegador es Comet' && !(await page.textContent('#facts')).includes('Comet'), 'olvidar un recuerdo');
@@ -112,6 +124,7 @@ const assert = (c, m) => { if (!c) { console.log('FAIL:', m); process.exitCode =
     Whisper: sv?.LocalModel === 'small' && sv?.Language === 'pt',
     Mcp: sv?.McpServers?.length === 1 && JSON.stringify(sv.McpServers[0].Tools) === '["read_file"]' && sv.McpServers[0].Enabled === true,
     Keeps: sv?.WidgetX === 5,
+    Wake: sv?.WakeWord === true && sv?.WakeHotkey === 'Ctrl+Shift+K',
   };
   for (const [k, v] of Object.entries(checks)) assert(v, 'guardar lleva ' + k);
   await page.screenshot({ path: process.argv[2] + '/after-mcp.png' });

@@ -267,6 +267,8 @@ sealed class SettingsWindow : Form
         to.ElevenLabsModel = string.IsNullOrWhiteSpace(from.ElevenLabsModel) ? "scribe_v2" : from.ElevenLabsModel.Trim();
         to.MicId = from.MicId ?? "";
         to.Sensitivity = Math.Clamp(from.Sensitivity, 1, 10);
+        to.WakeWord = from.WakeWord;
+        to.WakeHotkey = Colo.Core.Keys.Hotkey(from.WakeHotkey ?? "", out _, out _) ? from.WakeHotkey!.Trim() : to.WakeHotkey;
         to.SpeakReplies = from.SpeakReplies;
         to.ReplyVoice = from.ReplyVoice;
         to.ElevenVoiceId = from.ElevenVoiceId?.Trim() ?? "";

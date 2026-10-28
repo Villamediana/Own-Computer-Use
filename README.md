@@ -6,6 +6,10 @@ dónde va a hacer clic y qué está haciendo.
 
 - **Voz**: detector por volumen + una de tres transcripciones: Whisper en el propio PC (base o small, sin tokens,
   con glosario y los programas abiertos como pista), el modelo de transcripción de OpenAI/Foundry, o ElevenLabs Scribe.
+- **«Luna»**: dormida, la onda desaparece y solo un detector local oye su nombre (el de la Luna del celular:
+  openWakeWord + clasificador entrenado con «luna» de personas reales; ONNX Runtime, ~3 MB). Al oír «Luna» o
+  el atajo (Ctrl+Alt+L, se cambia en Ajustes) aparece y atiende; vuelve a dormir tras 45 s sin hablarle.
+  Dormida no transcribe ni manda nada al modelo. Se puede volver a «Siempre escuchando» en Ajustes › Voz.
 - **Respuestas habladas** (opcional): ElevenLabs v4 con etiquetas de emoción ([laughs], [warmly]…) que la voz
   interpreta y no se ven en pantalla, o la voz de Windows. El micrófono se pausa mientras habla.
 - **Contexto**: recuerda los últimos pedidos y lo que hizo en cada uno («ahí no, en la barra»); se olvida solo
@@ -34,7 +38,7 @@ dónde va a hacer clic y qué está haciendo.
 `Colo.exe` en Releases: un solo archivo, trae .NET dentro, no instala nada ni pide admin.
 
 Uso: clic en la onda = pausar/seguir · arrastrar = mover · clic derecho = menú y Ajustes.
-Atajos: `Ctrl+Alt+Espacio` pausar/escuchar, `Ctrl+Alt+X` detener la tarea.
+Atajos: `Ctrl+Alt+L` hablarle sin decir «Luna», `Ctrl+Alt+Espacio` pausar/escuchar, `Ctrl+Alt+X` detener la tarea.
 Ajustes en `%APPDATA%\Colo\settings.json` (la API key va cifrada con DPAPI).
 
 ## Compilar (desde Linux o Windows)

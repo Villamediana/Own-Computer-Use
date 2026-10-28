@@ -33,6 +33,10 @@ public sealed class Settings
     public int Sensitivity { get; set; } = 6;
     /// <summary>ID del micrófono en Windows (WASAPI); vacío = el predeterminado.</summary>
     public string MicId { get; set; } = "";
+    /// <summary>Solo atiende tras oír «Luna» (o el atajo) y vuelve a dormir tras 45 s sin hablarle.</summary>
+    public bool WakeWord { get; set; } = true;
+    /// <summary>Atajo para despertarla sin decir «Luna».</summary>
+    public string WakeHotkey { get; set; } = "Ctrl+Alt+L";
     public bool SpeakReplies { get; set; }
     public ReplyVoice ReplyVoice { get; set; } = ReplyVoice.ElevenLabs;
     public string ElevenVoiceId { get; set; } = "";

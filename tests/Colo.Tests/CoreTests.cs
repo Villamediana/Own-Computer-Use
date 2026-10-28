@@ -645,6 +645,61 @@ public class CoreTests(ITestOutputHelper output)
         Assert.Contains("remember", tools);
     }
 
+    static short[] Pcm(string name)
+    {
+        var bytes = File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "wake", name + ".pcm"));
+        var pcm = new short[bytes.Length / 2];
+        Buffer.BlockCopy(bytes, 0, pcm, 0, bytes.Length);
+        return pcm;
+    }
+
+    static List<float> WakeScores(string name)
+    {
+        using var model = WakeModel.Bundled();
+        var audio = Pcm(name);
+        var scores = new List<float>();
+        for (var i = 0; i + WakeModel.Chunk <= audio.Length; i += WakeModel.Chunk)
+            scores.Add(model.Score(audio.AsSpan(i, WakeModel.Chunk)));
+        return scores;
+    }
+
+    [Fact]
+    public void Wake_word_scores_match_the_phone_chunk_by_chunk()
+    {
+        // Las mismas notas que el bucle de referencia de la Luna (oww_stream.py) con la misma persona real.
+        foreach (var name in new[] { "luna", "lua" })
+        {
+            var expected = File.ReadAllLines(Path.Combine(AppContext.BaseDirectory, "wake", name + ".scores"))
+                .Where(l => l.Trim().Length > 0).Select(l => float.Parse(l, System.Globalization.CultureInfo.InvariantCulture)).ToList();
+            var actual = WakeScores(name);
+            Assert.Equal(expected.Count, actual.Count);
+            for (var i = 0; i < expected.Count; i++) Assert.True(Math.Abs(expected[i] - actual[i]) < 1e-3, $"{name}[{i}]: {expected[i]} vs {actual[i]}");
+        }
+        Assert.Contains(WakeScores("luna"), s => s >= WakeWord.Cutoff);
+        Assert.DoesNotContain(WakeScores("lua"), s => s >= WakeWord.Cutoff);
+    }
+
+    [Fact]
+    public async Task Wake_word_fires_once_from_the_microphone_stream()
+    {
+        using var wake = new WakeWord(WakeModel.Bundled());
+        var woke = 0;
+        wake.Woke += _ => Interlocked.Increment(ref woke);
+        // Medio segundo de ruido suave (para el calentamiento) y luego «luna», en bloques de 40 ms como el micrófono.
+        var rnd = new Random(3);
+        var audio = Enumerable.Range(0, 8000).Select(_ => (short)rnd.Next(-30, 30)).Concat(Pcm("luna")).ToArray();
+        for (var i = 0; i < audio.Length; i += 640) wake.Feed(audio.AsSpan(i, Math.Min(640, audio.Length - i)));
+        await Task.Delay(1500);
+        Assert.Equal(1, woke);
+        var lua = 0;
+        using var other = new WakeWord(WakeModel.Bundled());
+        other.Woke += _ => Interlocked.Increment(ref lua);
+        var neg = Enumerable.Range(0, 8000).Select(_ => (short)rnd.Next(-30, 30)).Concat(Pcm("lua")).ToArray();
+        for (var i = 0; i < neg.Length; i += 640) other.Feed(neg.AsSpan(i, Math.Min(640, neg.Length - i)));
+        await Task.Delay(1500);
+        Assert.Equal(0, lua);
+    }
+
     [Fact]
     public async Task Rate_limit_is_retried()
     {

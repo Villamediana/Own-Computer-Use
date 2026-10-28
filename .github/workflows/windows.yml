@@ -35,6 +35,14 @@ jobs:
           Get-Content "$env:LOCALAPPDATA\Colo\colo.log"
           if (-not (Select-String -Path voice.txt -Pattern "^ok$")) { exit 1 }
 
+      - name: «Luna» en el .exe único
+        shell: pwsh
+        run: |
+          $p = Start-Process out/preview/Preview.exe -ArgumentList "wake", "$PWD\tests\Colo.Tests\wake" -NoNewWindow -PassThru -RedirectStandardOutput wake.txt
+          $p.WaitForExit()
+          Get-Content wake.txt
+          if (-not (Select-String -Path wake.txt -Pattern "^ok$")) { exit 1 }
+
       - name: Elementos de UI Automation (Bloc y Chrome)
         shell: pwsh
         run: |

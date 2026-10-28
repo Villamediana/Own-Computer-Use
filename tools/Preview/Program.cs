@@ -87,6 +87,30 @@ if (args[0] == "menu")
     return 0;
 }
 
+if (args[0] == "wake")
+{
+    // «Luna» dentro del .exe único (ONNX Runtime nativo incluido): Preview wake <carpeta con luna.pcm y lua.pcm>
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    using var model = WakeModel.Bundled();
+    Console.WriteLine($"modelo cargado en {sw.ElapsedMilliseconds} ms");
+    var ok = true;
+    foreach (var (name, should) in new[] { ("luna", true), ("lua", false) })
+    {
+        var bytes = File.ReadAllBytes(Path.Combine(args[1], name + ".pcm"));
+        var pcm = new short[bytes.Length / 2];
+        Buffer.BlockCopy(bytes, 0, pcm, 0, bytes.Length);
+        sw.Restart();
+        var best = 0f;
+        var n = 0;
+        for (var i = 0; i + WakeModel.Chunk <= pcm.Length; i += WakeModel.Chunk, n++) best = Math.Max(best, model.Score(pcm.AsSpan(i, WakeModel.Chunk)));
+        var fired = best >= WakeWord.Cutoff;
+        Console.WriteLine($"{name}: máx {best:0.000} → {(fired ? "despierta" : "no")} · {sw.Elapsed.TotalMilliseconds / n:0.0} ms por trozo de 80 ms");
+        ok &= fired == should;
+    }
+    Console.WriteLine(ok ? "ok" : "FALLA");
+    return ok ? 0 : 1;
+}
+
 if (args[0] == "voice")
 {
     // Mismo camino que el micrófono: PCM 16 kHz en bloques de 40 ms → detector por volumen → Whisper.

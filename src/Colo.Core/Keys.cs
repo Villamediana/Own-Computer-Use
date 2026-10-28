@@ -32,6 +32,26 @@ public static class Keys
         ["\\"] = new(0xDC, false), ["'"] = new(0xDE, false), ["`"] = new(0xC0, false),
     };
 
+    /// <summary>«Ctrl+Alt+L» → modificadores y tecla para RegisterHotKey (MOD_ALT 1, CONTROL 2, SHIFT 4, WIN 8).</summary>
+    public static bool Hotkey(string combo, out uint mods, out uint vk)
+    {
+        mods = vk = 0;
+        try
+        {
+            foreach (var k in Parse(combo))
+                switch (k.Vk)
+                {
+                    case 0x12: mods |= 1; break;
+                    case 0x11: mods |= 2; break;
+                    case 0x10: mods |= 4; break;
+                    case 0x5B: mods |= 8; break;
+                    default: vk = k.Vk; break;
+                }
+        }
+        catch (ArgumentException) { return false; }
+        return vk != 0 && mods != 0;
+    }
+
     public static List<KeyStroke> Parse(string combo)
     {
         var parts = combo.Trim().Split('+', StringSplitOptions.TrimEntries);

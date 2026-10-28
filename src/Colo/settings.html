@@ -406,6 +406,10 @@
           </div>
         </div>
 
+        <h2>Para hablarle</h2>
+        <div class="seg" data-bind="WakeWord" data-options="on:Al decir «Luna»|off:Siempre escuchando"></div>
+        <p class="hint" id="wakeHint"></p>
+
         <h2>Transcripción</h2>
         <div class="seg" data-bind="SpeechEngine" data-options="Local:En tu PC · gratis|Api:OpenAI / Foundry|ElevenLabs:ElevenLabs"></div>
         <p class="hint" id="engineHint"></p>
@@ -522,6 +526,11 @@
 
         <h2>Atajos</h2>
         <div class="group">
+          <div class="row">
+            <div class="label"><b>Hablarle sin decir «Luna»</b><small id="wakeKeyHint">La onda aparece y escucha al momento.</small></div>
+            <div class="keys" id="wakeKeys"></div>
+            <button class="btn" id="recordKey">Cambiar</button>
+          </div>
           <div class="row"><div class="label"><b>Pausar o seguir escuchando</b></div><div class="keys"><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>Espacio</kbd></div></div>
           <div class="row"><div class="label"><b>Detener lo que está haciendo</b></div><div class="keys"><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>X</kbd></div></div>
           <div class="row"><div class="label"><b>Mover la onda</b></div><div class="keys"><kbd>Arrastrar</kbd></div></div>
@@ -687,6 +696,43 @@ function renderFacts() {
   });
 }
 
+// ── atajo para despertarla: se graba pulsándolo
+function showWakeKeys() {
+  $("#wakeKeys").innerHTML = (S.WakeHotkey || "").split("+").map(k => `<kbd>${esc(k === "Space" ? "Espacio" : k)}</kbd>`).join("");
+}
+function recordWakeKey() {
+  const btn = $("#recordKey");
+  btn.textContent = "Pulsa el atajo…";
+  $("#wakeKeyHint").textContent = "Con Ctrl, Alt, Mayús o Win y una tecla. Esc para dejarlo como estaba.";
+  const done = () => {
+    window.removeEventListener("keydown", onKey, true);
+    btn.textContent = "Cambiar";
+    $("#wakeKeyHint").textContent = "La onda aparece y escucha al momento.";
+  };
+  const onKey = e => {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (e.key === "Escape") return done();
+    const code = e.code;
+    const key = /^Key[A-Z]$/.test(code) ? code.slice(3) : /^Digit\d$/.test(code) ? code.slice(5)
+      : /^F\d{1,2}$/.test(code) ? code : code === "Space" ? "Space" : null;
+    if (!key) return;                       // todavía solo modificadores
+    const mods = [e.ctrlKey && "Ctrl", e.altKey && "Alt", e.shiftKey && "Shift", e.metaKey && "Win"].filter(Boolean);
+    if (!mods.length) { $("#wakeKeyHint").textContent = "Añade Ctrl, Alt, Mayús o Win: una tecla sola se dispararía al escribir."; return; }
+    S.WakeHotkey = [...mods, key].join("+");
+    showWakeKeys();
+    syncWake();
+    touch();
+    done();
+  };
+  window.addEventListener("keydown", onKey, true);
+}
+function syncWake() {
+  $("#wakeHint").textContent = S.WakeWord !== false
+    ? `Dormida no oye ni gasta nada: la onda desaparece. Di «Luna» (o ${S.WakeHotkey}) y te escucha; vuelve a dormir tras 45 s sin hablarle.`
+    : "Atiende todo lo que oye: cada frase va al modelo, también las charlas con otras personas.";
+}
+
 // ── voz de las respuestas
 function syncReply() {
   const speak = !!S.SpeakReplies, eleven = speak && S.ReplyVoice === "ElevenLabs";
@@ -792,6 +838,12 @@ function init(msg) {
   sens.value = S.Sensitivity || 6;
   paint();
   sens.oninput = () => { S.Sensitivity = +sens.value; paint(); touch(); };
+  // ── «Luna» y su atajo
+  S.WakeHotkey ||= "Ctrl+Alt+L";
+  seg($("[data-bind=WakeWord]"), S.WakeWord === false ? "off" : "on", v => { S.WakeWord = v === "on"; syncWake(); touch(); });
+  syncWake();
+  showWakeKeys();
+  $("#recordKey").onclick = recordWakeKey;
   sw("speak", "SpeakReplies", syncReply);
   S.ReplyVoice ||= "ElevenLabs";
   S.ElevenTtsModel ||= "eleven_v4";
@@ -1073,7 +1125,7 @@ function demoHost() {
             settings: {
               Provider: "Azure", Endpoint: "https://latamfoundryai.openai.azure.com", ApiKey: "sk-demo-123", Model: "gpt-5.6-luna",
               ReasoningEffort: "low", SpeechEngine: page.get("engine") || "Local", LocalModel: "base", Language: "es", TranscribeModel: "", ElevenLabsKey: page.has("speak") ? "sk_demo" : "", ElevenLabsModel: "scribe_v2", MicId: "", Sensitivity: 6,
-              SpeakReplies: page.has("speak"), ReplyVoice: "ElevenLabs", ElevenVoiceId: "", ElevenVoiceName: "", ElevenTtsModel: "eleven_v4",
+              WakeWord: true, WakeHotkey: "Ctrl+Alt+L", SpeakReplies: page.has("speak"), ReplyVoice: "ElevenLabs", ElevenVoiceId: "", ElevenVoiceName: "", ElevenTtsModel: "eleven_v4",
               StartWithWindows: true, Vision: "Auto", DisabledTools: ["files"],
               McpServers: [
                 { Name: "Archivos", Kind: "Command", Command: "npx -y @modelcontextprotocol/server-filesystem C:\\Users\\miguel", Env: "", Url: "", Headers: "", Enabled: true, Tools: ["read_file", "list_directory"] },

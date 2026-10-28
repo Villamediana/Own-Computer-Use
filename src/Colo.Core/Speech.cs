@@ -161,7 +161,7 @@ public sealed class LocalStt : IDisposable
     {
         var names = apps.Where(a => a.Length > 1).Select(a => char.ToUpperInvariant(a[0]) + a[1..])
             .Distinct(StringComparer.OrdinalIgnoreCase).Take(12);
-        return "Glosario: pestaña, aba, guía, navegador, barra de direcciones, endereço, URL, escribe, escreve, clic, clica, "
+        return "Glosario: Luna, pestaña, aba, guía, navegador, barra de direcciones, endereço, URL, escribe, escreve, clic, clica, "
             + string.Join(", ", names) + ".";
     }
 

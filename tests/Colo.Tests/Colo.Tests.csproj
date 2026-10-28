@@ -16,4 +16,8 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Colo.Core\Colo.Core.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- «luna» y «lua» reales de Multilingual Spoken Words (CC-BY 4.0) con las notas del bucle de referencia. -->
+    <None Include="wake/*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

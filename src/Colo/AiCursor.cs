@@ -50,7 +50,7 @@ abstract class LayeredWindow : Form
         SetWindowDisplayAffinity(Handle, WDA_EXCLUDEFROMCAPTURE);
     }
 
-    protected void Present(Bitmap bmp, Point topLeft)
+    protected void Present(Bitmap bmp, Point topLeft, byte alpha = 255)
     {
         var screen = GetDC(IntPtr.Zero);
         var mem = CreateCompatibleDC(screen);
@@ -61,7 +61,7 @@ abstract class LayeredWindow : Form
             var pos = new POINT { x = topLeft.X, y = topLeft.Y };
             var size = new SIZE { cx = bmp.Width, cy = bmp.Height };
             var src = new POINT();
-            var blend = new BLENDFUNCTION { BlendOp = 0, SourceConstantAlpha = 255, AlphaFormat = 1 };
+            var blend = new BLENDFUNCTION { BlendOp = 0, SourceConstantAlpha = alpha, AlphaFormat = 1 };
             UpdateLayeredWindow(Handle, screen, ref pos, ref size, mem, ref src, 0, ref blend, 2);
         }
         finally
