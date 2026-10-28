@@ -287,7 +287,7 @@ public sealed class Agent
     {
         string Target()
         {
-            if (c.Int("mark") is int id)
+            if (c.Mark() is int id)
             {
                 var m = obs.Marks.FirstOrDefault(x => x.Id == id);
                 return m is null ? $" [{id}]" : $" [{id}] {(m.Name.Length > 0 ? "«" + Trunc(m.Name, 40) + "»" : m.Role)}";
@@ -297,7 +297,7 @@ public sealed class Agent
         return c.Name switch
         {
             "click" => (c.Bool("double") ? "Doble clic" : c.Str("button") == "right" ? "Clic derecho" : "Clic") + Target(),
-            "type_text" => $"Escribe «{Trunc(c.Str("text"), 60)}»" + (c.Int("mark") is not null ? " en" + Target() : "")
+            "type_text" => $"Escribe «{Trunc(c.Str("text"), 60)}»" + (c.Mark() is not null ? " en" + Target() : "")
                 + (c.Bool("submit") ? " ⏎" : ""),
             "press_keys" => $"Teclas {c.Str("keys")}" + (c.Int("repeat") is > 1 and var n ? $" ×{n}" : ""),
             "scroll" => c.Str("to") switch

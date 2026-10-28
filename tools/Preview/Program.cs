@@ -11,6 +11,8 @@ using Colo.Core;
 
 // Uso: Preview shots <carpeta>   → PNG de la onda y del cursor
 //      Preview run <endpoint> "<orden>"  → bucle real contra un endpoint (OpenAI-compatible)
+//      Preview e2e <carpeta> <prueba.html>  → Colo entero en Windows real con órdenes de texto (ver E2e.cs)
+if (args[0] == "e2e") return E2e.Run(args[1], args[2]);
 var outDir = args.Length > 1 ? args[1] : ".";
 if (args[0] == "shots")
 {
@@ -52,7 +54,7 @@ if (args[0] == "shots")
         Save(c2, $"cursor-click@{s}", s);
     }
     Console.WriteLine("ok");
-    return;
+    return 0;
 }
 
 if (args[0] == "menu")
@@ -76,7 +78,7 @@ if (args[0] == "menu")
     menu.DrawToBitmap(bmp, new Rectangle(Point.Empty, menu.Size));
     bmp.Save(Path.Combine(outDir, "menu.png"), ImageFormat.Png);
     Console.WriteLine("ok");
-    return;
+    return 0;
 }
 
 if (args[0] == "voice")
@@ -104,7 +106,7 @@ if (args[0] == "voice")
         Say($"frase {p.Length / 16000.0:0.0}s → «{stt.Transcribe(p)}» ({sw.ElapsedMilliseconds} ms)");
     }
     Say(phrases.Count == 0 ? "SIN FRASES" : "ok");
-    return;
+    return 0;
 }
 
 if (args[0] == "run")
@@ -116,3 +118,4 @@ if (args[0] == "run")
     await agent.Hear(args[2]);
     Console.WriteLine("fin");
 }
+return 0;

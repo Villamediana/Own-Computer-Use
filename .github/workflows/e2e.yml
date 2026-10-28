@@ -1,0 +1,32 @@
+name: Punta a punta
+
+# Colo entero en un Windows real (onda, cursor, agente y modelo de verdad): órdenes de texto como si
+# las hubiera oído, y se comprueba en la pantalla que pasó. Gasta tokens: solo a mano.
+on:
+  workflow_dispatch:
+
+jobs:
+  e2e:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Prueba
+        shell: pwsh
+        env:
+          COLO_ENDPOINT: https://latamfoundryai.openai.azure.com/openai/v1
+          COLO_MODEL: gpt-5.6-luna
+          COLO_KEY: ${{ secrets.COLO_KEY }}
+        run: |
+          dotnet publish tools/Preview -c Release -r win-x64 --self-contained -o out/preview
+          $p = Start-Process out/preview/Preview.exe -ArgumentList "e2e", "$PWD\out\e2e", "$PWD\tests\e2e\prueba.html" -NoNewWindow -PassThru -Wait
+          exit $p.ExitCode
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e
+          path: out/e2e

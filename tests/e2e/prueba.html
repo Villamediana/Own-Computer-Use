@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Prueba Colo</title>
+<style>
+  body { font: 18px system-ui, sans-serif; margin: 40px; color: #111; }
+  label { display: block; margin: 0 0 24px; }
+  input { font: inherit; padding: 6px 10px; margin-left: 8px; }
+  button { font: inherit; padding: 8px 22px; }
+  canvas { display: block; margin-top: 32px; border: 1px solid #ddd; }
+</style>
+</head>
+<body>
+<!-- Página de la prueba de punta a punta: cada acción correcta cambia el título de la ventana. -->
+<h1>Página de prueba</h1>
+<label>Nombre <input id="nombre" aria-label="Nombre"></label>
+<button id="aceptar">Aceptar</button>
+<canvas id="lienzo" width="520" height="220"></canvas>
+<script>
+  const nombre = document.getElementById('nombre');
+  nombre.addEventListener('input', () => document.title = 'Nombre: ' + nombre.value);
+  document.getElementById('aceptar').addEventListener('click', () => document.title = 'Aceptado');
+  // Dibujo sin accesibilidad: solo se acierta mirando la captura.
+  const c = document.getElementById('lienzo'), g = c.getContext('2d');
+  g.fillStyle = '#2563eb'; g.fillRect(30, 40, 140, 140);
+  g.fillStyle = '#dc2626'; g.fillRect(340, 40, 140, 140);
+  c.addEventListener('click', e => {
+    const r = c.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+    if (x >= 340 && x <= 480 && y >= 40 && y <= 180) document.title = 'Rojo';
+    else if (x >= 30 && x <= 170 && y >= 40 && y <= 180) document.title = 'Azul';
+  });
+</script>
+</body>
+</html>

@@ -95,6 +95,9 @@ Cada turno trae lo que dijo, lo que ya hiciste, la ventana activa y los elemento
         {
             if (off.Contains(t!["name"]!.GetValue<string>())) continue;
             all.Remove(t);
+            // En la Responses API las funciones son estrictas por defecto: el modelo rellena todo
+            // (mark 0, x 0…) aunque solo quiera x,y. Sin strict manda solo lo que usa.
+            t["strict"] = false;
             result.Add(t);
         }
         return result;

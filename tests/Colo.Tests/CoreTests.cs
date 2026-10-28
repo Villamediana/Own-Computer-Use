@@ -526,6 +526,17 @@ public class CoreTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void Tools_are_not_strict_and_mark_zero_means_no_mark()
+    {
+        // La Responses API hace estrictas las funciones si no se dice nada: el modelo manda mark 0 para clicar x,y.
+        Assert.All(Tools.Build(null), t => Assert.False(t!["strict"]!.GetValue<bool>()));
+        var call = new ToolCall("click", (JsonObject)JsonNode.Parse("""{"mark":0,"x":300,"y":200}""")!);
+        Assert.Null(call.Mark());
+        Assert.Equal(300, call.Int("x"));
+        Assert.Equal(7, new ToolCall("click", (JsonObject)JsonNode.Parse("""{"mark":7}""")!).Mark());
+    }
+
+    [Fact]
     public void Keys_parse()
     {
         Assert.Equal([(ushort)0x11, (ushort)0x4C], Keys.Parse("ctrl+l").Select(k => k.Vk));

@@ -63,6 +63,8 @@ sealed class Widget : LayeredWindow
     bool _pressed, _moved;
     Point _pressAt, _pressPos;
 
+    internal Agent Brain => _agent;
+
     public Widget()
     {
         _ai = new AiClient(_s);
@@ -442,7 +444,8 @@ sealed class Widget : LayeredWindow
         }
     }
 
-    void Command(string text)
+    /// <summary>Lo que se ejecuta al oír una frase (también lo usa la prueba de punta a punta).</summary>
+    internal void Command(string text)
     {
         if (!Configured()) { OpenSettings(); return; }
         Log.Write($"orden: «{text}»");

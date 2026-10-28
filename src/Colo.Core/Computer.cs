@@ -10,6 +10,8 @@ public sealed record Observation(byte[] Jpeg, int Width, int Height, string Wind
 
 public sealed record ToolCall(string Name, JsonObject Args)
 {
+    /// <summary>Marca elegida; las marcas empiezan en 1, así que 0 o negativo es «sin marca».</summary>
+    public int? Mark(string key = "mark") => Int(key) is int n && n > 0 ? n : null;
     public int? Int(string key) => Args[key] is JsonValue v && v.TryGetValue<double>(out var d) ? (int)Math.Round(d) : null;
     public double? Num(string key) => Args[key] is JsonValue v && v.TryGetValue<double>(out var d) ? d : null;
     public string Str(string key) => Args[key] is JsonValue v && v.TryGetValue<string>(out var s) ? s : "";

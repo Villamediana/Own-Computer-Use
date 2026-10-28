@@ -361,6 +361,7 @@ public sealed class McpHub : IToolHost, IAsyncDisposable
                     ["name"] = name,
                     ["description"] = desc.Length > 400 ? desc[..400] + "…" : desc,
                     ["parameters"] = schema,
+                    ["strict"] = false,
                 });
             }
         }

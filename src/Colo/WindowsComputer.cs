@@ -207,7 +207,7 @@ sealed class WindowsComputer : IComputer
         lock (_lock)
         {
             error = "";
-            if (c.Int(prefix + "mark") is int id)
+            if (c.Mark(prefix + "mark") is int id)
             {
                 if (_marks.TryGetValue(id, out var r))
                 {
@@ -264,7 +264,7 @@ sealed class WindowsComputer : IComputer
             }
             case "type_text":
             {
-                if (c.Int("mark") is not null)
+                if (c.Mark() is not null)
                 {
                     if (!Target(c, out var p, out var err)) return err;
                     Cursor?.Glide(p, "Clic" + NameOf(c));
@@ -314,7 +314,7 @@ sealed class WindowsComputer : IComputer
                 return "ok";
             case "scroll":
             {
-                var hasTarget = c.Int("mark") is not null || c.Int("x") is not null;
+                var hasTarget = c.Mark() is not null || c.Int("x") is not null;
                 if (!Target(c, out var p, out var err) && hasTarget) return err;
                 Cursor?.Glide(p, c.Str("direction") switch { "up" => "Subiendo", "down" => "Bajando", _ => "Desplazando" });
                 Input.Scroll(p, c.Str("direction"), Math.Clamp(c.Int("amount") ?? 5, 1, 30));
@@ -426,7 +426,7 @@ sealed class WindowsComputer : IComputer
     string NameOf(ToolCall c)
     {
         lock (_lock)
-            return c.Int("mark") is int id && _names.TryGetValue(id, out var n) && n.Length > 0
+            return c.Mark() is int id && _names.TryGetValue(id, out var n) && n.Length > 0
                 ? $" «{(n.Length > 28 ? n[..28] + "…" : n)}»" : "";
     }
 
