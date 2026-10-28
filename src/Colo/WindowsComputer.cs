@@ -60,7 +60,13 @@ sealed class WindowsComputer : IComputer
             if (_uia is null || _uia.IsCompleted) _uia = uia = Task.Run(() => Collect(hwnd, b));
         }
         Bitmap? full = withImage ? Capture(b) : null;
+        var uiaWatch = Stopwatch.StartNew();
         if (uia is not null && uia.Wait(UiaBudgetMs, ct)) elements = uia.Result;
+        // Sin marcas el modelo trabaja solo con la captura (más lento y menos preciso): que quede en el registro.
+        if (elements.Count == 0)
+            Log.Write(uia is null ? $"UIA: lectura anterior sigue colgada · «{window}»"
+                : uia.IsCompleted ? $"UIA: 0 elementos · «{window}»"
+                : $"UIA: no contestó en {uiaWatch.ElapsedMilliseconds} ms · «{window}»");
         // Sin elementos legibles (juego, escritorio remoto…) la lista no sirve: va la captura.
         if (full is null && elements.Count == 0) full = Capture(b);
 
@@ -191,9 +197,9 @@ sealed class WindowsComputer : IComputer
             }
         }
 
-        try { From(hwnd); } catch { }
+        try { From(hwnd); } catch (Exception ex) { Log.Write("UIA: falló la ventana · " + ex.Message); }
         if (found.Count < MaxMarks)
-            try { From(Native.FindWindow("Shell_TrayWnd", null)); } catch { }
+            try { From(Native.FindWindow("Shell_TrayWnd", null)); } catch (Exception ex) { Log.Write("UIA: falló la barra de tareas · " + ex.Message); }
 
         return found
             .GroupBy(e => e.Rect).Select(g => g.First())

@@ -526,6 +526,24 @@ public class CoreTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public async Task Same_click_over_and_over_warns_then_stops()
+    {
+        // Visto en Windows real: el clic funcionó, la página no cambió a la vista y el modelo clicaba sin fin.
+        var bodies = new List<string>();
+        var h = new FakeHandler((_, body) => { lock (bodies) bodies.Add(body); return (HttpStatusCode.OK, Calls(("click", """{"x":94,"y":285}"""))); });
+        var s = Azure();
+        var pc = new FakeComputer();
+        var agent = new Agent(new AiClient(s, new HttpClient(h)), s, pc) { SettleMs = 0 };
+        var events = new List<AgentEvent>();
+        agent.Event += e => { lock (events) events.Add(e); };
+        await agent.Hear("pulsa aceptar");
+        Assert.Equal(3, pc.Done.Count);
+        Assert.Contains("3 veces seguidas", bodies[3]);
+        Assert.Equal(AgentEventKind.Error, events[^1].Kind);
+        Assert.False(agent.Busy);
+    }
+
+    [Fact]
     public void Tools_are_not_strict_and_mark_zero_means_no_mark()
     {
         // La Responses API hace estrictas las funciones si no se dice nada: el modelo manda mark 0 para clicar x,y.

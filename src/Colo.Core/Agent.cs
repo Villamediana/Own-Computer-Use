@@ -25,6 +25,8 @@ public sealed class Agent
 
     public int MaxSteps { get; init; } = 40;
     public int SettleMs { get; init; } = 250;
+    /// <summary>La misma acción idéntica seguida: a la tercera se avisa al modelo, a la cuarta se para.</summary>
+    public int MaxRepeats { get; init; } = 3;
     /// <summary>Herramientas de servidores MCP (se cambia al guardar Ajustes).</summary>
     public IToolHost? Extra { get; set; }
     public event Action<AgentEvent>? Event;
@@ -73,6 +75,8 @@ public sealed class Agent
         string? final = null;
         var released = false;
         var look = false;
+        string? lastCall = null;
+        var repeats = 0;
         try
         {
             for (var step = 0; step < MaxSteps; step++)
@@ -114,6 +118,17 @@ public sealed class Agent
                     }
 
                     var label = Describe(call, obs);
+                    // Un clic que funcionó pero no cambia nada visible hacía repetirlo hasta agotar los pasos.
+                    // Bajar, esperar o pasar página varias veces seguidas sí es normal.
+                    var signature = call.Name is "scroll" or "wait" or "press_keys" ? null : call.Name + call.Args.ToJsonString();
+                    repeats = signature is not null && signature == lastCall ? repeats + 1 : 1;
+                    lastCall = signature;
+                    if (repeats > MaxRepeats)
+                    {
+                        Remember(heard, "se repetía sin avanzar");
+                        Emit(AgentEventKind.Error, $"Me detuve: repetía «{label}».");
+                        return;
+                    }
                     Emit(AgentEventKind.Action, label);
                     acted = true;
                     string result;
@@ -127,6 +142,8 @@ public sealed class Agent
                     // El resultado largo viaja entero solo en el turno siguiente; en el registro queda corto.
                     if (result.Length > 300) fresh.Add($"{label}:\n{result}");
                     log.Add($"{label} → {Trunc(result, 300)}");
+                    if (repeats == MaxRepeats)
+                        log.Add($"Ya hiciste «{label}» {repeats} veces seguidas. Si el pedido está cumplido, done; si no tuvo efecto, prueba de otra forma.");
                     if (result.StartsWith("error", StringComparison.Ordinal)) break;
                 }
 

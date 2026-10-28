@@ -70,7 +70,7 @@ static class E2e
             {
                 if (chrome is null) throw new InvalidOperationException("no hay Chrome");
                 Process.Start(chrome, $"--no-first-run --no-default-browser-check --force-renderer-accessibility --start-maximized --user-data-dir=\"{profile}\" \"{new Uri(Path.GetFullPath(page)).AbsoluteUri}\"")?.Dispose();
-                WaitTitle("chrome", "Prueba Colo", 20_000);
+                WaitTitle("chrome", "Prueba Colo", 60_000);
                 Focus(WaitWindow("notepad", 5_000));
             }, "abre una pestaña nueva en el navegador que tenía abierto", () =>
                 Front() is var (proc, title) && proc == "chrome" && !title.Contains("Prueba Colo") ? null : $"delante: {Front()}"),
@@ -110,12 +110,12 @@ static class E2e
                 }
                 widget!.Brain.Event += OnEvent;
                 widget.Invoke(() => widget.Command(c.Order));
-                var finished = done.Task.Wait(TimeSpan.FromSeconds(120));
+                var finished = done.Task.Wait(TimeSpan.FromSeconds(30));
                 widget.Brain.Event -= OnEvent;
                 if (!finished)
                 {
                     widget.Brain.Stop();
-                    problem = "no terminó en 120 s";
+                    problem = "no terminó en 30 s";
                 }
                 else
                 {
