@@ -90,7 +90,19 @@ if (args[0] == "menu")
 if (args[0] == "glide")
 {
     // El ratón de Colo en Windows real: cada paso al ritmo del monitor, sin tirones, y termina exacto.
+    // Ritmo puro del compositor y costo de pintar el cursor, para separar monitor lento de dibujo lento.
+    double Cadence(Action? each)
+    {
+        var w = System.Diagnostics.Stopwatch.StartNew();
+        for (var i = 0; i < 30; i++) { each?.Invoke(); Colo.Native.WaitFrame(); }
+        return w.Elapsed.TotalMilliseconds / 30;
+    }
     var cursor = AiCursor.Create();
+    Console.WriteLine($"refresco solo: {Cadence(null):0.0} ms · moviendo el ratón: {Cadence(() => Colo.Native.SetCursorPos(300, 300)):0.0} ms" +
+        $" · pintando el cursor: {Cadence(() => cursor.Follow(new Point(300, 300))):0.0} ms");
+    var paint = System.Diagnostics.Stopwatch.StartNew();
+    for (var i = 0; i < 30; i++) cursor.Follow(new Point(300 + i, 300));
+    Console.WriteLine($"pintar un cuadro: {paint.Elapsed.TotalMilliseconds / 30:0.0} ms");
     var ok = true;
     var targets = new[] { new Point(200, 200), new Point(900, 600), new Point(910, 605), new Point(150, 500) };
     var from = new Point(500, 300);
