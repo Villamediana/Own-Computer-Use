@@ -51,7 +51,7 @@ if (args[0] == "shots")
             Save(bmp, $"wave-{name}@{s}", s);
         }
         // La gota sacudida (aplastada y estirada) y la frase a media entrada.
-        p.Mode = Mode.Busy; p.Level = 0.38; p.Energy = 1; p.Caption = "«abre chrome»";
+        p.Mode = Mode.Busy; p.Level = 0.38; p.Energy = 1; p.Caption = "«abre chrome»"; p.CaptionColor = Theme.Ink;
         foreach (var (name, sq, rise, scale) in new[] { ("squash", 0.9f, 5f, 0.93f), ("stretch", -0.8f, -1.5f, 1.03f) })
         {
             p.Squash = sq; p.CaptionRise = rise; p.CaptionScale = scale;

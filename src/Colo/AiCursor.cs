@@ -505,12 +505,14 @@ sealed class AiCursor : LayeredWindow
             g.SetClip(path, CombineMode.Intersect);
             var tx = tag.X + 9 * s;
             var ty = tag.Y + 3.5f * s;
-            var slide = (1 - look.Mix) * 5 * s;
+            // El texto viejo sube y sale por arriba; el nuevo entra desde abajo (la etiqueta lo recorta).
+            var travel = h * 0.75f;
+            var m = (float)(1 - Math.Pow(1 - Math.Clamp(look.Mix, 0, 1), 3));
             if (prev.Length > 0 && look.Mix < 1)
-                using (var old = new SolidBrush(Color.FromArgb(A((int)(255 * (1 - look.Mix))), 255, 255, 255)))
-                    g.DrawString(prev, font, old, tx, ty - (5 * s - slide));
-            using (var ink = new SolidBrush(Color.FromArgb(A((int)(255 * look.Mix)), 255, 255, 255)))
-                g.DrawString(label, font, ink, tx, ty + slide);
+                using (var old = new SolidBrush(Color.FromArgb(A((int)(255 * (1 - m))), 255, 255, 255)))
+                    g.DrawString(prev, font, old, tx, ty - travel * m);
+            using (var ink = new SolidBrush(Color.FromArgb(A((int)(255 * Math.Min(1, m * 1.4f))), 255, 255, 255)))
+                g.DrawString(label, font, ink, tx, ty + travel * (1 - m));
         }
         g.Restore(state);
     }
