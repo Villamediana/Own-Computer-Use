@@ -90,12 +90,13 @@ if (args[0] == "menu")
 if (args[0] == "wake")
 {
     // «Luna» dentro del .exe único (ONNX Runtime nativo incluido): Preview wake <carpeta con luna.pcm y lua.pcm>
-    var sw = System.Diagnostics.Stopwatch.StartNew();
-    using var model = WakeModel.Bundled();
-    Console.WriteLine($"modelo cargado en {sw.ElapsedMilliseconds} ms");
     var ok = true;
     foreach (var (name, should) in new[] { ("luna", true), ("lua", false) })
     {
+        // Un detector nuevo por grabación: recuerda los últimos 1,28 s y el «luna» anterior contaría.
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        using var model = WakeModel.Bundled();
+        Console.WriteLine($"modelo cargado en {sw.ElapsedMilliseconds} ms");
         var bytes = File.ReadAllBytes(Path.Combine(args[1], name + ".pcm"));
         var pcm = new short[bytes.Length / 2];
         Buffer.BlockCopy(bytes, 0, pcm, 0, bytes.Length);
