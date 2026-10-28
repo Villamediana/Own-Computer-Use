@@ -30,8 +30,13 @@ public sealed class SpeechModels(string dir)
         var sizes = new long[missing.Count];
         for (var i = 0; i < missing.Count; i++)
         {
-            using var head = await http.SendAsync(new HttpRequestMessage(HttpMethod.Head, missing[i].Url), ct);
-            sizes[i] = head.Content.Headers.ContentLength ?? 1;
+            // El tamaño solo sirve para el porcentaje: si el servidor no contesta HEAD, se sigue igual.
+            try
+            {
+                using var head = await http.SendAsync(new HttpRequestMessage(HttpMethod.Head, missing[i].Url), ct);
+                sizes[i] = head.IsSuccessStatusCode ? head.Content.Headers.ContentLength ?? 1 : 1;
+            }
+            catch (HttpRequestException) { sizes[i] = 1; }
         }
         var total = Math.Max(1, sizes.Sum());
         long done = 0;
@@ -51,7 +56,7 @@ public sealed class SpeechModels(string dir)
                 {
                     await dst.WriteAsync(buf.AsMemory(0, n), ct);
                     done += n;
-                    progress?.Report(Math.Min(1, (double)done / total));
+                    progress?.Report(Math.Min(0.99, (double)done / total));
                 }
             }
             File.Move(part, path, overwrite: true);
@@ -71,8 +76,9 @@ public sealed class Listener : IDisposable
 
     readonly VoiceActivityDetector _vad;
     readonly float[] _chunk = new float[Window];
+    readonly object _lock = new();
     int _fill;
-    bool _speaking;
+    bool _speaking, _disposed;
 
     public bool Muted { get; set; }
     public event Action<float[]>? Utterance;
@@ -102,11 +108,21 @@ public sealed class Listener : IDisposable
         foreach (var s in pcm) sum += (double)s * s;
         if (pcm.Length > 0) Level?.Invoke(Math.Sqrt(sum / pcm.Length) / 32768.0);
 
-        if (Muted)
+        // El hilo de audio y el de la interfaz (Reset/Dispose) nunca tocan el VAD nativo a la vez.
+        lock (_lock)
         {
-            if (_speaking || _fill > 0) Reset();
-            return;
+            if (_disposed) return;
+            if (Muted)
+            {
+                if (_speaking || _fill > 0) ResetLocked();
+                return;
+            }
+            FeedLocked(pcm);
         }
+    }
+
+    void FeedLocked(ReadOnlySpan<short> pcm)
+    {
         foreach (var s in pcm)
         {
             _chunk[_fill++] = s / 32768f;
@@ -135,12 +151,28 @@ public sealed class Listener : IDisposable
 
     public void Reset()
     {
+        lock (_lock)
+        {
+            if (!_disposed) ResetLocked();
+        }
+    }
+
+    void ResetLocked()
+    {
         _vad.Reset();
         _fill = 0;
         if (_speaking) SpeakingChanged?.Invoke(_speaking = false);
     }
 
-    public void Dispose() => _vad.Dispose();
+    public void Dispose()
+    {
+        lock (_lock)
+        {
+            if (_disposed) return;
+            _disposed = true;
+            _vad.Dispose();
+        }
+    }
 }
 
 /// <summary>Transcripción local con Parakeet TDT v3 (CPU).</summary>
@@ -148,6 +180,7 @@ public sealed class LocalStt : IDisposable
 {
     readonly OfflineRecognizer _rec;
     readonly object _lock = new();
+    bool _disposed;
 
     public LocalStt(SpeechModels m)
     {
@@ -169,6 +202,7 @@ public sealed class LocalStt : IDisposable
     {
         lock (_lock)
         {
+            if (_disposed) return "";
             using var stream = _rec.CreateStream();
             stream.AcceptWaveform(rate, samples);
             _rec.Decode(stream);
@@ -176,7 +210,15 @@ public sealed class LocalStt : IDisposable
         }
     }
 
-    public void Dispose() => _rec.Dispose();
+    public void Dispose()
+    {
+        lock (_lock)
+        {
+            if (_disposed) return;
+            _disposed = true;
+            _rec.Dispose();
+        }
+    }
 }
 
 public static class Wav

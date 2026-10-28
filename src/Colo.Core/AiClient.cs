@@ -24,6 +24,9 @@ public sealed class AiClient
     readonly Settings _s;
     readonly HttpClient _http;
 
+    /// <summary>Tiempo máximo sin recibir nada del stream.</summary>
+    public TimeSpan StreamIdle { get; init; } = TimeSpan.FromSeconds(60);
+
     public AiClient(Settings settings, HttpClient? http = null)
     {
         _s = settings;
@@ -123,9 +126,18 @@ public sealed class AiClient
         if (!resp.IsSuccessStatusCode)
             throw new AiException($"HTTP {(int)resp.StatusCode}: {ErrorText(await resp.Content.ReadAsStringAsync(ct))}");
         using var reader = new StreamReader(await resp.Content.ReadAsStreamAsync(ct));
-        string? line;
-        while ((line = await reader.ReadLineAsync(ct)) is not null)
+        // HttpClient.Timeout no cubre la lectura del stream: si el servidor se calla, se corta aquí.
+        using var idle = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        while (true)
         {
+            idle.CancelAfter(StreamIdle);
+            string? line;
+            try { line = await reader.ReadLineAsync(idle.Token); }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                throw new AiException($"El modelo dejó de responder ({StreamIdle.TotalSeconds:0} s sin datos).");
+            }
+            if (line is null) yield break;
             if (!line.StartsWith("data:", StringComparison.Ordinal)) continue;
             var data = line[5..].Trim();
             if (data == "[DONE]") yield break;

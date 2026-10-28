@@ -87,6 +87,7 @@ public sealed class Agent
 
                 var message = new StringBuilder();
                 var anyCall = false;
+                var acted = false;
                 var finished = false;
                 var ignored = false;
                 // Cada herramienta se ejecuta en cuanto llega del stream, sin esperar al resto.
@@ -114,6 +115,7 @@ public sealed class Agent
 
                     var label = Describe(call, obs);
                     Emit(AgentEventKind.Action, label);
+                    acted = true;
                     string result;
                     try
                     {
@@ -155,7 +157,8 @@ public sealed class Agent
                     return;
                 }
 
-                if (SettleMs > 0 && !look) await Task.Delay(SettleMs, ct);
+                // Solo se espera a que la pantalla se asiente si algo cambió en este paso.
+                if (SettleMs > 0 && acted) await Task.Delay(SettleMs, ct);
                 if (log.Count > 40) log.RemoveRange(0, log.Count - 40);
             }
             Remember(heard, "se cortó por demasiados pasos");

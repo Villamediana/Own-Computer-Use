@@ -122,13 +122,17 @@ sealed class McpServerForm : Form
     bool Apply(McpServerConfig c)
     {
         var url = _kind.Index == 1;
-        if (_target.Text.Trim().Length == 0)
+        var target = _target.Text.Trim();
+        string? problem = target.Length == 0 ? (url ? "Falta la URL" : "Falta el comando")
+            : url && !(Uri.TryCreate(target, UriKind.Absolute, out var u) && (u.Scheme == "https" || u.Scheme == "http")) ? "URL inválida"
+            : null;
+        if (problem is not null)
         {
             _status.ForeColor = Theme.Danger;
-            _status.Text = url ? "Falta la URL" : "Falta el comando";
+            _status.Text = problem;
             return false;
         }
-        c.Name = _name.Text.Trim().Length > 0 ? _name.Text.Trim() : (url ? new Uri(_target.Text.Trim()).Host : _target.Text.Trim().Split(' ')[0]);
+        c.Name = _name.Text.Trim().Length > 0 ? _name.Text.Trim() : (url ? new Uri(target).Host : target.Split(' ')[0]);
         c.Kind = url ? McpKind.Url : McpKind.Command;
         c.Url = url ? _target.Text.Trim() : "";
         c.Command = url ? "" : _target.Text.Trim();
@@ -142,8 +146,7 @@ sealed class McpServerForm : Form
     async Task ConnectAsync(PillButton button)
     {
         var probe = new McpServerConfig();
-        try { if (!Apply(probe)) return; }
-        catch (UriFormatException) { _status.ForeColor = Theme.Danger; _status.Text = "URL inválida"; return; }
+        if (!Apply(probe)) return;
         button.Enabled = false;
         _status.ForeColor = Theme.Muted;
         _status.Text = "Conectando…";

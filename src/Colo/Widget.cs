@@ -64,7 +64,8 @@ sealed class Widget : LayeredWindow
         try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
 
         _frame.Tick += (_, _) => Frame();
-        _agent.Event += ev => { if (IsHandleCreated) BeginInvoke(() => OnAgent(ev)); };
+        _mic.Failed += reason => Post(() => OnMicFailed(reason));
+        _agent.Event += ev => Post(() => OnAgent(ev));
         BuildMenu();
         _ = Task.Run(PhraseLoopAsync);
     }
@@ -110,18 +111,58 @@ sealed class Widget : LayeredWindow
         await StartListeningAsync();
     }
 
+    int _mcpGeneration;
+
     /// <summary>Arranca (o reinicia) los servidores MCP y le pasa sus tools al agente.</summary>
     async Task StartMcpAsync()
     {
+        var generation = ++_mcpGeneration;
         var old = _mcp;
         _agent.Extra = null;
         _mcp = null;
         if (old is not null) await old.DisposeAsync();
         if (!_s.McpServers.Any(m => m.Enabled)) return;
-        var hub = await McpHub.StartAsync(_s.McpServers);
+        var hub = await McpHub.StartAsync(_s.McpServers.ToList());
+        // Si mientras arrancaba se guardaron otros ajustes, este ya no vale.
+        if (generation != _mcpGeneration || IsDisposed)
+        {
+            await hub.DisposeAsync();
+            return;
+        }
         _mcp = hub;
         _agent.Extra = hub;
         if (hub.Problems.Count > 0) Say("MCP · " + hub.Problems[0], Theme.Danger, 7000);
+    }
+
+    /// <summary>BeginInvoke que no revienta si la ventana todavía no existe o ya se cerró.</summary>
+    void Post(Action a)
+    {
+        if (!IsHandleCreated || IsDisposed) return;
+        try { BeginInvoke(a); } catch (InvalidOperationException) { }
+    }
+
+    int _micRetries;
+
+    void OnMicFailed(string reason)
+    {
+        if (!_listening) return;
+        _listening = false;
+        _hearing = false;
+        UpdateMenu();
+        // Bluetooth que se desconecta, otro programa que toma el micrófono…: se reintenta solo.
+        if (++_micRetries > 5)
+        {
+            Problem("Micrófono: " + reason);
+            return;
+        }
+        Say("Micrófono cortado, reintentando…", Theme.Muted, 3000);
+        _ = RetryMicAsync();
+    }
+
+    async Task RetryMicAsync()
+    {
+        await Task.Delay(2000);
+        if (!_listening && !_settingsOpen && _mode != Mode.Paused) await StartListeningAsync();
     }
 
     bool Configured() =>
@@ -143,7 +184,16 @@ sealed class Widget : LayeredWindow
 
     // ───────────────────────── voz
 
-    async Task<bool> EnsureSpeechAsync()
+    Task<bool>? _speechReady;
+
+    /// <summary>Una sola preparación a la vez (la descarga de 670 MB no puede correr dos veces).</summary>
+    Task<bool> EnsureSpeechAsync()
+    {
+        if (_speechReady is { IsCompleted: false }) return _speechReady;
+        return _speechReady = PrepareSpeechAsync();
+    }
+
+    async Task<bool> PrepareSpeechAsync()
     {
         var needAsr = _s.SpeechEngine == SpeechEngine.Local;
         if (!_models.Ready(needAsr))
@@ -179,7 +229,7 @@ sealed class Widget : LayeredWindow
     {
         if (_listening) return;
         if (!Configured()) { OpenSettings(); return; }
-        if (!await EnsureSpeechAsync()) return;
+        if (!await EnsureSpeechAsync() || _listening || _settingsOpen) return;
         var l = _listener!;
         l.Utterance -= OnUtterance;
         l.Utterance += OnUtterance;
@@ -196,6 +246,7 @@ sealed class Widget : LayeredWindow
             return;
         }
         _listening = true;
+        _micRetries = 0;
         _mode = _agent.Busy ? Mode.Busy : Mode.Listening;
         UpdateMenu();
     }
@@ -224,10 +275,7 @@ sealed class Widget : LayeredWindow
 
     void OnLevel(double rms) => _target = Math.Clamp(Math.Sqrt(rms) * 3.4, 0, 1);
 
-    void OnSpeaking(bool speaking)
-    {
-        if (IsHandleCreated) BeginInvoke(() => _hearing = speaking && _listening);
-    }
+    void OnSpeaking(bool speaking) => Post(() => _hearing = speaking && _listening);
 
     void OnUtterance(float[] samples)
     {
@@ -251,11 +299,11 @@ sealed class Widget : LayeredWindow
                     text = await _ai.TranscribeAsync(Wav.Encode(samples), CancellationToken.None);
                 }
                 if (text.Length < 2) continue;
-                BeginInvoke(() => Command(text));
+                Post(() => Command(text));
             }
             catch (Exception ex)
             {
-                BeginInvoke(() => Say(ex.Message, Theme.Danger, 5000));
+                Post(() => Say(ex.Message, Theme.Danger, 5000));
             }
         }
     }
@@ -335,25 +383,30 @@ sealed class Widget : LayeredWindow
     {
         if (_settingsOpen) return;
         _settingsOpen = true;
+        // Con Ajustes abierto nada se mueve solo por la pantalla.
+        _agent.Stop();
+        bool saved;
         try
         {
             using var f = new SettingsForm(_s);
-            if (f.ShowDialog() != DialogResult.OK) return;
-            Store.Save(_s);
-            _ = StartMcpAsync();
-            ApplyAutostart();
-            StopListening();
-            _listener?.Dispose();
-            _listener = null;
-            if (_s.SpeechEngine == SpeechEngine.Api) { _stt?.Dispose(); _stt = null; }
-            if (Configured())
-            {
-                Say("", Theme.Muted, 0);
-                _ = StartListeningAsync();
-            }
-            else Problem("Falta la llave o el modelo");
+            saved = f.ShowDialog() == DialogResult.OK;
         }
         finally { _settingsOpen = false; }
+        if (!saved) return;
+
+        Store.Save(_s);
+        _ = StartMcpAsync();
+        ApplyAutostart();
+        StopListening();
+        _listener?.Dispose();
+        _listener = null;
+        if (_s.SpeechEngine == SpeechEngine.Api) { _stt?.Dispose(); _stt = null; }
+        if (Configured())
+        {
+            Say("", Theme.Muted, 0);
+            _ = StartListeningAsync();
+        }
+        else Problem("Falta la llave o el modelo");
     }
 
     void BuildMenu()

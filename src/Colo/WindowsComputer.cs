@@ -35,6 +35,7 @@ sealed class WindowsComputer : IComputer
     double _scale = 1;
     Dictionary<int, Rectangle> _marks = [];
     Dictionary<int, string> _names = [];
+    Task? _uia;
 
     /// <summary>Cursor azul que muestra lo que hace Colo (opcional).</summary>
     public AiCursor? Cursor { get; set; }
@@ -51,9 +52,15 @@ sealed class WindowsComputer : IComputer
         var window = Native.WindowLabel(hwnd);
 
         // UI Automation en paralelo con la captura; si tarda demasiado, sigue sin marcas.
-        var uia = Task.Run(() => Collect(hwnd, b));
+        // Si una lectura anterior sigue colgada (app que no responde), no se lanza otra encima.
+        List<Element> elements = [];
+        Task<List<Element>>? uia = null;
+        lock (_lock)
+        {
+            if (_uia is null || _uia.IsCompleted) _uia = uia = Task.Run(() => Collect(hwnd, b));
+        }
         Bitmap? full = withImage ? Capture(b) : null;
-        var elements = uia.Wait(UiaBudgetMs, ct) ? uia.Result : [];
+        if (uia is not null && uia.Wait(UiaBudgetMs, ct)) elements = uia.Result;
         // Sin elementos legibles (juego, escritorio remoto…) la lista no sirve: va la captura.
         if (full is null && elements.Count == 0) full = Capture(b);
 
@@ -329,9 +336,16 @@ sealed class WindowsComputer : IComputer
     };
 
     /// <summary>Navegador por teclado: funciona igual en Chrome, Edge y Firefox, y es más rápido que buscar botones.</summary>
+    static readonly string[] Browsers =
+        ["chrome", "msedge", "firefox", "brave", "opera", "vivaldi", "chromium", "arc", "zen", "librewolf", "waterfox", "iexplore"];
+
     async Task<string> Browser(ToolCall c, CancellationToken ct)
     {
         var action = c.Str("action");
+        // Los atajos del navegador en otra app escribirían donde no toca (p. ej. la URL dentro del Bloc de notas).
+        var front = Native.ProcessName(Native.GetForegroundWindow()).ToLowerInvariant();
+        if (!Browsers.Contains(front))
+            return $"error: la ventana activa es {(front.Length > 0 ? front : "otra cosa")}, no un navegador. Usa window focus o open con la URL.";
         async Task Keys(string combo, int after = 70)
         {
             Input.Combo(Colo.Core.Keys.Parse(combo));

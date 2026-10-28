@@ -376,6 +376,73 @@ public class CoreTests(ITestOutputHelper output)
         }
     }
 
+    /// <summary>Stream que manda un evento y después se queda callado.</summary>
+    sealed class SilentStream : Stream
+    {
+        bool _sent;
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default)
+        {
+            if (!_sent)
+            {
+                _sent = true;
+                var b = Encoding.UTF8.GetBytes("data: {\"type\":\"response.created\"}\n\n");
+                b.CopyTo(buffer);
+                return b.Length;
+            }
+            await Task.Delay(Timeout.Infinite, ct);
+            return 0;
+        }
+        public override int Read(byte[] buffer, int offset, int count) => ReadAsync(buffer.AsMemory(offset, count)).AsTask().Result;
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => 0; set { } }
+        public override void Flush() { }
+        public override long Seek(long o, SeekOrigin s) => throw new NotSupportedException();
+        public override void SetLength(long v) { }
+        public override void Write(byte[] b, int o, int c) { }
+    }
+
+    sealed class SilentHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage r, CancellationToken ct) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(new SilentStream()) });
+    }
+
+    [Fact]
+    public async Task Silent_stream_ends_with_error_instead_of_hanging()
+    {
+        var s = Azure();
+        var ai = new AiClient(s, new HttpClient(new SilentHandler())) { StreamIdle = TimeSpan.FromMilliseconds(300) };
+        var agent = new Agent(ai, s, new FakeComputer()) { SettleMs = 0 };
+        var events = new List<AgentEvent>();
+        agent.Event += e => { lock (events) events.Add(e); };
+        var run = agent.Hear("hola");
+        Assert.Same(run, await Task.WhenAny(run, Task.Delay(5000)));
+        Assert.Equal(AgentEventKind.Error, events[^1].Kind);
+        Assert.Contains("dejó de responder", events[^1].Text);
+    }
+
+    [Fact]
+    public void Listener_and_stt_survive_dispose_during_use()
+    {
+        var dir = ModelsDir();
+        if (dir is null) return;
+        var l = new Listener(Path.Combine(dir, "silero_vad.onnx"), 6);
+        var noise = new short[640];
+        var feeding = Task.Run(() => { for (var i = 0; i < 400; i++) l.Feed(noise); });
+        Thread.Sleep(20);
+        l.Dispose();
+        feeding.Wait();
+        l.Reset();
+        l.Dispose();
+
+        var stt = new LocalStt(new SpeechModels(dir));
+        stt.Dispose();
+        Assert.Equal("", stt.Transcribe(new float[16000]));
+    }
+
     [Fact]
     public void Keys_parse()
     {
