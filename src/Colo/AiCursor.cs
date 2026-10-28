@@ -96,9 +96,8 @@ abstract class LayeredWindow : Form
 sealed class AiCursor : LayeredWindow
 {
     const int Pad = 26;                       // margen alrededor de la punta para la onda del clic
-    static readonly Color Blue = Color.FromArgb(37, 140, 235);
-    static readonly Color Sky = Color.FromArgb(110, 196, 250);
-    static readonly Color Deep = Color.FromArgb(29, 78, 216);
+    static readonly Color Blue = Color.FromArgb(37, 99, 235);
+    static readonly Color BlueLight = Color.FromArgb(96, 165, 250);
 
     Point _tip;
     string _label = "";
@@ -183,6 +182,7 @@ sealed class AiCursor : LayeredWindow
     /// <summary>Flecha con etiqueta; la punta queda en (Pad, Pad)·s.</summary>
     public static Bitmap Draw(string _label, float ripple, float rippleAlpha, float s)
     {
+        const float k = 1.4f;                 // tamaño de la flecha respecto al cursor normal
         using var font = Theme.Semibold(9.5f * s);
         var label = _label.Length > 44 ? _label[..44] + "…" : _label;
         SizeF ts = SizeF.Empty;
@@ -191,12 +191,12 @@ sealed class AiCursor : LayeredWindow
             using (var pg = Graphics.FromImage(probe))
                 ts = pg.MeasureString(label, font);
         var pad = Pad * s;
-        var tagX = pad + 31 * s;
-        var tagY = pad + 30 * s;
+        var tagX = pad + 21 * k * s;
+        var tagY = pad + 19 * k * s;
         var tagW = ts.Width + 16 * s;
         var tagH = ts.Height + 6 * s;
-        var w = (int)(label.Length > 0 ? tagX + tagW + 14 * s : pad + 56 * s);
-        var h = (int)(label.Length > 0 ? tagY + tagH + 14 * s : pad + 56 * s);
+        var w = (int)(label.Length > 0 ? tagX + tagW + 10 * s : pad + 40 * s);
+        var h = (int)(label.Length > 0 ? tagY + tagH + 10 * s : pad + 46 * s);
 
         var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb);
         using var g = Graphics.FromImage(bmp);
@@ -206,57 +206,48 @@ sealed class AiCursor : LayeredWindow
 
         if (rippleAlpha > 0)
         {
-            using var ring = new Pen(Color.FromArgb((int)(210 * rippleAlpha), Sky), 2.6f * s);
+            using var ring = new Pen(Color.FromArgb((int)(200 * rippleAlpha), BlueLight), 2.4f * s);
             var r = ripple * s;
             g.DrawEllipse(ring, pad - r, pad - r, r * 2, r * 2);
         }
 
-        // flecha: punta arriba a la izquierda (es el punto exacto del clic)
-        using var arrow = ArrowPath(pad, pad, s * 1.4f);
-        for (var i = 5; i >= 1; i--)
+        using var arrow = ArrowPath(pad, pad, s * k);
+        for (var i = 4; i >= 1; i--)
         {
-            using var glow = new Pen(Color.FromArgb(16, Sky), i * 3f * s) { LineJoin = LineJoin.Round };
-            g.DrawPath(glow, arrow);
+            using var halo = new Pen(Color.FromArgb(18, Blue), i * 2.2f * s) { LineJoin = LineJoin.Round };
+            g.DrawPath(halo, arrow);
         }
-        using (var round = new Pen(Deep, 3.2f * s) { LineJoin = LineJoin.Round })
-            g.DrawPath(round, arrow);
-        using (var fill = new LinearGradientBrush(new PointF(pad, pad), new PointF(pad + 26 * s, pad + 28 * s), Sky, Blue))
+        using (var fill = new LinearGradientBrush(new PointF(pad, pad), new PointF(pad + 14 * k * s, pad + 22 * k * s), BlueLight, Blue))
             g.FillPath(fill, arrow);
-        using (var shine = new Pen(Color.FromArgb(150, 255, 255, 255), 1.1f * s) { LineJoin = LineJoin.Round })
-            g.DrawPath(shine, arrow);
+        using (var edge = new Pen(Color.White, 1.8f * s) { LineJoin = LineJoin.Round })
+            g.DrawPath(edge, arrow);
 
         if (label.Length > 0)
         {
             var tag = new RectangleF(tagX, tagY, tagW, tagH);
-            for (var i = 4; i >= 1; i--)
-            {
-                var gr = tag;
-                gr.Inflate(i * 1.6f * s, i * 1.6f * s);
-                using var glow = new SolidBrush(Color.FromArgb(14, Sky));
-                using var gp = Rounded(gr, 7 * s + i * 1.6f * s);
-                g.FillPath(glow, gp);
-            }
-            using var path = Rounded(tag, 7 * s);
-            using (var bg = new LinearGradientBrush(tag, Color.FromArgb(147, 204, 250), Color.FromArgb(110, 180, 244), 90f))
+            using (var shadow = new SolidBrush(Color.FromArgb(40, 15, 23, 42)))
+            using (var sp = Rounded(new RectangleF(tag.X, tag.Y + 1.5f * s, tag.Width, tag.Height), tag.Height / 2))
+                g.FillPath(shadow, sp);
+            using (var bg = new SolidBrush(Blue))
+            using (var path = Rounded(tag, tag.Height / 2))
                 g.FillPath(bg, path);
-            using (var edge = new Pen(Color.FromArgb(70, 37, 99, 235), 1f * s))
-                g.DrawPath(edge, path);
-            using var ink = new SolidBrush(Color.FromArgb(12, 38, 92));
-            g.DrawString(label, font, ink, tag.X + 8 * s, tag.Y + 3 * s);
+            g.DrawString(label, font, Brushes.White, tag.X + 8 * s, tag.Y + 3 * s);
         }
         return bmp;
     }
 
-    /// <summary>Punta de flecha tipo navegación, con muesca atrás.</summary>
     static GraphicsPath ArrowPath(float x, float y, float s)
     {
         var p = new GraphicsPath();
         p.AddPolygon(new[]
         {
             new PointF(x, y),
-            new PointF(x + 24 * s, y + 9.5f * s),
-            new PointF(x + 12.5f * s, y + 12.5f * s),
-            new PointF(x + 9.5f * s, y + 24 * s),
+            new PointF(x, y + 19 * s),
+            new PointF(x + 4.6f * s, y + 14.8f * s),
+            new PointF(x + 8.2f * s, y + 22.2f * s),
+            new PointF(x + 11.2f * s, y + 20.8f * s),
+            new PointF(x + 7.7f * s, y + 13.6f * s),
+            new PointF(x + 13.6f * s, y + 13.6f * s),
         });
         return p;
     }
