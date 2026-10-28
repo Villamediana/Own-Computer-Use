@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 
 namespace Colo;
 
@@ -64,7 +65,33 @@ static class Native
     [DllImport("gdi32.dll")] public static extern IntPtr SelectObject(IntPtr dc, IntPtr obj);
     [DllImport("gdi32.dll")] public static extern bool DeleteObject(IntPtr obj);
     public static readonly IntPtr HWND_TOPMOST = new(-1);
-    public const uint SWP_NOSIZE = 0x1, SWP_NOACTIVATE = 0x10, SWP_SHOWWINDOW = 0x40;
+    public const uint SWP_NOSIZE = 0x1, SWP_NOMOVE = 0x2, SWP_NOACTIVATE = 0x10, SWP_SHOWWINDOW = 0x40;
+
+    [DllImport("dwmapi.dll")] static extern int DwmFlush();
+    [DllImport("winmm.dll")] public static extern uint timeBeginPeriod(uint ms);
+    [DllImport("winmm.dll")] public static extern uint timeEndPeriod(uint ms);
+    static volatile bool _noVsync;
+
+    /// <summary>
+    /// Espera al próximo refresco de la pantalla (el del compositor): las animaciones van al ritmo del monitor,
+    /// 60, 120 o 144 Hz, sin el salto de 15,6 ms del reloj de Windows. Sin compositor (Wine), ~7 ms.
+    /// </summary>
+    public static void WaitFrame()
+    {
+        if (!_noVsync)
+        {
+            var t0 = Stopwatch.GetTimestamp();
+            try
+            {
+                var ok = DwmFlush() == 0;
+                var ms = Stopwatch.GetElapsedTime(t0).TotalMilliseconds;
+                if (ms > 60) _noVsync = true;           // pantalla apagada o sesión rara: no fiarse
+                if (ok && ms > 1) return;
+            }
+            catch { _noVsync = true; }
+        }
+        Thread.Sleep(7);
+    }
 
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] public static extern IntPtr GetWindowLongPtr(IntPtr h, int index);
     [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")] public static extern IntPtr SetWindowLongPtr(IntPtr h, int index, IntPtr value);

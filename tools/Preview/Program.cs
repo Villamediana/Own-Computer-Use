@@ -87,6 +87,41 @@ if (args[0] == "menu")
     return 0;
 }
 
+if (args[0] == "glide")
+{
+    // El ratón de Colo en Windows real: cada paso al ritmo del monitor, sin tirones, y termina exacto.
+    var cursor = AiCursor.Create();
+    var ok = true;
+    var targets = new[] { new Point(200, 200), new Point(900, 600), new Point(910, 605), new Point(150, 500) };
+    var from = new Point(500, 300);
+    Colo.Native.SetCursorPos(from.X, from.Y);
+    foreach (var to in targets)
+    {
+        var stamps = new List<double>();
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        cursor.Say("Probando");
+        Input.Glide(from, to, q => { stamps.Add(sw.Elapsed.TotalMilliseconds); cursor.Follow(q); });
+        cursor.Pulse();
+        Colo.Native.GetCursorPos(out var end);
+        var gaps = stamps.Zip(stamps.Skip(1), (a, b) => b - a).ToList();
+        var worst = gaps.Count > 0 ? gaps.Max() : 0;
+        var mean = gaps.Count > 0 ? gaps.Average() : 0;
+        var expected = Motion.Duration(Math.Sqrt(Math.Pow(to.X - from.X, 2) + Math.Pow(to.Y - from.Y, 2)));
+        var fine = end.x == to.X && end.y == to.Y && (expected == 0 || (worst < 50 && stamps.Count >= expected / 25));
+        Console.WriteLine($"{from} → {to}: {sw.ElapsedMilliseconds} ms (esperado {expected:0}), {stamps.Count} cuadros, " +
+            $"cada {mean:0.0} ms (peor {worst:0.0}), termina en ({end.x},{end.y}) {(fine ? "" : "← FALLA")}");
+        ok &= fine;
+        from = to;
+    }
+    cursor.Glide(new Point(400, 400), "Clic «Buscar»");
+    cursor.Pulse();
+    Thread.Sleep(400);
+    cursor.Away();
+    Thread.Sleep(400);
+    Console.WriteLine(ok ? "ok" : "FALLA");
+    return ok ? 0 : 1;
+}
+
 if (args[0] == "wake")
 {
     // «Luna» dentro del .exe único (ONNX Runtime nativo incluido): Preview wake <carpeta con luna.pcm y lua.pcm>

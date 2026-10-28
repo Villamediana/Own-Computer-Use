@@ -822,4 +822,27 @@ public class CoreTests(ITestOutputHelper output)
         l.Reset();
     }
 
+    [Fact]
+    public void Motion_SalidaYLlegadaSuaves_ConArcoLeve()
+    {
+        // Arranca y frena con velocidad cero y nunca se pasa del final.
+        Assert.Equal(0, Motion.Ease(0));
+        Assert.Equal(1, Motion.Ease(1), 9);
+        Assert.True(Motion.Ease(0.01) < 0.0001);
+        Assert.True(1 - Motion.Ease(0.99) < 0.0001);
+        for (var t = 0.0; t <= 1; t += 0.01) Assert.InRange(Motion.Ease(t + 0.01) - Motion.Ease(t), 0, 0.02);
+
+        // Más lejos tarda más, con tope; quieto no tarda nada.
+        Assert.Equal(0, Motion.Duration(1));
+        Assert.True(Motion.Duration(100) < Motion.Duration(800));
+        Assert.InRange(Motion.Duration(5000), 0, 420);
+
+        // Termina exacto donde debe; en el medio se separa un poco de la recta, sin pasarse de 36 px.
+        var end = Motion.At(10, 20, 1210, 620, 1);
+        Assert.Equal(1210, end.X, 6);
+        Assert.Equal(620, end.Y, 6);
+        var mid = Motion.At(0, 0, 1000, 0, 0.5);
+        Assert.InRange(Math.Abs(mid.Y), 5, 36);
+        Assert.Equal(0, Motion.At(0, 0, 1000, 0, 0.5, curved: false).Y);
+    }
 }

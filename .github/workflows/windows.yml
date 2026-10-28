@@ -43,6 +43,14 @@ jobs:
           Get-Content wake.txt
           if (-not (Select-String -Path wake.txt -Pattern "^ok$")) { exit 1 }
 
+      - name: Ratón de Colo (deslizamiento al ritmo del monitor)
+        shell: pwsh
+        run: |
+          $p = Start-Process out/preview/Preview.exe -ArgumentList "glide" -NoNewWindow -PassThru -RedirectStandardOutput glide.txt
+          $p.WaitForExit()
+          Get-Content glide.txt
+          if (-not (Select-String -Path glide.txt -Pattern "^ok$")) { exit 1 }
+
       - name: Elementos de UI Automation (Bloc y Chrome)
         shell: pwsh
         run: |

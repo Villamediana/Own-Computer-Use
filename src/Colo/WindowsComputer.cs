@@ -312,7 +312,7 @@ sealed class WindowsComputer : IComputer
                 if (!Target(c, out var from, out var err, "from_")) return err;
                 if (!Target(c, out var to, out err, "to_")) return err;
                 Cursor?.Glide(from, "Arrastrando");
-                Input.Drag(from, to, p => Cursor?.Glide(p, "Arrastrando"));
+                Input.Drag(from, to, Cursor is null ? null : Cursor.Follow);
                 return "ok";
             }
             case "browser":

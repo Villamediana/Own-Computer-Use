@@ -36,10 +36,45 @@ static class Input
         U = new InputUnion { ki = new KEYBDINPUT { wScan = c, dwFlags = KEYEVENTF_UNICODE | (up ? KEYEVENTF_KEYUP : 0) } },
     };
 
+    /// <summary>Lleva el ratón hasta p deslizándolo (ver <see cref="Glide"/>) y deja que la app note el hover.</summary>
     public static void MoveTo(Point p)
     {
-        SetCursorPos(p.X, p.Y);
-        Thread.Sleep(35);
+        GetCursorPos(out var cur);
+        Glide(new Point(cur.x, cur.y), p);
+        Thread.Sleep(25);
+    }
+
+    /// <summary>
+    /// Mueve el ratón de verdad de from a to, un paso por refresco de pantalla, con la curva de <see cref="Motion"/>.
+    /// <paramref name="frame"/> recibe cada punto (el cursor azul lo sigue). Bloquea lo que dure el gesto.
+    /// </summary>
+    public static void Glide(Point from, Point to, Action<Point>? frame = null, bool curved = true, double slower = 1)
+    {
+        var ms = Motion.Duration(Math.Sqrt(Math.Pow(to.X - from.X, 2) + Math.Pow(to.Y - from.Y, 2))) * slower;
+        if (ms > 0)
+        {
+            timeBeginPeriod(1);
+            try
+            {
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                Point last = from;
+                for (var t = 0.0; t < 1; t = sw.Elapsed.TotalMilliseconds / ms)
+                {
+                    var (x, y) = Motion.At(from.X, from.Y, to.X, to.Y, t, curved);
+                    var q = new Point((int)Math.Round(x), (int)Math.Round(y));
+                    if (q != last || t == 0)
+                    {
+                        SetCursorPos(q.X, q.Y);
+                        frame?.Invoke(q);
+                        last = q;
+                    }
+                    WaitFrame();
+                }
+            }
+            finally { timeEndPeriod(1); }
+        }
+        SetCursorPos(to.X, to.Y);
+        frame?.Invoke(to);
     }
 
     public static void Click(Point p, string button, bool twice)
@@ -76,14 +111,8 @@ static class Input
         MoveTo(from);
         Send(Mouse(MOUSEEVENTF_LEFTDOWN));
         Thread.Sleep(60);
-        const int steps = 14;
-        for (var i = 1; i <= steps; i++)
-        {
-            var p = new Point(from.X + (to.X - from.X) * i / steps, from.Y + (to.Y - from.Y) * i / steps);
-            SetCursorPos(p.X, p.Y);
-            Thread.Sleep(14);
-        }
-        follow?.Invoke(to);
+        // En recta y algo más lento que un clic: muchas apps miran el camino, no solo el final.
+        Glide(from, to, follow, curved: false, slower: 1.35);
         Thread.Sleep(50);
         Send(Mouse(MOUSEEVENTF_LEFTUP));
     }

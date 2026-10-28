@@ -28,7 +28,7 @@ sealed class Widget : LayeredWindow
     readonly ElevenLabsStt _eleven;
     readonly Agent _agent;
     readonly WindowsComputer _pc = new();
-    readonly AiCursor _cursor = new();
+    readonly AiCursor _cursor = AiCursor.Create();
     readonly Mic _mic = new();
     readonly SpeechModels _models = new(Store.ModelsDir, System.IO.Path.Combine(AppContext.BaseDirectory, "models"));
     readonly Channel<float[]> _phrases = Channel.CreateUnbounded<float[]>(new UnboundedChannelOptions { SingleReader = true });
@@ -47,7 +47,11 @@ sealed class Widget : LayeredWindow
 
     // ── dibujo
     readonly WavePainter _painter = new();
-    readonly System.Windows.Forms.Timer _frame = new() { Interval = 16 };
+    // 15 y no 16: el reloj de Windows salta de 15,6 en 15,6 ms y con 16 cada cuadro esperaba dos saltos (32 fps).
+    const int FrameMs = 15;
+    readonly System.Windows.Forms.Timer _frame = new() { Interval = FrameMs };
+    readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
+    double _lastFrame;
     Mode _mode = Mode.Starting;
     bool _hearing;
     double _t, _level, _target, _energy;
@@ -80,7 +84,6 @@ sealed class Widget : LayeredWindow
         _eleven = new ElevenLabsStt(_s);
         _agent = new Agent(_ai, _s, _pc) { Memory = _memory };
         _pc.Cursor = _cursor;
-        _ = _cursor.Handle;
         Text = "Colo";
         try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
 
@@ -739,7 +742,13 @@ sealed class Widget : LayeredWindow
 
     void Frame()
     {
-        _t += 0.016;
+        // Todo va por el tiempo real, no por cuadros: igual de suave aunque un tic llegue tarde.
+        var now = _clock.Elapsed.TotalSeconds;
+        var dt = Math.Clamp(now - _lastFrame, 0, 0.1);
+        _lastFrame = now;
+        _t += dt;
+        // Los factores se pensaron por cuadro de 16 ms; así valen igual con cualquier ritmo.
+        double Ease(double perFrame) => 1 - Math.Pow(1 - perFrame, dt / 0.016);
         var speaking = _hearing && _listening;
         var goal = _mode switch
         {
@@ -749,17 +758,17 @@ sealed class Widget : LayeredWindow
             Mode.Starting => 0.16,
             _ => 0,
         };
-        _level += (goal - _level) * (goal > _level ? 0.35 : 0.12);
-        _energy += ((_mode == Mode.Busy ? 1 : 0) - _energy) * 0.06;
+        _level += (goal - _level) * Ease(goal > _level ? 0.35 : 0.12);
+        _energy += ((_mode == Mode.Busy ? 1 : 0) - _energy) * Ease(0.06);
         // En pausa y sin nada que mostrar, la onda queda quieta: se redibuja poco.
         var still = _mode is Mode.Paused or Mode.Problem && _level < 0.01 && _caption.Length == 0;
-        _frame.Interval = still ? 120 : 16;
+        _frame.Interval = still ? 120 : FrameMs;
         CheckSilence();
         MaybeSleep();
         // Dormida y sin nada que contar, la onda se desvanece; al despertar vuelve subiendo un poco.
         var shown = !_s.WakeWord || _wake is null || _awake || _agent.Busy || !_listening || _settingsOpen
             || _mode == Mode.Problem || _caption.Length > 0;
-        _presence += ((shown ? 1 : 0) - _presence) * (shown ? 0.22 : 0.12);
+        _presence += ((shown ? 1 : 0) - _presence) * Ease(shown ? 0.22 : 0.12);
         // Dormida no queda nada a la vista, tampoco el icono de la bandeja; vuelve con «Luna» o el atajo.
         if (_tray.Visible != (shown || _presence > 0.02)) _tray.Visible = shown || _presence > 0.02;
         if (!shown && _presence < 0.02)

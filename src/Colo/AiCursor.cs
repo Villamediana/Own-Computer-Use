@@ -96,91 +96,164 @@ abstract class LayeredWindow : Form
 sealed class AiCursor : LayeredWindow
 {
     const int Pad = 26;                       // margen alrededor de la punta para la onda del clic
+    const double FadeIn = 130, FadeOut = 220, PulseMs = 340;
     static readonly Color Blue = Color.FromArgb(37, 99, 235);
     static readonly Color BlueLight = Color.FromArgb(96, 165, 250);
+    static readonly System.Diagnostics.Stopwatch Clock = System.Diagnostics.Stopwatch.StartNew();
 
+    // Estado tocado solo en el hilo del cursor (dentro de Ui).
     Point _tip;
     string _label = "";
-    bool _visible;
+    bool _visible, _hiding;
+    double _shownAt, _hideAt, _pulseAt = -1;
+    int _animating;
 
     float Dpi => DeviceDpi / 96f;
+    static double Now => Clock.Elapsed.TotalMilliseconds;
 
-    /// <summary>Desliza el cursor hasta p (coordenadas físicas de pantalla). Bloquea ~0,1–0,2 s.</summary>
+    /// <summary>
+    /// El cursor vive en su propio hilo de interfaz: así cada paso del deslizamiento se pinta al instante,
+    /// sin esperar a que la onda termine su cuadro.
+    /// </summary>
+    public static AiCursor Create()
+    {
+        AiCursor? made = null;
+        using var ready = new ManualResetEventSlim();
+        var thread = new Thread(() =>
+        {
+            made = new AiCursor();
+            _ = made.Handle;
+            ready.Set();
+            Application.Run();
+        }) { IsBackground = true, Name = "Colo · cursor" };
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        ready.Wait();
+        return made!;
+    }
+
+    /// <summary>Desliza el cursor (y el ratón) hasta p, en coordenadas físicas de pantalla. Bloquea lo que dure.</summary>
     public void Glide(Point p, string label)
     {
-        if (!_visible)
+        var from = Point.Empty;
+        Ui(() =>
         {
-            GetCursorPos(out var cur);
-            _tip = new Point(cur.x, cur.y);
-        }
-        _label = label;
-        Ui(() => Render(0, 0));
-        var from = _tip;
-        var dist = Math.Sqrt(Math.Pow(p.X - from.X, 2) + Math.Pow(p.Y - from.Y, 2));
-        var ms = Math.Clamp(dist / 5, 70, 190);
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        while (sw.Elapsed.TotalMilliseconds < ms)
-        {
-            var t = sw.Elapsed.TotalMilliseconds / ms;
-            var k = 1 - Math.Pow(1 - t, 3);
-            MoveTip(new Point((int)(from.X + (p.X - from.X) * k), (int)(from.Y + (p.Y - from.Y) * k)));
-            Thread.Sleep(8);
-        }
-        MoveTip(p);
+            _label = label;
+            Appear();
+            from = _tip;
+            Frame();
+        });
+        Input.Glide(from, p, Follow);
     }
 
-    /// <summary>Cambia la etiqueta sin moverse (escribir, teclas, print…).</summary>
-    public void Say(string label)
+    /// <summary>Pone la punta en q sin cambiar nada más (cada paso de un deslizamiento o arrastre).</summary>
+    public void Follow(Point q) => Ui(() =>
     {
-        if (!_visible)
-        {
-            GetCursorPos(out var cur);
-            _tip = new Point(cur.x, cur.y);
-        }
-        _label = label;
-        Ui(() => Render(0, 0));
-    }
-
-    /// <summary>Onda corta en la punta, para marcar el clic.</summary>
-    public void Pulse()
-    {
-        for (var i = 1; i <= 6; i++)
-        {
-            var t = i / 6f;
-            Ui(() => Render(6 + 16 * t, 1 - t));
-            Thread.Sleep(14);
-        }
-        Ui(() => Render(0, 0));
-    }
-
-    public void Away() => Ui(() =>
-    {
-        _visible = false;
-        Hide();
+        _tip = q;
+        Frame();
     });
 
-    void MoveTip(Point p)
+    /// <summary>Cambia la etiqueta sin moverse (escribir, teclas, print…).</summary>
+    public void Say(string label) => Ui(() =>
     {
-        _tip = p;
-        var s = Dpi;
-        if (Hwnd == IntPtr.Zero) return;
-        SetWindowPos(Hwnd, HWND_TOPMOST, p.X - (int)(Pad * s), p.Y - (int)(Pad * s), 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
-    }
+        _label = label;
+        Appear();
+        Frame();
+    });
 
-    void Render(float ripple, float rippleAlpha)
+    /// <summary>Marca el clic: la flecha se hunde un poco y sale una onda de la punta. No bloquea.</summary>
+    public void Pulse() => Ui(() =>
     {
-        using var bmp = Draw(_label, ripple, rippleAlpha, Dpi);
-        Apply(bmp);
+        _pulseAt = Now;
+        Animate();
+    });
+
+    /// <summary>Se desvanece; si vuelve a hacer algo antes de acabar, reaparece desde donde estaba.</summary>
+    public void Away() => Ui(() =>
+    {
+        if (!_visible || _hiding) return;
+        _hiding = true;
+        _hideAt = Now - (1 - Alpha()) * FadeOut;
+        Animate();
+    });
+
+    void Appear()
+    {
         if (!_visible)
         {
+            GetCursorPos(out var cur);
+            _tip = new Point(cur.x, cur.y);
             _visible = true;
+            _shownAt = Now;
             Show();
-            MoveTip(_tip);
         }
+        else if (_hiding)
+        {
+            var a = Alpha();
+            _hiding = false;
+            _shownAt = Now - a * FadeIn;
+        }
+        // Encima de todo, también de lo que se abrió después (barra de tareas, menús).
+        SetWindowPos(Hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        Animate();
+    }
+
+    double Alpha()
+    {
+        var a = _hiding ? 1 - (Now - _hideAt) / FadeOut : (Now - _shownAt) / FadeIn;
+        return Math.Clamp(a, 0, 1);
+    }
+
+    /// <summary>Pinta el estado de ahora. Devuelve si queda animación (aparecer, desvanecerse, onda del clic).</summary>
+    bool Frame()
+    {
+        if (!_visible) return false;
+        var a = Alpha();
+        if (_hiding && a <= 0)
+        {
+            _visible = _hiding = false;
+            _pulseAt = -1;
+            Hide();
+            return false;
+        }
+        float ripple = 0, rippleAlpha = 0, press = 1;
+        if (_pulseAt >= 0)
+        {
+            var t = (Now - _pulseAt) / PulseMs;
+            if (t >= 1) _pulseAt = -1;
+            else
+            {
+                var o = 1 - Math.Pow(1 - t, 3);
+                ripple = (float)(5 + 19 * o);
+                rippleAlpha = (float)(1 - o);
+                press = (float)(1 - 0.12 * Math.Sin(Math.PI * Math.Min(t * 1.8, 1)));
+            }
+        }
+        var eased = a * a * (3 - 2 * a);
+        using var bmp = Draw(_label, ripple, rippleAlpha, Dpi, press);
+        var s = Dpi;
+        Present(bmp, new Point(_tip.X - (int)(Pad * s), _tip.Y - (int)(Pad * s)), (byte)Math.Round(255 * eased));
+        return _pulseAt >= 0 || (_hiding ? a > 0 : a < 1);
+    }
+
+    /// <summary>Mantiene los cuadros al ritmo del monitor mientras haya algo animándose.</summary>
+    void Animate()
+    {
+        if (Interlocked.Exchange(ref _animating, 1) == 1) return;
+        new Thread(() =>
+        {
+            var more = true;
+            while (more && !IsDisposed)
+            {
+                WaitFrame();
+                Ui(() => more = Frame());
+            }
+            Volatile.Write(ref _animating, 0);
+        }) { IsBackground = true, Name = "Colo · cursor anim" }.Start();
     }
 
     /// <summary>Flecha con etiqueta; la punta queda en (Pad, Pad)·s.</summary>
-    public static Bitmap Draw(string _label, float ripple, float rippleAlpha, float s)
+    public static Bitmap Draw(string _label, float ripple, float rippleAlpha, float s, float press = 1)
     {
         const float k = 1.4f;                 // tamaño de la flecha respecto al cursor normal
         using var font = Theme.Semibold(9.5f * s);
@@ -211,13 +284,13 @@ sealed class AiCursor : LayeredWindow
             g.DrawEllipse(ring, pad - r, pad - r, r * 2, r * 2);
         }
 
-        using var arrow = ArrowPath(pad, pad, s * k);
+        using var arrow = ArrowPath(pad, pad, s * k * press);   // al clicar se hunde un poco hacia la punta
         for (var i = 4; i >= 1; i--)
         {
             using var halo = new Pen(Color.FromArgb(18, Blue), i * 2.2f * s) { LineJoin = LineJoin.Round };
             g.DrawPath(halo, arrow);
         }
-        using (var fill = new LinearGradientBrush(new PointF(pad, pad), new PointF(pad + 14 * k * s, pad + 22 * k * s), BlueLight, Blue))
+        using (var fill = new LinearGradientBrush(new PointF(pad, pad), new PointF(pad + 14 * k * s * press, pad + 22 * k * s * press), BlueLight, Blue))
             g.FillPath(fill, arrow);
         using (var edge = new Pen(Color.White, 1.8f * s) { LineJoin = LineJoin.Round })
             g.DrawPath(edge, arrow);
@@ -250,11 +323,5 @@ sealed class AiCursor : LayeredWindow
             new PointF(x + 13.6f * s, y + 13.6f * s),
         });
         return p;
-    }
-
-    void Apply(Bitmap bmp)
-    {
-        var s = Dpi;
-        Present(bmp, new Point(_tip.X - (int)(Pad * s), _tip.Y - (int)(Pad * s)));
     }
 }
