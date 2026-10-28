@@ -12,30 +12,46 @@ static class WhisperNative
     // Orden de dependencias: whisper.dll necesita las ggml.
     static readonly string[] Order = ["ggml-base-whisper.dll", "ggml-cpu-whisper.dll", "ggml-whisper.dll", "whisper.dll"];
 
-    public static string Folder { get; } =
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Colo", "native", "whisper-1.9.1");
+    /// <summary>
+    /// Whisper.net busca sus DLL en «runtimes\win-x64» junto al programa (así pasó la prueba en Windows real).
+    /// Si esa carpeta no se puede escribir, se usa %LOCALAPPDATA%\Colo\native.
+    /// </summary>
+    public static string Folder { get; private set; } = "";
 
     public static void Prepare()
     {
-        try
+        foreach (var root in new[]
         {
-            Directory.CreateDirectory(Folder);
-            var asm = typeof(WhisperNative).Assembly;
-            foreach (var name in Order)
+            AppContext.BaseDirectory,
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Colo", "native"),
+        })
+        {
+            try
             {
-                using var res = asm.GetManifestResourceStream("whisper/" + name)
-                    ?? throw new FileNotFoundException("falta el recurso " + name);
-                var path = Path.Combine(Folder, name);
-                if (!File.Exists(path) || new FileInfo(path).Length != res.Length)
-                {
-                    using var file = File.Create(path);
-                    res.CopyTo(file);
-                }
+                var dir = Path.Combine(root, "runtimes", "win-x64");
+                Extract(dir);
+                Folder = dir;
+                foreach (var name in Order) NativeLibrary.Load(Path.Combine(dir, name));
+                LocalStt.UseNativeFolder(dir);
+                Log.Write("whisper: librerías listas en " + dir);
+                return;
             }
-            foreach (var name in Order) NativeLibrary.Load(Path.Combine(Folder, name));
-            LocalStt.UseNativeFolder(Folder);
-            Log.Write("whisper: librerías listas en " + Folder);
+            catch (Exception ex) { Log.Write($"whisper: no pude usar {root} · {ex.Message}"); }
         }
-        catch (Exception ex) { Log.Write("whisper: no pude preparar las librerías · " + ex); }
+    }
+
+    static void Extract(string dir)
+    {
+        Directory.CreateDirectory(dir);
+        var asm = typeof(WhisperNative).Assembly;
+        foreach (var name in Order)
+        {
+            using var res = asm.GetManifestResourceStream("whisper/" + name)
+                ?? throw new FileNotFoundException("falta el recurso " + name);
+            var path = Path.Combine(dir, name);
+            if (File.Exists(path) && new FileInfo(path).Length == res.Length) continue;
+            using var file = File.Create(path);
+            res.CopyTo(file);
+        }
     }
 }
