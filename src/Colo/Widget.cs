@@ -760,6 +760,8 @@ sealed class Widget : LayeredWindow
         var shown = !_s.WakeWord || _wake is null || _awake || _agent.Busy || !_listening || _settingsOpen
             || _mode == Mode.Problem || _caption.Length > 0;
         _presence += ((shown ? 1 : 0) - _presence) * (shown ? 0.22 : 0.12);
+        // Dormida no queda nada a la vista, tampoco el icono de la bandeja; vuelve con «Luna» o el atajo.
+        if (_tray.Visible != (shown || _presence > 0.02)) _tray.Visible = shown || _presence > 0.02;
         if (!shown && _presence < 0.02)
         {
             _presence = 0;

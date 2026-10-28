@@ -729,7 +729,7 @@ function recordWakeKey() {
 }
 function syncWake() {
   $("#wakeHint").textContent = S.WakeWord !== false
-    ? `Dormida no oye ni gasta nada: la onda desaparece. Di «Luna» (o ${S.WakeHotkey}) y te escucha; vuelve a dormir tras 45 s sin hablarle.`
+    ? `Dormida no oye ni gasta nada y no se ve nada (ni la onda ni el icono). Di «Luna» (o ${S.WakeHotkey}) y te escucha; vuelve a dormir tras 45 s sin hablarle.`
     : "Atiende todo lo que oye: cada frase va al modelo, también las charlas con otras personas.";
 }
 

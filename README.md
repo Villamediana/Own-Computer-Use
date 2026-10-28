@@ -6,7 +6,7 @@ dónde va a hacer clic y qué está haciendo.
 
 - **Voz**: detector por volumen + una de tres transcripciones: Whisper en el propio PC (base o small, sin tokens,
   con glosario y los programas abiertos como pista), el modelo de transcripción de OpenAI/Foundry, o ElevenLabs Scribe.
-- **«Luna»**: dormida, la onda desaparece y solo un detector local oye su nombre (el de la Luna del celular:
+- **«Luna»**: dormida no se ve nada (ni la onda ni el icono de la bandeja) y solo un detector local oye su nombre (el de la Luna del celular:
   openWakeWord + clasificador entrenado con «luna» de personas reales; ONNX Runtime, ~3 MB). Al oír «Luna» o
   el atajo (Ctrl+Alt+L, se cambia en Ajustes) aparece y atiende; vuelve a dormir tras 45 s sin hablarle.
   Dormida no transcribe ni manda nada al modelo. Se puede volver a «Siempre escuchando» en Ajustes › Voz.
