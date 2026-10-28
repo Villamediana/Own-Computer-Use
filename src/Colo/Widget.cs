@@ -24,6 +24,7 @@ sealed class Widget : LayeredWindow
     // ── lógica
     readonly Settings _s = Store.Load();
     readonly AiClient _ai;
+    readonly ElevenLabsStt _eleven;
     readonly Agent _agent;
     readonly WindowsComputer _pc = new();
     readonly AiCursor _cursor = new();
@@ -35,6 +36,11 @@ sealed class Widget : LayeredWindow
     LocalStt? _stt;
     McpHub? _mcp;
     bool _listening, _settingsOpen;
+    SettingsWindow? _settingsWindow;
+    // diagnóstico del audio
+    DateTime _listenSince, _lastSound, _lastSilenceWarning, _lastLevelPost;
+    double _peak;
+    DateTime _peakSince = DateTime.Now;
 
     // ── dibujo
     readonly WavePainter _painter = new();
@@ -57,6 +63,7 @@ sealed class Widget : LayeredWindow
     public Widget()
     {
         _ai = new AiClient(_s);
+        _eleven = new ElevenLabsStt(_s);
         _agent = new Agent(_ai, _s, _pc);
         _pc.Cursor = _cursor;
         _ = _cursor.Handle;
@@ -168,7 +175,12 @@ sealed class Widget : LayeredWindow
     bool Configured() =>
         !string.IsNullOrWhiteSpace(_s.ApiKey) && !string.IsNullOrWhiteSpace(_s.Model)
         && (_s.Provider == Provider.OpenAI || !string.IsNullOrWhiteSpace(_s.Endpoint))
-        && (_s.SpeechEngine == SpeechEngine.Local || !string.IsNullOrWhiteSpace(_s.TranscribeModel));
+        && _s.SpeechEngine switch
+        {
+            SpeechEngine.Api => !string.IsNullOrWhiteSpace(_s.TranscribeModel),
+            SpeechEngine.ElevenLabs => !string.IsNullOrWhiteSpace(_s.ElevenLabsKey),
+            _ => true,
+        };
 
     void ApplyAutostart()
     {
@@ -199,37 +211,58 @@ sealed class Widget : LayeredWindow
         if (!_models.Ready(needAsr))
         {
             _mode = Mode.Starting;
-            var progress = new Progress<double>(p => Say($"Preparando la voz · {p:P0}", Theme.Muted, 3600));
+            Log.Write("voz: descargando modelos a " + _models.Dir);
+            var lastLogged = -1;
+            var progress = new Progress<double>(p =>
+            {
+                Say($"Preparando la voz · {p:P0}", Theme.Muted, 3600);
+                VoiceStatus($"Preparando la voz local · {p:P0}");
+                var tenth = (int)(p * 10);
+                if (tenth != lastLogged) { lastLogged = tenth; Log.Write($"voz: descarga {p:P0}"); }
+            });
             try { await _models.DownloadAsync(needAsr, progress, CancellationToken.None); }
             catch (Exception ex)
             {
+                Log.Write("voz: descarga falló · " + ex);
                 Problem("No pude bajar la voz: " + ex.Message);
+                VoiceStatus("No pude bajar la voz: " + ex.Message);
                 return false;
             }
+            Log.Write("voz: descarga completa");
         }
         try
         {
             if (needAsr && _stt is null)
             {
                 _mode = Mode.Starting;
+                VoiceStatus("Cargando la voz local…");
+                var sw = System.Diagnostics.Stopwatch.StartNew();
                 _stt = await Task.Run(() => new LocalStt(_models));
+                Log.Write($"voz: Parakeet cargado en {sw.ElapsedMilliseconds} ms");
             }
-            _listener ??= new Listener(_models.Silero, _s.Sensitivity);
+            if (_listener is null)
+            {
+                _listener = new Listener(_models.Silero, _s.Sensitivity);
+                Log.Write($"voz: detector listo (sensibilidad {_s.Sensitivity}, umbral {Listener.SensitivityToThreshold(_s.Sensitivity):0.00})");
+            }
             Say("", Theme.Muted, 0);
             return true;
         }
         catch (Exception ex)
         {
+            Log.Write("voz: no arrancó · " + ex);
             Problem("Voz local: " + ex.Message);
+            VoiceStatus("La voz local no arrancó: " + ex.Message);
             return false;
         }
     }
 
-    async Task StartListeningAsync()
+    /// <param name="forTest">Desde Ajustes: la prueba del micrófono no necesita la key del modelo.</param>
+    async Task StartListeningAsync(bool forTest = false)
     {
         if (_listening) return;
-        if (!Configured()) { OpenSettings(); return; }
-        if (!await EnsureSpeechAsync() || _listening || _settingsOpen) return;
+        if (!forTest && !Configured()) { OpenSettings(); return; }
+        if (!await EnsureSpeechAsync() || _listening || (_settingsOpen && !forTest)) return;
         var l = _listener!;
         l.Utterance -= OnUtterance;
         l.Utterance += OnUtterance;
@@ -242,10 +275,15 @@ sealed class Widget : LayeredWindow
         try { _mic.Start(_s.MicDevice, l); }
         catch (Exception ex)
         {
+            Log.Write("micrófono: no abrió · " + ex);
             Problem("Micrófono: " + ex.Message);
+            VoiceStatus("No pude abrir el micrófono: " + ex.Message);
             return;
         }
         _listening = true;
+        _listenSince = _lastSilenceWarning = DateTime.Now;
+        _lastSound = DateTime.MinValue;
+        VoiceStatus($"Escuchando con «{_mic.DeviceName}»");
         _micRetries = 0;
         _mode = _agent.Busy ? Mode.Busy : Mode.Listening;
         UpdateMenu();
@@ -273,14 +311,39 @@ sealed class Widget : LayeredWindow
         else _ = StartListeningAsync();
     }
 
-    void OnLevel(double rms) => _target = Math.Clamp(Math.Sqrt(rms) * 3.4, 0, 1);
-
-    void OnSpeaking(bool speaking) => Post(() => _hearing = speaking && _listening);
-
-    void OnUtterance(float[] samples)
+    // Hilo de audio: cada ~40 ms.
+    void OnLevel(double rms)
     {
-        if (!_settingsOpen) _phrases.Writer.TryWrite(samples);
+        _target = Math.Clamp(Math.Sqrt(rms) * 3.4, 0, 1);
+        var now = DateTime.Now;
+        if (rms > 0.0001) _lastSound = now;
+        if (rms > _peak) _peak = rms;
+        if ((now - _peakSince).TotalSeconds >= 15)
+        {
+            Log.Write($"audio: pico {_peak:0.0000} en 15 s");
+            _peak = 0;
+            _peakSince = now;
+        }
+        if (_settingsWindow is not null && (now - _lastLevelPost).TotalMilliseconds > 60)
+        {
+            _lastLevelPost = now;
+            Post(() => _settingsWindow?.VoiceLevel(rms));
+        }
     }
+
+    void OnSpeaking(bool speaking)
+    {
+        Log.Write(speaking ? "voz: empieza a hablar" : "voz: termina la frase");
+        Post(() =>
+        {
+            _hearing = speaking && _listening;
+            _settingsWindow?.VoiceVad(speaking);
+        });
+    }
+
+    void OnUtterance(float[] samples) => _phrases.Writer.TryWrite(samples);
+
+    void VoiceStatus(string text) => _settingsWindow?.VoiceStatus(text);
 
     async Task PhraseLoopAsync()
     {
@@ -288,21 +351,34 @@ sealed class Widget : LayeredWindow
         {
             try
             {
+                var sw = System.Diagnostics.Stopwatch.StartNew();
                 string text;
                 if (_s.SpeechEngine == SpeechEngine.Local)
                 {
-                    if (_stt is null) continue;
+                    if (_stt is null) { Log.Write("voz: frase descartada, Parakeet no está cargado"); continue; }
                     text = _stt.Transcribe(samples);
+                }
+                else if (_s.SpeechEngine == SpeechEngine.ElevenLabs)
+                {
+                    text = await _eleven.TranscribeAsync(Wav.Encode(samples), CancellationToken.None);
                 }
                 else
                 {
                     text = await _ai.TranscribeAsync(Wav.Encode(samples), CancellationToken.None);
                 }
-                if (text.Length < 2) continue;
-                Post(() => Command(text));
+                var ms = sw.ElapsedMilliseconds;
+                Log.Write($"voz: {samples.Length / 16000.0:0.0} s → «{text}» ({ms} ms)");
+                Post(() =>
+                {
+                    // Con Ajustes abierto es la prueba del micrófono: se muestra, no se ejecuta.
+                    if (_settingsWindow is not null) { _settingsWindow.VoiceHeard(text, ms); return; }
+                    if (text.Length < 2) { Say("No entendí", Theme.Muted, 1200); return; }
+                    Command(text);
+                });
             }
             catch (Exception ex)
             {
+                Log.Write("voz: transcripción falló · " + ex);
                 Post(() => Say(ex.Message, Theme.Danger, 5000));
             }
         }
@@ -311,6 +387,7 @@ sealed class Widget : LayeredWindow
     void Command(string text)
     {
         if (!Configured()) { OpenSettings(); return; }
+        Log.Write($"orden: «{text}»");
         Say("«" + text + "»", Theme.Ink, 1800 + text.Length * 45);
         _mode = Mode.Busy;
         SetClickThroughIfBusy();
@@ -319,6 +396,7 @@ sealed class Widget : LayeredWindow
 
     void OnAgent(AgentEvent ev)
     {
+        if (ev.Kind != AgentEventKind.Thinking) Log.Write($"agente {ev.Kind}: {ev.Text}");
         switch (ev.Kind)
         {
             case AgentEventKind.Thinking:
@@ -388,10 +466,29 @@ sealed class Widget : LayeredWindow
         bool saved;
         try
         {
-            using var f = new SettingsForm(_s);
+            using var f = new SettingsWindow(_s);
+            _settingsWindow = f;
+            f.Ready += () =>
+            {
+                if (_listening) f.VoiceStatus($"Escuchando con «{_mic.DeviceName}»");
+                else if (_s.SpeechEngine == SpeechEngine.Local
+                         || (_s.SpeechEngine == SpeechEngine.ElevenLabs && _s.ElevenLabsKey.Length > 0) || Configured())
+                {
+                    // Para la prueba se enciende aunque falte la key del modelo.
+                    f.VoiceStatus("Encendiendo el micrófono…");
+                    _ = StartListeningAsync(forTest: true);
+                }
+                else f.VoiceStatus("Para probar esta voz, guarda primero su llave");
+            };
             saved = f.ShowDialog() == DialogResult.OK;
         }
-        finally { _settingsOpen = false; }
+        finally
+        {
+            _settingsOpen = false;
+            _settingsWindow = null;
+        }
+        if (!saved && !Configured()) StopListening();
+        Log.Write(saved ? $"ajustes guardados · {_s.Provider} · modelo {_s.Model} · voz {_s.SpeechEngine} · mic {_s.MicDevice} · ver {_s.Vision}" : "ajustes cerrados sin guardar");
         if (!saved) return;
 
         Store.Save(_s);
@@ -400,7 +497,7 @@ sealed class Widget : LayeredWindow
         StopListening();
         _listener?.Dispose();
         _listener = null;
-        if (_s.SpeechEngine == SpeechEngine.Api) { _stt?.Dispose(); _stt = null; }
+        if (_s.SpeechEngine != SpeechEngine.Local) { _stt?.Dispose(); _stt = null; }
         if (Configured())
         {
             Say("", Theme.Muted, 0);
@@ -411,15 +508,26 @@ sealed class Widget : LayeredWindow
 
     void BuildMenu()
     {
-        _menu.Font = Theme.Text(9.5f);
+        _menu.Renderer = new MenuRenderer();
+        _menu.Font = Theme.Text(10f);
         _menu.ShowImageMargin = false;
-        _pauseItem = new ToolStripMenuItem("Pausar", null, (_, _) => ToggleListening());
-        _menu.Items.Add(_pauseItem);
-        _menu.Items.Add("Detener lo que hace", null, (_, _) => _agent.Stop());
-        _menu.Items.Add("Olvidar contexto", null, (_, _) => { _agent.ForgetContext(); Say("Contexto olvidado", Theme.Muted, 1500); });
+        _menu.ShowCheckMargin = false;
+        _menu.Padding = new Padding(0, 5, 0, 5);
+        _menu.BackColor = Color.White;
+        ToolStripMenuItem Item(string text, Action onClick, string? tag = null)
+        {
+            var item = new ToolStripMenuItem(text, null, (_, _) => onClick()) { Padding = new Padding(6, 5, 18, 5), Tag = tag };
+            _menu.Items.Add(item);
+            return item;
+        }
+        _pauseItem = Item("Pausar", ToggleListening);
+        Item("Detener lo que hace", () => _agent.Stop());
+        Item("Olvidar contexto", () => { _agent.ForgetContext(); Say("Contexto olvidado", Theme.Muted, 1500); });
         _menu.Items.Add(new ToolStripSeparator());
-        _menu.Items.Add("Ajustes…", null, (_, _) => OpenSettings());
-        _menu.Items.Add("Salir", null, (_, _) => Close());
+        Item("Ajustes…", OpenSettings);
+        Item("Salir", Close, "danger");
+        // Esquinas redondeadas de Windows 11 en el menú.
+        _menu.Opening += (_, _) => Native.RoundCorners(_menu.Handle);
 
         _tray.Text = "Colo";
         _tray.Icon = Icon ?? SystemIcons.Application;
@@ -486,7 +594,8 @@ sealed class Widget : LayeredWindow
         var speaking = _hearing && _listening;
         var goal = _mode switch
         {
-            Mode.Listening => speaking ? 0.25 + _target * 0.75 : 0.10 + _target * 0.25,
+            // La onda sigue el volumen del micrófono aunque todavía no haya una frase: así se ve que oye.
+            Mode.Listening => speaking ? 0.3 + _target * 0.7 : 0.10 + _target * 0.7,
             Mode.Busy => speaking ? 0.3 + _target * 0.7 : 0.38,
             Mode.Starting => 0.16,
             _ => 0,
@@ -496,7 +605,20 @@ sealed class Widget : LayeredWindow
         // En pausa y sin nada que mostrar, la onda queda quieta: se redibuja poco.
         var still = _mode is Mode.Paused or Mode.Problem && _level < 0.01 && _caption.Length == 0;
         _frame.Interval = still ? 120 : 16;
+        CheckSilence();
         Render();
+    }
+
+    /// <summary>Si el micrófono no entrega nada de sonido, se dice en lugar de quedarse callado.</summary>
+    void CheckSilence()
+    {
+        if (!_listening || _settingsOpen) return;
+        var now = DateTime.Now;
+        var quietFor = (now - (_lastSound > _listenSince ? _lastSound : _listenSince)).TotalSeconds;
+        if (quietFor < 12 || (now - _lastSilenceWarning).TotalSeconds < 45) return;
+        _lastSilenceWarning = now;
+        Log.Write($"audio: {quietFor:0} s sin sonido de «{_mic.DeviceName}»");
+        Say($"No me llega sonido de «{_mic.DeviceName}». Revisa el micrófono en Ajustes › Voz.", Theme.Danger, 7000);
     }
 
     void Render()

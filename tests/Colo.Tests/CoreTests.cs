@@ -444,6 +444,48 @@ public class CoreTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void Settings_json_matches_what_the_settings_page_sends()
+    {
+        var opts = new System.Text.Json.JsonSerializerOptions { Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() } };
+        var fromPage = """
+        {"Provider":"OpenAI","Endpoint":"","ApiKey":"sk","Model":"gpt-4.1","ReasoningEffort":"none","SpeechEngine":"Api",
+         "TranscribeModel":"whisper","MicDevice":1,"Sensitivity":7,"SpeakReplies":true,"StartWithWindows":false,"Vision":"Always",
+         "DisabledTools":["browser"],"WidgetX":5,
+         "McpServers":[{"Name":"Archivos","Kind":"Command","Command":"npx x","Env":"A=1","Url":"","Headers":"","Enabled":true,"Tools":["read_file"]},
+                       {"Name":"CRM","Kind":"Url","Command":"","Env":"","Url":"https://x/mcp","Headers":"","Enabled":false,"Tools":null}]}
+        """;
+        var s = System.Text.Json.JsonSerializer.Deserialize<Settings>(fromPage, opts)!;
+        Assert.Equal(Provider.OpenAI, s.Provider);
+        Assert.Equal(SpeechEngine.Api, s.SpeechEngine);
+        Assert.Equal(Vision.Always, s.Vision);
+        Assert.Equal(McpKind.Url, s.McpServers[1].Kind);
+        Assert.Null(s.McpServers[1].Tools);
+        Assert.Equal(["read_file"], s.McpServers[0].Tools!);
+        var back = System.Text.Json.JsonSerializer.Serialize(s, opts);
+        Assert.Contains("\"Provider\":\"OpenAI\"", back);
+        Assert.Contains("\"Kind\":\"Command\"", back);
+    }
+
+    [Fact]
+    public async Task ElevenLabs_scribe_request_and_errors()
+    {
+        var h = new FakeHandler((_, _) => (HttpStatusCode.OK, """{"language_code":"spa","text":" abre chrome ","words":[]}"""));
+        var s = new Settings { SpeechEngine = SpeechEngine.ElevenLabs, ElevenLabsKey = "xi-123" };
+        var text = await new ElevenLabsStt(s, new HttpClient(h)).TranscribeAsync(Wav.Encode(new float[1600]), default);
+        Assert.Equal("abre chrome", text);
+        var (req, body) = h.Seen[0];
+        Assert.Equal("https://api.elevenlabs.io/v1/speech-to-text", req.RequestUri!.ToString());
+        Assert.Equal("xi-123", req.Headers.GetValues("xi-api-key").Single());
+        Assert.Contains("name=model_id", body);
+        Assert.Contains("scribe_v2", body);
+        Assert.Contains("name=file", body);
+
+        var bad = new FakeHandler((_, _) => (HttpStatusCode.Unauthorized, """{"detail":{"status":"invalid_api_key","message":"Invalid API key"}}"""));
+        var ex = await Assert.ThrowsAsync<AiException>(() => new ElevenLabsStt(s, new HttpClient(bad)).TranscribeAsync([0], default));
+        Assert.Contains("Invalid API key", ex.Message);
+    }
+
+    [Fact]
     public void Keys_parse()
     {
         Assert.Equal([(ushort)0x11, (ushort)0x4C], Keys.Parse("ctrl+l").Select(k => k.Vk));

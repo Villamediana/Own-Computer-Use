@@ -1,5 +1,7 @@
 using System;
 using System.IO;
+using System.Linq;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
@@ -52,39 +54,55 @@ if (args[0] == "shots")
     return;
 }
 
-if (args[0] == "settings")
+if (args[0] == "menu")
 {
+    // El menú contextual dibujado en un bitmap para revisar su aspecto.
     Directory.CreateDirectory(outDir);
-    System.Windows.Forms.Application.SetHighDpiMode(System.Windows.Forms.HighDpiMode.PerMonitorV2);
-    var st = new Settings
+    var menu = new System.Windows.Forms.ContextMenuStrip
     {
-        Endpoint = "https://latamfoundryai.openai.azure.com", ApiKey = "x", Model = "gpt-5.6-luna",
-        DisabledTools = ["files"],
-        McpServers =
-        [
-            new() { Name = "Archivos", Command = @"npx -y @modelcontextprotocol/server-filesystem C:\Users\miguel", Tools = ["read_file", "list_directory"] },
-            new() { Name = "CRM", Kind = McpKind.Url, Url = "https://crm.vertis/mcp", Enabled = false },
-        ],
+        Renderer = new MenuRenderer(), Font = Theme.Text(10f), ShowImageMargin = false, ShowCheckMargin = false,
+        Padding = new System.Windows.Forms.Padding(0, 5, 0, 5), BackColor = Color.White,
     };
-    using var f = new SettingsForm(st);
-    f.Show();
-    for (var i = 0; i < 5; i++)
+    foreach (var t in new[] { "Pausar", "Detener lo que hace", "Olvidar contexto", "-", "Ajustes…", "Salir" })
     {
-        f.ShowPage(i);
-        System.Windows.Forms.Application.DoEvents();
-        using var bmp = new Bitmap(f.ClientSize.Width, f.ClientSize.Height);
-        f.DrawToBitmap(bmp, new Rectangle(Point.Empty, f.ClientSize));
-        bmp.Save(Path.Combine(outDir, $"settings-{i}.png"), ImageFormat.Png);
+        if (t == "-") { menu.Items.Add(new System.Windows.Forms.ToolStripSeparator()); continue; }
+        menu.Items.Add(new System.Windows.Forms.ToolStripMenuItem(t) { Padding = new System.Windows.Forms.Padding(6, 5, 18, 5), Tag = t == "Salir" ? "danger" : null });
     }
-    using var m = new McpServerForm(st.McpServers[0]);
-    m.Show();
+    menu.Show(new Point(100, 100));
+    ((System.Windows.Forms.ToolStripMenuItem)menu.Items[1]).Select();
     System.Windows.Forms.Application.DoEvents();
-    using (var bmp = new Bitmap(m.ClientSize.Width, m.ClientSize.Height))
-    {
-        m.DrawToBitmap(bmp, new Rectangle(Point.Empty, m.ClientSize));
-        bmp.Save(Path.Combine(outDir, "mcp-form.png"), ImageFormat.Png);
-    }
+    using var bmp = new Bitmap(menu.Width, menu.Height);
+    menu.DrawToBitmap(bmp, new Rectangle(Point.Empty, menu.Size));
+    bmp.Save(Path.Combine(outDir, "menu.png"), ImageFormat.Png);
     Console.WriteLine("ok");
+    return;
+}
+
+if (args[0] == "voice")
+{
+    // Mismo camino que el micrófono: PCM 16 kHz en bloques de 40 ms → Silero → Parakeet.
+    NativeLibs.PreferBundledOnnxRuntime();
+    var models = new SpeechModels(args[1]);
+    var audio = Wav.Read(args[2], out var rate);
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    Console.WriteLine("cargando silero…");
+    using var listener = new Listener(models.Silero, 6);
+    Console.WriteLine($"silero cargado: {sw.ElapsedMilliseconds} ms");
+    sw.Restart();
+    Console.WriteLine("cargando parakeet…");
+    using var stt = new LocalStt(models);
+    Console.WriteLine($"parakeet cargado: {sw.ElapsedMilliseconds} ms");
+    var phrases = new List<float[]>();
+    listener.Utterance += phrases.Add;
+    listener.SpeakingChanged += on => Console.WriteLine(on ? "vad: empieza" : "vad: termina");
+    var pcm = new short[24000].Concat(audio.Select(f => (short)(f * 32767))).Concat(new short[24000]).ToArray();
+    for (var i = 0; i < pcm.Length; i += 640) listener.Feed(pcm.AsSpan(i, Math.Min(640, pcm.Length - i)));
+    foreach (var p in phrases)
+    {
+        sw.Restart();
+        Console.WriteLine($"frase {p.Length / 16000.0:0.0}s → «{stt.Transcribe(p)}» ({sw.ElapsedMilliseconds} ms)");
+    }
+    Console.WriteLine(phrases.Count == 0 ? "SIN FRASES" : "ok");
     return;
 }
 

@@ -23,6 +23,7 @@ static class Store
     {
         public Settings Settings { get; set; } = new();
         public string? Key { get; set; }
+        public string? ElevenKey { get; set; }
     }
 
     static readonly JsonSerializerOptions Pretty = new() { WriteIndented = true };
@@ -47,15 +48,24 @@ static class Store
         s.Model ??= "";
         s.TranscribeModel ??= "";
         s.ReasoningEffort ??= "low";
-        s.ApiKey = "";
-        // Si la key no se puede descifrar (otro usuario de Windows), se pierde solo la key, no los ajustes.
+        s.ElevenLabsModel ??= "scribe_v2";
+        // Si una key no se puede descifrar (otro usuario de Windows), se pierde solo esa key, no los ajustes.
+        s.ApiKey = Unprotect(saved?.Key);
+        s.ElevenLabsKey = Unprotect(saved?.ElevenKey);
+        return s;
+    }
+
+    static string? Protect(string? text) => string.IsNullOrEmpty(text) ? null
+        : Convert.ToBase64String(ProtectedData.Protect(Encoding.UTF8.GetBytes(text), null, DataProtectionScope.CurrentUser));
+
+    static string Unprotect(string? blob)
+    {
         try
         {
-            if (!string.IsNullOrEmpty(saved?.Key))
-                s.ApiKey = Encoding.UTF8.GetString(ProtectedData.Unprotect(Convert.FromBase64String(saved.Key), null, DataProtectionScope.CurrentUser));
+            return string.IsNullOrEmpty(blob) ? ""
+                : Encoding.UTF8.GetString(ProtectedData.Unprotect(Convert.FromBase64String(blob), null, DataProtectionScope.CurrentUser));
         }
-        catch { }
-        return s;
+        catch { return ""; }
     }
 
     /// <summary>Guarda una copia: el objeto en uso (que el agente está leyendo) no se toca.</summary>
@@ -65,14 +75,9 @@ static class Store
         {
             Directory.CreateDirectory(Dir);
             var copy = JsonSerializer.Deserialize<Settings>(JsonSerializer.Serialize(s))!;
-            var key = copy.ApiKey;
+            var saved = new Saved { Settings = copy, Key = Protect(copy.ApiKey), ElevenKey = Protect(copy.ElevenLabsKey) };
             copy.ApiKey = "";
-            var saved = new Saved
-            {
-                Settings = copy,
-                Key = string.IsNullOrEmpty(key) ? null
-                    : Convert.ToBase64String(ProtectedData.Protect(Encoding.UTF8.GetBytes(key), null, DataProtectionScope.CurrentUser)),
-            };
+            copy.ElevenLabsKey = "";
             var tmp = FilePath + ".tmp";
             File.WriteAllText(tmp, JsonSerializer.Serialize(saved, Pretty));
             File.Move(tmp, FilePath, overwrite: true);
@@ -98,6 +103,13 @@ sealed class Mic : IDisposable
     }
 
     public bool Running => _wave is not null;
+    public string DeviceName { get; private set; } = "";
+
+    public static string NameOf(int device)
+    {
+        try { return device < 0 ? "Predeterminado de Windows" : WaveInEvent.GetCapabilities(device).ProductName; }
+        catch { return $"dispositivo {device}"; }
+    }
 
     /// <param name="device">-1 = predeterminado de Windows.</param>
     public void Start(int device, Listener listener)
@@ -112,20 +124,42 @@ sealed class Mic : IDisposable
             BufferMilliseconds = 40,
             NumberOfBuffers = 3,
         };
+        var errors = 0;
+        var first = true;
         wave.DataAvailable += (_, e) =>
         {
-            var pcm = MemoryMarshal.Cast<byte, short>(e.Buffer.AsSpan(0, e.BytesRecorded));
-            listener.Feed(pcm);
+            if (first)
+            {
+                first = false;
+                Log.Write($"micrófono: llegan datos ({e.BytesRecorded} bytes por bloque)");
+            }
+            // Un error procesando el audio no puede matar la grabación en silencio.
+            try
+            {
+                var pcm = MemoryMarshal.Cast<byte, short>(e.Buffer.AsSpan(0, e.BytesRecorded));
+                listener.Feed(pcm);
+            }
+            catch (Exception ex)
+            {
+                if (errors++ < 3) Log.Write("audio: error procesando · " + ex);
+                if (errors == 1) Failed?.Invoke("error procesando el audio: " + ex.Message);
+            }
         };
         wave.RecordingStopped += (_, e) =>
         {
             stopped.Set();
             // Parada que no pedimos: avisar para reintentar.
-            if (ReferenceEquals(_wave, wave)) Failed?.Invoke(e.Exception?.Message ?? "el micrófono se detuvo");
+            if (ReferenceEquals(_wave, wave))
+            {
+                Log.Write("micrófono: se detuvo solo · " + (e.Exception?.Message ?? "sin error"));
+                Failed?.Invoke(e.Exception?.Message ?? "el micrófono se detuvo");
+            }
         };
         _wave = wave;
         _stopped = stopped;
+        DeviceName = NameOf(device);
         wave.StartRecording();
+        Log.Write($"micrófono: abierto «{DeviceName}» (dispositivos: {WaveInEvent.DeviceCount})");
     }
 
     /// <summary>Para y espera a que el hilo de audio termine: después se puede liberar el Listener sin riesgo.</summary>

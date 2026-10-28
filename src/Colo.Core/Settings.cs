@@ -2,8 +2,11 @@ namespace Colo.Core;
 
 public enum Provider { Azure, OpenAI }
 
-/// <summary>Local = Parakeet en el propio PC (gratis). Api = modelo de transcripción del proveedor.</summary>
-public enum SpeechEngine { Local, Api }
+/// <summary>
+/// Local = Parakeet en el propio PC (gratis). Api = modelo de transcripción del proveedor (OpenAI / Foundry).
+/// ElevenLabs = Scribe por la API de ElevenLabs.
+/// </summary>
+public enum SpeechEngine { Local, Api, ElevenLabs }
 
 /// <summary>Auto = solo la lista de elementos (texto) y la captura cuando el modelo la pide. Always = captura en cada paso.</summary>
 public enum Vision { Auto, Always }
@@ -16,6 +19,8 @@ public sealed class Settings
     public string Model { get; set; } = "";
     public SpeechEngine SpeechEngine { get; set; } = SpeechEngine.Local;
     public string TranscribeModel { get; set; } = "";
+    public string ElevenLabsKey { get; set; } = "";
+    public string ElevenLabsModel { get; set; } = "scribe_v2";
     /// <summary>"" = no se envía (modelos sin razonamiento).</summary>
     public string ReasoningEffort { get; set; } = "low";
     public int Sensitivity { get; set; } = 6;

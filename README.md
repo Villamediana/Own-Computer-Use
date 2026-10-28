@@ -4,8 +4,12 @@ Controla el PC con Windows hablando, sin manos. Una onda blanca flotante, siempr
 escucha todo el tiempo; cada frase se ejecuta al terminar de decirla. Un cursor azul muestra
 dónde va a hacer clic y qué está haciendo.
 
-- **Voz**: Parakeet TDT 0.6B v3 + Silero VAD en el propio PC (sherpa-onnx). No gasta tokens.
-  Se descarga sola la primera vez (~670 MB) a `%LOCALAPPDATA%\Colo\models`.
+- **Voz**: Silero VAD + una de tres transcripciones: Parakeet TDT 0.6B v3 en el propio PC (sherpa-onnx, sin tokens,
+  ~670 MB la primera vez a `%LOCALAPPDATA%\Colo\models`), el modelo de transcripción de OpenAI/Foundry,
+  o ElevenLabs Scribe (`scribe_v2`).
+- **Ajustes**: página web (`src/Colo/settings.html`) dentro de WebView2; prueba del micrófono en vivo en Voz.
+  Probar la página: `node tests/ui/settings.test.js <carpeta>` (playwright-core).
+- **Registro**: `%LOCALAPPDATA%\Colo\colo.log` (micrófono, frases, órdenes, errores).
 - **Cerebro**: Azure AI Foundry (`/openai/v1/responses`, nombre del deployment) u OpenAI.
   Cada paso manda una captura con los elementos de UI Automation numerados.
 - **Herramientas**: ratón (click, drag, scroll), teclado (type_text con clic/reemplazo/Enter, press_keys),
