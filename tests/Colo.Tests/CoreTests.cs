@@ -540,6 +540,18 @@ public class CoreTests(ITestOutputHelper output)
         await agent.Hear("abre una pestaña");
         Assert.Equal(AgentEventKind.Done, events[^1].Kind);
         Assert.Equal(2, step);
+
+        // Azure también lo manda dentro del stream, con HTTP 200.
+        step = 0;
+        var inStream = new FakeHandler((_, _) => (HttpStatusCode.OK, Interlocked.Increment(ref step) == 1
+            ? "event: error\ndata: {\"type\":\"error\",\"message\":\"Your requests to gpt-5.6-luna have exceeded token rate limit.\"}\n\n"
+            : Calls(("done", """{"message":"ok"}"""))));
+        var a2 = new Agent(new AiClient(s, new HttpClient(inStream)), s, new FakeComputer()) { SettleMs = 0 };
+        var ev2 = new List<AgentEvent>();
+        a2.Event += e => { lock (ev2) ev2.Add(e); };
+        await a2.Hear("abre una pestaña");
+        Assert.Equal(AgentEventKind.Done, ev2[^1].Kind);
+        Assert.Equal(2, step);
     }
 
     [Fact]

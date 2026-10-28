@@ -119,6 +119,18 @@ public sealed class AiClient
     /// </summary>
     static readonly TimeSpan MaxRetryWait = TimeSpan.FromSeconds(10);
 
+    /// <summary>Error de límite por minuto (429 o «exceeded … rate limit», que Azure también manda dentro del stream).</summary>
+    public static bool IsRateLimit(string message) =>
+        message.Contains("rate limit", StringComparison.OrdinalIgnoreCase) || message.StartsWith("HTTP 429", StringComparison.Ordinal);
+
+    /// <summary>Lo que pide el mensaje («retry after 6 seconds») o 2 s, 4 s, 6 s…; nunca más de 10 s.</summary>
+    public static TimeSpan RetryDelay(string message, int attempt)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(message, @"after (\d+) second", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        var s = m.Success ? int.Parse(m.Groups[1].Value) + 1 : 2 * attempt;
+        return TimeSpan.FromSeconds(Math.Clamp(s, 1, MaxRetryWait.TotalSeconds));
+    }
+
     public async IAsyncEnumerable<JsonNode> StreamAsync(JsonObject body, [EnumeratorCancellation] CancellationToken ct)
     {
         body["stream"] = true;
@@ -132,11 +144,12 @@ public sealed class AiClient
             resp = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
             if (resp.IsSuccessStatusCode) break;
             var error = $"HTTP {(int)resp.StatusCode}: {ErrorText(await resp.Content.ReadAsStringAsync(ct))}";
-            var wait = resp.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(2 * attempt);
+            var asked = resp.Headers.RetryAfter?.Delta;
+            var status = (int)resp.StatusCode;
             resp.Dispose();
             req.Dispose();
-            if ((int)resp.StatusCode != 429 || attempt > 3) throw new AiException(error);
-            await Task.Delay(wait > MaxRetryWait ? MaxRetryWait : wait, ct);
+            if (status != 429 || attempt > 3) throw new AiException(error);
+            await Task.Delay(asked is { } a && a > TimeSpan.FromSeconds(attempt) ? (a > MaxRetryWait ? MaxRetryWait : a) : RetryDelay(error, attempt), ct);
         }
         using var _resp = resp;
         using var reader = new StreamReader(await resp.Content.ReadAsStreamAsync(ct));

@@ -416,6 +416,7 @@ sealed class Widget : LayeredWindow
                 if (_s.SpeechEngine == SpeechEngine.Local)
                 {
                     if (_stt is null) { Log.Write("voz: frase descartada, Whisper no está cargado"); continue; }
+                    _stt.Prompt = LocalStt.PromptFor(Native.AppWindows().Select(Native.ProcessName));
                     text = _stt.Transcribe(samples);
                 }
                 else if (_s.SpeechEngine == SpeechEngine.ElevenLabs)

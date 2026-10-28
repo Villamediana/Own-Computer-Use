@@ -75,7 +75,10 @@ public sealed class Agent
         string? final = null;
         var released = false;
         var look = false;
+        // Lo hecho en esta tarea, para que el próximo pedido («ahí no», «en la barra») sepa a qué se refiere.
+        var did = new List<string>();
         string? lastCall = null;
+        var waits = 0;
         var repeats = 0;
         try
         {
@@ -87,6 +90,7 @@ public sealed class Agent
                 DrainIncoming(heard, log);
                 Emit(AgentEventKind.Thinking, step == 0 ? "Pensando…" : "Mirando la pantalla…");
                 var body = BuildRequest(heard, log, obs, fresh);
+                var sentFresh = fresh.ToList();
                 fresh.Clear();
 
                 var message = new StringBuilder();
@@ -95,57 +99,72 @@ public sealed class Agent
                 var finished = false;
                 var ignored = false;
                 // Cada herramienta se ejecuta en cuanto llega del stream, sin esperar al resto.
-                await foreach (var item in _ai.StreamAsync(body, ct))
+                try
                 {
-                    var type = item["type"]?.GetValue<string>();
-                    if (type == "message")
+                    await foreach (var item in _ai.StreamAsync(body, ct))
                     {
-                        foreach (var c in item["content"]?.AsArray() ?? [])
-                            if (c?["type"]?.GetValue<string>() == "output_text")
-                                message.Append(c["text"]?.GetValue<string>());
-                        continue;
-                    }
-                    if (type != "function_call") continue;
-                    anyCall = true;
-                    var call = ParseCall(item);
-                    if (call.Name == "done") { final = call.Str("message"); finished = true; break; }
-                    if (call.Name == "ignore") { ignored = finished = true; break; }
-                    if (call.Name == "look")
-                    {
-                        look = true;
-                        log.Add("look → la captura va en este turno");
-                        break;
-                    }
+                        var type = item["type"]?.GetValue<string>();
+                        if (type == "message")
+                        {
+                            foreach (var c in item["content"]?.AsArray() ?? [])
+                                if (c?["type"]?.GetValue<string>() == "output_text")
+                                    message.Append(c["text"]?.GetValue<string>());
+                            continue;
+                        }
+                        if (type != "function_call") continue;
+                        anyCall = true;
+                        var call = ParseCall(item);
+                        if (call.Name == "done") { final = call.Str("message"); finished = true; break; }
+                        if (call.Name == "ignore") { ignored = finished = true; break; }
+                        if (call.Name == "look")
+                        {
+                            look = true;
+                            log.Add("look → la captura va en este turno");
+                            break;
+                        }
 
-                    var label = Describe(call, obs);
-                    // Un clic que funcionó pero no cambia nada visible hacía repetirlo hasta agotar los pasos.
-                    // Bajar, esperar o pasar página varias veces seguidas sí es normal.
-                    var signature = call.Name is "scroll" or "wait" or "press_keys" ? null : call.Name + call.Args.ToJsonString();
-                    repeats = signature is not null && signature == lastCall ? repeats + 1 : 1;
-                    lastCall = signature;
-                    if (repeats > MaxRepeats)
-                    {
-                        Remember(heard, "se repetía sin avanzar");
-                        Emit(AgentEventKind.Error, $"Me detuve: repetía «{label}».");
-                        return;
+                        var label = Describe(call, obs);
+                        // Un clic que funcionó pero no cambia nada visible hacía repetirlo hasta agotar los pasos.
+                        // Bajar, esperar o pasar página varias veces seguidas sí es normal.
+                        var signature = call.Name is "scroll" or "wait" or "press_keys" ? null : call.Name + call.Args.ToJsonString();
+                        repeats = signature is not null && signature == lastCall ? repeats + 1 : 1;
+                        lastCall = signature;
+                        if (repeats > MaxRepeats)
+                        {
+                            Remember(heard, did, "se repetía sin avanzar");
+                            Emit(AgentEventKind.Error, $"Me detuve: repetía «{label}».");
+                            return;
+                        }
+                        Emit(AgentEventKind.Action, label);
+                        acted = true;
+                        string result;
+                        try
+                        {
+                            result = Extra is { } host && host.Handles(call.Name)
+                                ? await host.CallAsync(call.Name, call.Args, ct)
+                                : await _pc.ExecuteAsync(call, ct);
+                        }
+                        catch (Exception ex) when (ex is not OperationCanceledException) { result = "error: " + ex.Message; }
+                        // El resultado largo viaja entero solo en el turno siguiente; en el registro queda corto.
+                        if (result.Length > 300) fresh.Add($"{label}:\n{result}");
+                        log.Add($"{label} → {Trunc(result, 300)}");
+                        did.Add(result.StartsWith("error", StringComparison.Ordinal) ? $"{label} (falló)" : label);
+                        if (repeats == MaxRepeats)
+                            log.Add($"Ya hiciste «{label}» {repeats} veces seguidas. Si el pedido está cumplido, done; si no tuvo efecto, prueba de otra forma.");
+                        if (result.StartsWith("error", StringComparison.Ordinal)) break;
                     }
-                    Emit(AgentEventKind.Action, label);
-                    acted = true;
-                    string result;
-                    try
-                    {
-                        result = Extra is { } host && host.Handles(call.Name)
-                            ? await host.CallAsync(call.Name, call.Args, ct)
-                            : await _pc.ExecuteAsync(call, ct);
-                    }
-                    catch (Exception ex) when (ex is not OperationCanceledException) { result = "error: " + ex.Message; }
-                    // El resultado largo viaja entero solo en el turno siguiente; en el registro queda corto.
-                    if (result.Length > 300) fresh.Add($"{label}:\n{result}");
-                    log.Add($"{label} → {Trunc(result, 300)}");
-                    if (repeats == MaxRepeats)
-                        log.Add($"Ya hiciste «{label}» {repeats} veces seguidas. Si el pedido está cumplido, done; si no tuvo efecto, prueba de otra forma.");
-                    if (result.StartsWith("error", StringComparison.Ordinal)) break;
                 }
+                catch (AiException ex) when (AiClient.IsRateLimit(ex.Message) && !anyCall && message.Length == 0 && waits < 4)
+                {
+                    // Límite por minuto del proveedor antes de que llegue nada: se espera y se repite el mismo paso.
+                    waits++;
+                    fresh.AddRange(sentFresh);
+                    Emit(AgentEventKind.Thinking, "Un momento…");
+                    await Task.Delay(AiClient.RetryDelay(ex.Message, waits), ct);
+                    step--;
+                    continue;
+                }
+                waits = 0;
 
                 var said = message.ToString().Trim();
                 if (said.Length > 0)
@@ -169,7 +188,7 @@ public sealed class Agent
                         Emit(AgentEventKind.Ignored, "");
                         return;
                     }
-                    Remember(heard, final);
+                    Remember(heard, did, final);
                     Emit(AgentEventKind.Done, string.IsNullOrWhiteSpace(final) ? "Listo." : final!);
                     return;
                 }
@@ -178,12 +197,12 @@ public sealed class Agent
                 if (SettleMs > 0 && acted) await Task.Delay(SettleMs, ct);
                 if (log.Count > 40) log.RemoveRange(0, log.Count - 40);
             }
-            Remember(heard, "se cortó por demasiados pasos");
+            Remember(heard, did, "se cortó por demasiados pasos");
             Emit(AgentEventKind.Error, "Me detuve: demasiados pasos.");
         }
         catch (OperationCanceledException)
         {
-            Remember(heard, "el usuario la detuvo");
+            Remember(heard, did, "el usuario la detuvo");
             Emit(AgentEventKind.Stopped, "Detenido.");
         }
         catch (Exception ex)
@@ -214,11 +233,12 @@ public sealed class Agent
         }
     }
 
-    void Remember(List<string> heard, string? outcome)
+    void Remember(List<string> heard, List<string> did, string? outcome)
     {
+        var steps = did.Count == 0 ? "" : " → hiciste: " + string.Join("; ", did.TakeLast(6));
         lock (_lock)
         {
-            _past.Add($"«{string.Join(" / ", heard)}» → {(string.IsNullOrWhiteSpace(outcome) ? "hecho" : outcome)}");
+            _past.Add($"«{string.Join(" / ", heard)}»{steps} → {(string.IsNullOrWhiteSpace(outcome) ? "hecho" : outcome)}");
             if (_past.Count > 6) _past.RemoveAt(0);
         }
     }

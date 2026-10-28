@@ -150,6 +150,20 @@ public sealed class LocalStt : IDisposable
     public string Language { get; set; } = "es";
     /// <summary>Contexto de audio proporcional a la frase (más rápido). false = ventana completa de 30 s.</summary>
     public bool ShortContext { get; set; } = true;
+    /// <summary>Texto previo que orienta a Whisper hacia estas palabras (nombres de apps, «pestaña», «aba»…).</summary>
+    public string Prompt { get; set; } = "";
+
+    /// <summary>
+    /// Palabras de las órdenes (en español y portugués) más los programas abiertos. Medido con frases de
+    /// prueba: acierta «URL», «Backlog», «Comet» donde sin esto salía «wrl», «baclo», «comete».
+    /// </summary>
+    public static string PromptFor(IEnumerable<string> apps)
+    {
+        var names = apps.Where(a => a.Length > 1).Select(a => char.ToUpperInvariant(a[0]) + a[1..])
+            .Distinct(StringComparer.OrdinalIgnoreCase).Take(12);
+        return "Glosario: pestaña, aba, guía, navegador, barra de direcciones, endereço, URL, escribe, escreve, clic, clica, "
+            + string.Join(", ", names) + ".";
+    }
 
     public LocalStt(string modelPath) => _factory = WhisperFactory.FromPath(modelPath);
 
@@ -173,13 +187,14 @@ public sealed class LocalStt : IDisposable
             // Whisper siempre procesa ventanas de 30 s (contexto 1500). Para una frase corta basta un
             // contexto proporcional a su duración (50 por segundo + margen): el encoder va mucho más rápido.
             var ctx = ShortContext ? Math.Clamp(samples.Length * 50 / Listener.Rate + 128, 256, 1500) : 1500;
-            using var processor = _factory.CreateBuilder()
+            var builder = _factory.CreateBuilder()
                 .WithLanguage(string.IsNullOrWhiteSpace(Language) ? "auto" : Language)
                 .WithThreads(_threads)
                 .WithNoContext()
                 .WithAudioContextSize(ctx)
-                .WithNoSpeechThreshold(0.6f)
-                .Build();
+                .WithNoSpeechThreshold(0.6f);
+            if (Prompt.Length > 0) builder = builder.WithPrompt(Prompt);
+            using var processor = builder.Build();
             var text = new StringBuilder();
             foreach (var seg in processor.ProcessAsync(samples).ToBlockingEnumerable())
             {
@@ -188,7 +203,9 @@ public sealed class LocalStt : IDisposable
                 if (seg.NoSpeechProbability > 0.6f) continue;
                 text.Append(seg.Text);
             }
-            return Clean(text.ToString());
+            var result = Clean(text.ToString());
+            // Con ruido Whisper puede repetir el glosario que se le dio: eso no lo dijo nadie.
+            return result.StartsWith("Glosario", StringComparison.OrdinalIgnoreCase) ? "" : result;
         }
     }
 
