@@ -23,7 +23,8 @@ jobs:
           COLO_KEY: ${{ secrets.COLO_KEY }}
         run: |
           dotnet publish tools/Preview -c Release -r win-x64 --self-contained -o out/preview
-          $p = Start-Process out/preview/Preview.exe -ArgumentList "e2e", "$PWD\out\e2e", "$PWD\tests\e2e\prueba.html" -NoNewWindow -PassThru -Wait
+          $p = Start-Process out/preview/Preview.exe -ArgumentList "e2e", "$PWD\out\e2e", "$PWD\tests\e2e\prueba.html" -NoNewWindow -PassThru
+          $p.WaitForExit()
           exit $p.ExitCode
 
       - uses: actions/upload-artifact@v4

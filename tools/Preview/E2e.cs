@@ -145,6 +145,7 @@ static class E2e
         try { File.Copy(Log.FilePath, Path.Combine(outDir, "colo.log"), true); } catch { }
         Console.WriteLine($"{cases.Count - failed}/{cases.Count} bien");
         widget!.BeginInvoke(() => Application.ExitThread());
+        Close();
         return failed;
     }
 
@@ -173,7 +174,17 @@ static class E2e
             Show("Chrome", "chrome");
         }
         try { Console.WriteLine(File.ReadAllText(Log.FilePath)); } catch { }
+        Close();
         return failed;
+    }
+
+    /// <summary>Cierra lo que abrió la prueba para que el proceso termine limpio.</summary>
+    static void Close()
+    {
+        foreach (var name in new[] { "notepad", "chrome" })
+            foreach (var p in Process.GetProcessesByName(name))
+                using (p)
+                    try { p.Kill(true); } catch { }
     }
 
     static IntPtr WaitWindow(string process, int ms)
