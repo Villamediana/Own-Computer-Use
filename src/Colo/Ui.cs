@@ -244,19 +244,124 @@ sealed class Toggle : Control
     }
 }
 
-/// <summary>Una fila "texto ··· interruptor".</summary>
+/// <summary>Fila "título (y descripción) ··· interruptor".</summary>
 sealed class ToggleRow : Panel
 {
     public Toggle Toggle { get; } = new();
 
-    public ToggleRow(string text)
+    public ToggleRow(string text, string? detail = null, int width = 520)
     {
-        Height = 34;
-        Width = 400;
-        Margin = new Padding(0, 6, 0, 0);
-        var label = new Label { Text = text, AutoSize = true, Font = Theme.Text(10f), ForeColor = Theme.Ink, Location = new Point(0, 7) };
-        Controls.Add(label);
+        Width = width;
+        Height = detail is null ? 40 : 54;
+        Margin = new Padding(0, 2, 0, 2);
+        var title = new Label { Text = text, AutoSize = true, Font = Theme.Text(10f), ForeColor = Theme.Ink, Location = new Point(0, detail is null ? 10 : 7) };
+        Controls.Add(title);
+        if (detail is not null)
+            Controls.Add(new Label { Text = detail, AutoSize = true, Font = Theme.Text(8.75f), ForeColor = Theme.Muted, Location = new Point(0, 29) });
         Controls.Add(Toggle);
         Layout += (_, _) => Toggle.Location = new Point(Width - Toggle.Width, (Height - Toggle.Height) / 2);
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e);
+        using var line = new Pen(Color.FromArgb(236, 236, 238));
+        e.Graphics.DrawLine(line, 0, Height - 1, Width, Height - 1);
+    }
+}
+
+/// <summary>Navegación lateral estilo ajustes de ChatGPT / macOS.</summary>
+sealed class NavList : Control
+{
+    readonly string[] _items;
+    int _index, _hover = -1;
+    public event EventHandler? Changed;
+    const int ItemH = 36;
+
+    public NavList(params string[] items)
+    {
+        _items = items;
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint
+                 | ControlStyles.ResizeRedraw, true);
+        Cursor = Cursors.Hand;
+        Font = Theme.Text(10f);
+        Height = items.Length * (ItemH + 2);
+    }
+
+    public int Index
+    {
+        get => _index;
+        set { _index = value; Invalidate(); Changed?.Invoke(this, EventArgs.Empty); }
+    }
+
+    int At(int y) => y / (int)((ItemH + 2) * DeviceDpi / 96f);
+
+    protected override void OnMouseMove(MouseEventArgs e) { base.OnMouseMove(e); var h = At(e.Y); if (h != _hover) { _hover = h; Invalidate(); } }
+    protected override void OnMouseLeave(EventArgs e) { base.OnMouseLeave(e); _hover = -1; Invalidate(); }
+    protected override void OnMouseUp(MouseEventArgs e)
+    {
+        base.OnMouseUp(e);
+        var i = At(e.Y);
+        if (i >= 0 && i < _items.Length) Index = i;
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var g = e.Graphics;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.Clear(Parent?.BackColor ?? Theme.Bg);
+        var s = DeviceDpi / 96f;
+        for (var i = 0; i < _items.Length; i++)
+        {
+            var r = new RectangleF(0, i * (ItemH + 2) * s, Width - 1, ItemH * s);
+            if (i == _index || i == _hover)
+            {
+                using var b = new SolidBrush(i == _index ? Color.FromArgb(232, 232, 235) : Color.FromArgb(240, 240, 242));
+                using var p = Theme.Round(r, 8 * s);
+                g.FillPath(b, p);
+            }
+            using var font = i == _index ? Theme.Semibold(10f) : Theme.Text(10f);
+            TextRenderer.DrawText(g, _items[i], font, Rectangle.Round(new RectangleF(r.X + 12 * s, r.Y, r.Width - 12 * s, r.Height)),
+                Theme.Ink, TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+        }
+    }
+}
+
+/// <summary>Tarjeta con borde suave (filas de servidores MCP).</summary>
+sealed class Card : Panel
+{
+    public Card()
+    {
+        SetStyle(ControlStyles.ResizeRedraw | ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint, true);
+        BackColor = Theme.Bg;
+        Padding = new Padding(16, 12, 16, 12);
+        Margin = new Padding(0, 0, 0, 10);
+    }
+
+    protected override void OnPaintBackground(PaintEventArgs e)
+    {
+        var g = e.Graphics;
+        g.Clear(Parent?.BackColor ?? Theme.Bg);
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        var s = DeviceDpi / 96f;
+        using var p = Theme.Round(new RectangleF(0.5f, 0.5f, Width - 2, Height - 2), 12 * s);
+        using var b = new SolidBrush(Theme.Bg);
+        g.FillPath(b, p);
+        using var pen = new Pen(Color.FromArgb(228, 228, 232), 1f);
+        g.DrawPath(pen, p);
+    }
+}
+
+/// <summary>Texto clicable discreto («Editar», «Quitar»).</summary>
+sealed class LinkText : Label
+{
+    public LinkText(string text, bool danger = false)
+    {
+        Text = text;
+        AutoSize = true;
+        Cursor = Cursors.Hand;
+        Font = Theme.Semibold(9f);
+        ForeColor = danger ? Theme.Danger : Theme.Ink;
+        Margin = new Padding(12, 0, 0, 0);
     }
 }

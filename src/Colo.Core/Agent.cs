@@ -8,9 +8,9 @@ public enum AgentEventKind { Thinking, Action, Message, Done, Ignored, Error, St
 public sealed record AgentEvent(AgentEventKind Kind, string Text);
 
 /// <summary>
-/// Bucle captura → modelo → acciones. Cada turno es independiente (sin estado en el servidor):
-/// se manda lo que dijo el usuario, un registro corto de lo hecho y solo la captura actual,
-/// así el tamaño de la petición no crece con los pasos.
+/// Bucle pantalla → modelo → acciones. Cada turno es independiente (sin estado en el servidor):
+/// lo que dijo el usuario, un registro corto de lo hecho y la pantalla actual (lista de elementos y,
+/// si hace falta, la captura), así la petición no crece con los pasos.
 /// </summary>
 public sealed class Agent
 {
@@ -24,7 +24,9 @@ public sealed class Agent
     CancellationTokenSource? _cts;
 
     public int MaxSteps { get; init; } = 40;
-    public int SettleMs { get; init; } = 350;
+    public int SettleMs { get; init; } = 250;
+    /// <summary>Herramientas de servidores MCP (se cambia al guardar Ajustes).</summary>
+    public IToolHost? Extra { get; set; }
     public event Action<AgentEvent>? Event;
 
     public Agent(AiClient ai, Settings settings, IComputer pc)
@@ -67,42 +69,72 @@ public sealed class Agent
     {
         var heard = new List<string> { first };
         var log = new List<string>();
+        var fresh = new List<string>();
         string? final = null;
         var released = false;
+        var look = false;
         try
         {
             for (var step = 0; step < MaxSteps; step++)
             {
                 ct.ThrowIfCancellationRequested();
-                var obs = await _pc.ObserveAsync(ct);
+                var obs = await _pc.ObserveAsync(_s.Vision == Vision.Always || look, ct);
+                look = false;
                 DrainIncoming(heard, log);
                 Emit(AgentEventKind.Thinking, step == 0 ? "Pensando…" : "Mirando la pantalla…");
-                var resp = await _ai.RespondAsync(BuildRequest(heard, log, obs), ct);
-                var (message, calls) = Parse(resp);
+                var body = BuildRequest(heard, log, obs, fresh);
+                fresh.Clear();
 
-                if (message.Length > 0)
-                {
-                    log.Add("Tú: " + message);
-                    if (calls.Count > 0) Emit(AgentEventKind.Message, message);
-                }
-
-                var finished = calls.Count == 0;
+                var message = new StringBuilder();
+                var anyCall = false;
+                var finished = false;
                 var ignored = false;
-                if (finished) final = message;
-
-                foreach (var call in calls)
+                // Cada herramienta se ejecuta en cuanto llega del stream, sin esperar al resto.
+                await foreach (var item in _ai.StreamAsync(body, ct))
                 {
+                    var type = item["type"]?.GetValue<string>();
+                    if (type == "message")
+                    {
+                        foreach (var c in item["content"]?.AsArray() ?? [])
+                            if (c?["type"]?.GetValue<string>() == "output_text")
+                                message.Append(c["text"]?.GetValue<string>());
+                        continue;
+                    }
+                    if (type != "function_call") continue;
+                    anyCall = true;
+                    var call = ParseCall(item);
                     if (call.Name == "done") { final = call.Str("message"); finished = true; break; }
                     if (call.Name == "ignore") { ignored = finished = true; break; }
+                    if (call.Name == "look")
+                    {
+                        look = true;
+                        log.Add("look → la captura va en este turno");
+                        break;
+                    }
 
                     var label = Describe(call, obs);
                     Emit(AgentEventKind.Action, label);
                     string result;
-                    try { result = await _pc.ExecuteAsync(call, ct); }
+                    try
+                    {
+                        result = Extra is { } host && host.Handles(call.Name)
+                            ? await host.CallAsync(call.Name, call.Args, ct)
+                            : await _pc.ExecuteAsync(call, ct);
+                    }
                     catch (Exception ex) when (ex is not OperationCanceledException) { result = "error: " + ex.Message; }
-                    log.Add($"{label} → {result}");
+                    // El resultado largo viaja entero solo en el turno siguiente; en el registro queda corto.
+                    if (result.Length > 300) fresh.Add($"{label}:\n{result}");
+                    log.Add($"{label} → {Trunc(result, 300)}");
                     if (result.StartsWith("error", StringComparison.Ordinal)) break;
                 }
+
+                var said = message.ToString().Trim();
+                if (said.Length > 0)
+                {
+                    log.Add("Tú: " + said);
+                    if (!finished && anyCall) Emit(AgentEventKind.Message, said);
+                }
+                if (!anyCall) { finished = true; final = said; }
 
                 if (finished)
                 {
@@ -123,7 +155,7 @@ public sealed class Agent
                     return;
                 }
 
-                if (SettleMs > 0) await Task.Delay(SettleMs, ct);
+                if (SettleMs > 0 && !look) await Task.Delay(SettleMs, ct);
                 if (log.Count > 40) log.RemoveRange(0, log.Count - 40);
             }
             Remember(heard, "se cortó por demasiados pasos");
@@ -173,14 +205,15 @@ public sealed class Agent
 
     void Emit(AgentEventKind kind, string text) => Event?.Invoke(new AgentEvent(kind, text));
 
-    public JsonObject BuildRequest(IReadOnlyList<string> heard, IReadOnlyList<string> log, Observation obs)
+    public JsonObject BuildRequest(IReadOnlyList<string> heard, IReadOnlyList<string> log, Observation obs,
+        IReadOnlyList<string>? fresh = null)
     {
         var sb = new StringBuilder();
         string[] past;
         lock (_lock) past = [.. _past];
         if (past.Length > 0)
         {
-            sb.AppendLine("Pedidos anteriores (solo contexto):");
+            sb.AppendLine("Pedidos anteriores (contexto):");
             foreach (var p in past) sb.AppendLine("- " + p);
             sb.AppendLine();
         }
@@ -188,63 +221,63 @@ public sealed class Agent
         foreach (var h in heard) sb.AppendLine($"«{h}»");
         if (log.Count > 0)
         {
-            sb.AppendLine().AppendLine("Lo que ya hiciste en esta tarea:");
+            sb.AppendLine().AppendLine("Ya hiciste:");
             foreach (var l in log) sb.AppendLine("- " + l);
         }
+        if (fresh is { Count: > 0 })
+        {
+            sb.AppendLine().AppendLine("Resultado completo de lo último:");
+            foreach (var f in fresh) sb.AppendLine(f);
+        }
+        var withImage = obs.Jpeg.Length > 0;
         sb.AppendLine().AppendLine($"Ventana activa: {obs.Window}");
-        sb.AppendLine($"Captura de {obs.Width}x{obs.Height} px. Elementos marcados:");
+        sb.AppendLine(withImage
+            ? $"Captura {obs.Width}x{obs.Height} adjunta. Elementos:"
+            : "Sin captura en este turno (look si la necesitas). Elementos:");
         foreach (var m in obs.Marks)
-            sb.AppendLine($"[{m.Id}] {m.Role}{(m.Name.Length > 0 ? " «" + m.Name + "»" : "")}");
-        if (obs.Marks.Count == 0) sb.AppendLine("(ninguno; usa x,y)");
+        {
+            sb.Append('[').Append(m.Id).Append("] ").Append(m.Role);
+            if (m.Name.Length > 0) sb.Append(" «").Append(m.Name).Append('»');
+            if (m.Value.Length > 0) sb.Append(" =").Append(m.Value);
+            sb.AppendLine();
+        }
+        if (obs.Marks.Count == 0) sb.AppendLine(withImage ? "(ninguno; usa x,y)" : "(ninguno; llama look)");
+
+        var content = new JsonArray(new JsonObject { ["type"] = "input_text", ["text"] = sb.ToString() });
+        if (withImage)
+            content.Add(new JsonObject
+            {
+                ["type"] = "input_image",
+                ["image_url"] = "data:image/jpeg;base64," + Convert.ToBase64String(obs.Jpeg),
+                ["detail"] = "high",
+            });
+
+        // Instrucciones y tools van primero y no cambian entre pasos: el proveedor las cachea.
+        var tools = Tools.Build(_s.DisabledTools);
+        if (Extra is { } host)
+            foreach (var d in host.Definitions) tools.Add(d.DeepClone());
 
         var body = new JsonObject
         {
             ["model"] = _s.Model,
-            ["instructions"] = Prompt.System,
-            ["input"] = new JsonArray(new JsonObject
-            {
-                ["role"] = "user",
-                ["content"] = new JsonArray(
-                    new JsonObject { ["type"] = "input_text", ["text"] = sb.ToString() },
-                    new JsonObject
-                    {
-                        ["type"] = "input_image",
-                        ["image_url"] = "data:image/jpeg;base64," + Convert.ToBase64String(obs.Jpeg),
-                        ["detail"] = "high",
-                    }),
-            }),
-            ["tools"] = Prompt.Tools(),
+            ["instructions"] = Tools.System,
+            ["tools"] = tools,
             ["tool_choice"] = "auto",
             ["parallel_tool_calls"] = true,
             ["store"] = false,
+            ["input"] = new JsonArray(new JsonObject { ["role"] = "user", ["content"] = content }),
         };
         if (!string.IsNullOrEmpty(_s.ReasoningEffort))
             body["reasoning"] = new JsonObject { ["effort"] = _s.ReasoningEffort };
         return body;
     }
 
-    public static (string Message, List<ToolCall> Calls) Parse(JsonNode resp)
+    static ToolCall ParseCall(JsonNode item)
     {
-        var text = new StringBuilder();
-        var calls = new List<ToolCall>();
-        foreach (var item in resp["output"]?.AsArray() ?? [])
-        {
-            switch (item?["type"]?.GetValue<string>())
-            {
-                case "function_call":
-                    JsonObject args;
-                    try { args = JsonNode.Parse(item["arguments"]?.GetValue<string>() ?? "{}") as JsonObject ?? []; }
-                    catch { args = []; }
-                    calls.Add(new ToolCall(item["name"]!.GetValue<string>(), args));
-                    break;
-                case "message":
-                    foreach (var c in item["content"]?.AsArray() ?? [])
-                        if (c?["type"]?.GetValue<string>() == "output_text")
-                            text.Append(c["text"]?.GetValue<string>());
-                    break;
-            }
-        }
-        return (text.ToString().Trim(), calls);
+        JsonObject args;
+        try { args = JsonNode.Parse(item["arguments"]?.GetValue<string>() ?? "{}") as JsonObject ?? []; }
+        catch { args = []; }
+        return new ToolCall(item["name"]!.GetValue<string>(), args);
     }
 
     public static string Describe(ToolCall c, Observation obs)
@@ -261,13 +294,45 @@ public sealed class Agent
         return c.Name switch
         {
             "click" => (c.Bool("double") ? "Doble clic" : c.Str("button") == "right" ? "Clic derecho" : "Clic") + Target(),
-            "type_text" => $"Escribe «{Trunc(c.Str("text"), 60)}»",
+            "type_text" => $"Escribe «{Trunc(c.Str("text"), 60)}»" + (c.Int("mark") is not null ? " en" + Target() : "")
+                + (c.Bool("submit") ? " ⏎" : ""),
             "press_keys" => $"Teclas {c.Str("keys")}" + (c.Int("repeat") is > 1 and var n ? $" ×{n}" : ""),
-            "scroll" => $"Desplaza {c.Str("direction")}" + Target(),
+            "scroll" => c.Str("to") switch
+            {
+                "top" => "Al principio",
+                "bottom" => "Al final",
+                _ => $"Desplaza {c.Str("direction")}" + Target(),
+            },
+            "drag" => "Arrastra",
+            "browser" => c.Str("action") switch
+            {
+                "go" => $"Va a {c.Str("url")}",
+                "new_tab" => "Pestaña nueva" + (c.Str("url").Length > 0 ? " " + c.Str("url") : ""),
+                "search" => $"Busca «{c.Str("text")}»",
+                "find" => $"Busca en la página «{c.Str("text")}»",
+                "back" => "Atrás",
+                "forward" => "Adelante",
+                "reload" => "Recarga",
+                "close_tab" => "Cierra la pestaña",
+                "next_tab" or "prev_tab" or "tab" => "Cambia de pestaña",
+                var a => a,
+            },
             "open" => $"Abre {c.Str("target")}",
+            "window" => c.Str("action") switch
+            {
+                "list" => "Mira las ventanas",
+                "focus" => $"Cambia a {c.Str("name")}",
+                "minimize" => "Minimiza",
+                "maximize" => "Maximiza",
+                "close" => "Cierra la ventana",
+                var a => a,
+            },
+            "read_text" => "Lee la pantalla",
+            "clipboard" => c.Str("action") == "set" ? "Copia al portapapeles" : "Lee el portapapeles",
             "screenshot" => c.Str("area") == "window" ? "Print de la ventana" : "Print de la pantalla",
             "find_files" => $"Busca archivos «{c.Str("query")}»",
             "wait" => "Espera",
+            var n when n.StartsWith("mcp_", StringComparison.Ordinal) => n[4..].Replace('_', ' '),
             _ => c.Name,
         };
     }

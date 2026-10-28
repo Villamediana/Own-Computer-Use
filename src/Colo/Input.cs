@@ -71,6 +71,23 @@ static class Input
         }
     }
 
+    public static void Drag(Point from, Point to, Action<Point>? follow)
+    {
+        MoveTo(from);
+        Send(Mouse(MOUSEEVENTF_LEFTDOWN));
+        Thread.Sleep(60);
+        const int steps = 14;
+        for (var i = 1; i <= steps; i++)
+        {
+            var p = new Point(from.X + (to.X - from.X) * i / steps, from.Y + (to.Y - from.Y) * i / steps);
+            SetCursorPos(p.X, p.Y);
+            Thread.Sleep(14);
+        }
+        follow?.Invoke(to);
+        Thread.Sleep(50);
+        Send(Mouse(MOUSEEVENTF_LEFTUP));
+    }
+
     public static void Combo(IReadOnlyList<KeyStroke> keys)
     {
         var list = new List<INPUT>();

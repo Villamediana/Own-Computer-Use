@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json.Nodes;
 
@@ -107,6 +108,45 @@ public sealed class AiClient
         var r = Req(HttpMethod.Post, V1 + "/responses");
         r.Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json");
         return Send(r, ct);
+    }
+
+    /// <summary>
+    /// Responses API en streaming: devuelve cada elemento de salida (mensaje o function_call) en cuanto
+    /// el modelo lo termina, para empezar a actuar sin esperar la respuesta completa.
+    /// </summary>
+    public async IAsyncEnumerable<JsonNode> StreamAsync(JsonObject body, [EnumeratorCancellation] CancellationToken ct)
+    {
+        body["stream"] = true;
+        using var req = Req(HttpMethod.Post, V1 + "/responses");
+        req.Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json");
+        using var resp = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+        if (!resp.IsSuccessStatusCode)
+            throw new AiException($"HTTP {(int)resp.StatusCode}: {ErrorText(await resp.Content.ReadAsStringAsync(ct))}");
+        using var reader = new StreamReader(await resp.Content.ReadAsStreamAsync(ct));
+        string? line;
+        while ((line = await reader.ReadLineAsync(ct)) is not null)
+        {
+            if (!line.StartsWith("data:", StringComparison.Ordinal)) continue;
+            var data = line[5..].Trim();
+            if (data == "[DONE]") yield break;
+            JsonNode? ev;
+            try { ev = JsonNode.Parse(data); } catch { continue; }
+            switch (ev?["type"]?.GetValue<string>())
+            {
+                case "response.output_item.done":
+                    if (ev["item"] is JsonNode item) yield return item;
+                    break;
+                case "response.completed":
+                    yield break;
+                case "error":
+                    throw new AiException(ev["message"]?.GetValue<string>() ?? ev["error"]?["message"]?.GetValue<string>() ?? data);
+                case "response.failed":
+                case "response.incomplete":
+                    var r = ev["response"];
+                    throw new AiException(r?["error"]?["message"]?.GetValue<string>()
+                        ?? r?["incomplete_details"]?["reason"]?.GetValue<string>() ?? "respuesta incompleta");
+            }
+        }
     }
 
     public async Task<string> TranscribeAsync(byte[] wav, CancellationToken ct)

@@ -1,5 +1,6 @@
 using System;
 using System.Drawing;
+using System.Linq;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Drawing.Text;
@@ -32,6 +33,7 @@ sealed class Widget : LayeredWindow
     Speaker? _speaker;
     Listener? _listener;
     LocalStt? _stt;
+    McpHub? _mcp;
     bool _listening, _settingsOpen;
 
     // ── dibujo
@@ -104,7 +106,22 @@ sealed class Widget : LayeredWindow
             OpenSettings();
             return;
         }
+        _ = StartMcpAsync();
         await StartListeningAsync();
+    }
+
+    /// <summary>Arranca (o reinicia) los servidores MCP y le pasa sus tools al agente.</summary>
+    async Task StartMcpAsync()
+    {
+        var old = _mcp;
+        _agent.Extra = null;
+        _mcp = null;
+        if (old is not null) await old.DisposeAsync();
+        if (!_s.McpServers.Any(m => m.Enabled)) return;
+        var hub = await McpHub.StartAsync(_s.McpServers);
+        _mcp = hub;
+        _agent.Extra = hub;
+        if (hub.Problems.Count > 0) Say("MCP · " + hub.Problems[0], Theme.Danger, 7000);
     }
 
     bool Configured() =>
@@ -323,6 +340,7 @@ sealed class Widget : LayeredWindow
             using var f = new SettingsForm(_s);
             if (f.ShowDialog() != DialogResult.OK) return;
             Store.Save(_s);
+            _ = StartMcpAsync();
             ApplyAutostart();
             StopListening();
             _listener?.Dispose();
@@ -472,6 +490,7 @@ sealed class Widget : LayeredWindow
         _frame.Stop();
         _agent.Stop();
         _mic.Dispose();
+        try { _mcp?.DisposeAsync().AsTask().Wait(2000); } catch { }
         _tray.Visible = false;
         _tray.Dispose();
         try { Store.Save(_s); } catch { }

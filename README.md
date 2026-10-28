@@ -8,7 +8,16 @@ dónde va a hacer clic y qué está haciendo.
   Se descarga sola la primera vez (~670 MB) a `%LOCALAPPDATA%\Colo\models`.
 - **Cerebro**: Azure AI Foundry (`/openai/v1/responses`, nombre del deployment) u OpenAI.
   Cada paso manda una captura con los elementos de UI Automation numerados.
-- **Herramientas del modelo**: click, type_text, press_keys, scroll, open, find_files, screenshot (al portapapeles), wait, done, ignore.
+- **Herramientas**: ratón (click, drag, scroll), teclado (type_text con clic/reemplazo/Enter, press_keys),
+  navegador (go, new_tab, search, find, back, tab…), ventanas (open, window focus/list/minimize/close),
+  lectura (read_text, clipboard), find_files, screenshot, look, wait, done, ignore. Se apagan por grupo en Ajustes.
+- **MCP**: servidores por comando (stdio) o URL (Streamable HTTP); se elige qué tools usa. Llegan como `mcp_<servidor>_<tool>`.
+- **Rápido y barato**: streaming (cada acción se ejecuta en cuanto el modelo la emite), la pantalla va como lista
+  de elementos en texto y la captura solo cuando el modelo la pide (`look`), resultados largos solo un turno.
+
+## Descargar
+
+`Colo.exe` en Releases: un solo archivo, trae .NET dentro, no instala nada ni pide admin.
 
 Uso: clic en la onda = pausar/seguir · arrastrar = mover · clic derecho = menú y Ajustes.
 Atajos: `Ctrl+Alt+Espacio` pausar/escuchar, `Ctrl+Alt+X` detener la tarea.

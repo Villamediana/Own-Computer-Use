@@ -25,11 +25,14 @@ sealed class FakeComputer : IComputer
 {
     public List<string> Done { get; } = [];
     public Func<Task>? BeforeObserve;
+    public List<bool> Images { get; } = [];
 
-    public async Task<Observation> ObserveAsync(CancellationToken ct)
+    public async Task<Observation> ObserveAsync(bool withImage, CancellationToken ct)
     {
         if (BeforeObserve is not null) await BeforeObserve();
-        return new([1, 2, 3], 1366, 768, "Google Chrome", [new Mark(1, "campo de texto", "Buscar"), new Mark(2, "botón", "Enviar")]);
+        lock (Images) Images.Add(withImage);
+        return new(withImage ? [1, 2, 3] : [], 1366, 768, "Google Chrome",
+            [new Mark(1, "campo", "Buscar", "gatos"), new Mark(2, "botón", "Enviar")]);
     }
 
     public Task<string> ExecuteAsync(ToolCall call, CancellationToken ct)
@@ -41,14 +44,25 @@ sealed class FakeComputer : IComputer
 
 public class CoreTests(ITestOutputHelper output)
 {
+    /// <summary>Respuesta en streaming (SSE) de la Responses API con esas llamadas.</summary>
     static string Calls(params (string Name, string Args)[] calls)
     {
-        var arr = new JsonArray();
-        arr.Add(new JsonObject { ["type"] = "reasoning", ["summary"] = new JsonArray() });
+        var sb = new StringBuilder();
+        void Ev(JsonObject e) => sb.Append("event: ").Append(e["type"]!.GetValue<string>()).Append("\ndata: ").Append(e.ToJsonString()).Append("\n\n");
+        Ev(new JsonObject { ["type"] = "response.created" });
+        Ev(new JsonObject { ["type"] = "response.output_item.done", ["item"] = new JsonObject { ["type"] = "reasoning" } });
         foreach (var (n, a) in calls)
-            arr.Add(new JsonObject { ["type"] = "function_call", ["name"] = n, ["arguments"] = a, ["call_id"] = "c" + n });
-        return new JsonObject { ["output"] = arr }.ToJsonString();
+            Ev(new JsonObject
+            {
+                ["type"] = "response.output_item.done",
+                ["item"] = new JsonObject { ["type"] = "function_call", ["name"] = n, ["arguments"] = a, ["call_id"] = "c" + n },
+            });
+        Ev(new JsonObject { ["type"] = "response.completed" });
+        return sb.ToString();
     }
+
+    static string UserText(string body) =>
+        JsonNode.Parse(body)!["input"]![0]!["content"]![0]!["text"]!.GetValue<string>();
 
     static Settings Azure() => new()
     {
@@ -75,7 +89,7 @@ public class CoreTests(ITestOutputHelper output)
         Assert.Equal("https://latam.openai.azure.com/openai/deployments?api-version=2022-12-01", h.Seen[0].Req.RequestUri!.ToString());
         Assert.Equal("k", h.Seen[0].Req.Headers.GetValues("api-key").Single());
 
-        await ai.RespondAsync(new JsonObject { ["model"] = "luna" }, default);
+        await foreach (var _ in ai.StreamAsync(new JsonObject { ["model"] = "luna" }, default)) { }
         Assert.Equal("https://latam.openai.azure.com/openai/v1/responses", h.Seen[1].Req.RequestUri!.ToString());
     }
 
@@ -127,6 +141,7 @@ public class CoreTests(ITestOutputHelper output)
             ? Calls(("click", """{"mark":1}"""), ("type_text", """{"text":"bebés"}"""), ("press_keys", """{"keys":"enter"}"""))
             : Calls(("done", """{"message":"Listo, busqué."}"""))));
         var s = Azure();
+        s.Vision = Vision.Always;
         var pc = new FakeComputer();
         var agent = new Agent(new AiClient(s, new HttpClient(h)), s, pc) { SettleMs = 0 };
         var events = new List<AgentEvent>();
@@ -148,8 +163,11 @@ public class CoreTests(ITestOutputHelper output)
         var content = first["input"]![0]!["content"]!.AsArray();
         Assert.Contains("«busca bebés»", content[0]!["text"]!.GetValue<string>());
         Assert.Contains("[2] botón «Enviar»", content[0]!["text"]!.GetValue<string>());
+        Assert.Contains("[1] campo «Buscar» =gatos", content[0]!["text"]!.GetValue<string>());
+        Assert.True(first["stream"]!.GetValue<bool>());
         Assert.StartsWith("data:image/jpeg;base64,", content[1]!["image_url"]!.GetValue<string>());
         Assert.Contains(first["tools"]!.AsArray(), t => t!["name"]!.GetValue<string>() == "screenshot");
+        Assert.Contains(first["tools"]!.AsArray(), t => t!["name"]!.GetValue<string>() == "browser");
 
         // El segundo turno lleva lo hecho, no la conversación entera.
         var second = JsonNode.Parse(h.Seen[1].Body)!["input"]![0]!["content"]![0]!["text"]!.GetValue<string>();
@@ -165,7 +183,7 @@ public class CoreTests(ITestOutputHelper output)
         {
             var n = Interlocked.Increment(ref step);
             if (n == 1) return (HttpStatusCode.OK, Calls(("open", """{"target":"chrome"}""")));
-            if (JsonNode.Parse(body)!["input"]![0]!["content"]![0]!["text"]!.GetValue<string>().Contains("el usuario añadió")) return (HttpStatusCode.OK, Calls(("done", """{"message":"hecho"}""")));
+            if (UserText(body).Contains("el usuario añadió")) return (HttpStatusCode.OK, Calls(("done", """{"message":"hecho"}""")));
             return (HttpStatusCode.OK, Calls(("wait", """{"seconds":0.1}""")));
         });
         var s = Azure();
@@ -220,6 +238,142 @@ public class CoreTests(ITestOutputHelper output)
         var body = agent.BuildRequest(["hola"], [], new([1], 10, 10, "x", []));
         Assert.Null(body["reasoning"]);
         Assert.Contains("(ninguno; usa x,y)", body.ToJsonString());
+
+        s.DisabledTools = ["browser", "mouse"];
+        var names = agent.BuildRequest(["hola"], [], new([], 0, 0, "x", []))["tools"]!.AsArray()
+            .Select(t => t!["name"]!.GetValue<string>()).ToList();
+        Assert.DoesNotContain("browser", names);
+        Assert.DoesNotContain("click", names);
+        Assert.Contains("type_text", names);
+        Assert.Contains("look", names);
+    }
+
+    [Fact]
+    public async Task Auto_vision_sends_image_only_after_look_and_full_results_once()
+    {
+        var step = 0;
+        var long_text = new string('x', 900);
+        var h = new FakeHandler((_, _) => (HttpStatusCode.OK, Interlocked.Increment(ref step) switch
+        {
+            1 => Calls(("read_text", """{"what":"window"}"""), ("look", "{}"), ("click", """{"mark":2}""")),
+            2 => Calls(("click", """{"mark":2}""")),
+            _ => Calls(("done", """{"message":"ok"}""")),
+        }));
+        var s = Azure();
+        var pc = new FakeComputer();
+        var reader = new LongResultComputer(pc, long_text);
+        var agent = new Agent(new AiClient(s, new HttpClient(h)), s, reader) { SettleMs = 0 };
+        await agent.Hear("lee el correo");
+
+        Assert.Equal([false, true, false], pc.Images);
+        // la acción después de look no se ejecuta: hace falta ver primero
+        Assert.Equal(["read_text", "click"], reader.Calls);
+        var t2 = UserText(h.Seen[1].Body);
+        Assert.Contains(long_text, t2);
+        Assert.Equal(2, JsonNode.Parse(h.Seen[1].Body)!["input"]![0]!["content"]!.AsArray().Count);
+        var t3 = UserText(h.Seen[2].Body);
+        Assert.DoesNotContain(long_text, t3);
+        Assert.Contains("Sin captura en este turno", t3);
+    }
+
+    sealed class LongResultComputer(FakeComputer inner, string text) : IComputer
+    {
+        public List<string> Calls { get; } = [];
+        public Task<Observation> ObserveAsync(bool withImage, CancellationToken ct) => inner.ObserveAsync(withImage, ct);
+        public Task<string> ExecuteAsync(ToolCall call, CancellationToken ct)
+        {
+            Calls.Add(call.Name);
+            return Task.FromResult(call.Name == "read_text" ? "ok:\n" + text : "ok");
+        }
+    }
+
+    [Fact]
+    public async Task Stream_error_event_surfaces_message()
+    {
+        var h = new FakeHandler((_, _) => (HttpStatusCode.OK,
+            "data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"message\":\"quota exceeded\"}}}\n\n"));
+        var s = Azure();
+        var agent = new Agent(new AiClient(s, new HttpClient(h)), s, new FakeComputer()) { SettleMs = 0 };
+        var events = new List<AgentEvent>();
+        agent.Event += e => { lock (events) events.Add(e); };
+        await agent.Hear("hola");
+        Assert.Equal(AgentEventKind.Error, events[^1].Kind);
+        Assert.Contains("quota exceeded", events[^1].Text);
+    }
+
+    [Fact]
+    public async Task Mcp_stdio_server_tools_reach_the_model_and_run()
+    {
+        var script = Path.Combine(AppContext.BaseDirectory, "mcp_echo.py");
+        var cfg = new McpServerConfig { Name = "Eco Server", Kind = McpKind.Command, Command = $"python3 \"{script}\"", Tools = ["echo"] };
+        await using var hub = await McpHub.StartAsync([cfg]);
+        Assert.Empty(hub.Problems);
+        Assert.Equal(["mcp_eco_server_echo"], hub.Definitions.Select(d => d["name"]!.GetValue<string>()));
+        Assert.Equal("ok: eco: hola", await hub.CallAsync("mcp_eco_server_echo", new JsonObject { ["text"] = "hola" }, default));
+
+        var step = 0;
+        var h = new FakeHandler((_, _) => (HttpStatusCode.OK, Interlocked.Increment(ref step) == 1
+            ? Calls(("mcp_eco_server_echo", """{"text":"bebé"}"""))
+            : Calls(("done", """{"message":"listo"}"""))));
+        var s = Azure();
+        var pc = new FakeComputer();
+        var agent = new Agent(new AiClient(s, new HttpClient(h)), s, pc) { SettleMs = 0, Extra = hub };
+        await agent.Hear("usa el eco");
+        Assert.Contains(JsonNode.Parse(h.Seen[0].Body)!["tools"]!.AsArray(), t => t!["name"]!.GetValue<string>() == "mcp_eco_server_echo");
+        Assert.Contains("eco: bebé", UserText(h.Seen[1].Body));
+        Assert.Empty(pc.Done);
+
+        await using var all = await McpHub.StartAsync([new McpServerConfig { Name = "e", Command = $"python3 \"{script}\"" }]);
+        Assert.Equal(2, all.Definitions.Count);
+        Assert.Equal("ok: 5", await all.CallAsync("mcp_e_add", new JsonObject { ["a"] = 2, ["b"] = 3 }, default));
+
+        await using var broken = await McpHub.StartAsync([new McpServerConfig { Name = "x", Command = "no-existe-este-comando-mcp" }]);
+        Assert.Single(broken.Problems);
+    }
+
+    [Fact]
+    public async Task Mcp_http_handles_json_and_sse_and_session()
+    {
+        var h = new FakeHandler((r, body) =>
+        {
+            var msg = JsonNode.Parse(body)!;
+            var id = msg["id"]?.GetValue<long>();
+            return msg["method"]!.GetValue<string>() switch
+            {
+                "initialize" => (HttpStatusCode.OK, $$$"""{"jsonrpc":"2.0","id":{{{id}}},"result":{"protocolVersion":"2025-06-18"}}"""),
+                "notifications/initialized" => (HttpStatusCode.Accepted, ""),
+                "tools/list" => (HttpStatusCode.OK, $$$"""{"jsonrpc":"2.0","id":{{{id}}},"result":{"tools":[{"name":"crm.find","description":"Busca","inputSchema":{"type":"object"}}]}}"""),
+                _ => (HttpStatusCode.OK, $$$"""{"jsonrpc":"2.0","id":{{{id}}},"result":{"content":[{"type":"text","text":"3 clientes"}]}}"""),
+            };
+        });
+        var cfg = new McpServerConfig { Name = "crm", Kind = McpKind.Url, Url = "https://mcp.example/mcp", Headers = "Authorization: Bearer abc" };
+        await using var client = await McpClient.ConnectAsync(cfg, default, new HttpClient(h));
+        var tools = await client.ListToolsAsync(default);
+        Assert.Equal("crm.find", tools.Single().Name);
+        Assert.Equal("ok: 3 clientes", await client.CallToolAsync("crm.find", [], default));
+        Assert.Equal("Bearer abc", h.Seen[0].Req.Headers.GetValues("Authorization").Single());
+        Assert.Equal("mcp_crm_crm_find", McpHub.ToolName("crm", "crm.find"));
+
+        var sse = new FakeHandler((_, body) =>
+        {
+            var id = JsonNode.Parse(body)!["id"]?.GetValue<long>();
+            return (HttpStatusCode.OK, $$$"""{"jsonrpc":"2.0","id":{{{id}}},"result":{}}""");
+        });
+        await using var c2 = await McpClient.ConnectAsync(cfg, default, new HttpClient(new SseWrap(sse)));
+        Assert.Empty(await c2.ListToolsAsync(default));
+    }
+
+    /// <summary>Envuelve la respuesta JSON como text/event-stream y añade Mcp-Session-Id.</summary>
+    sealed class SseWrap(HttpMessageHandler inner) : DelegatingHandler(inner)
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage r, CancellationToken ct)
+        {
+            var resp = await base.SendAsync(r, ct);
+            var json = await resp.Content.ReadAsStringAsync(ct);
+            resp.Content = new StringContent($"event: message\ndata: {json}\n\n", Encoding.UTF8, "text/event-stream");
+            resp.Headers.Add("Mcp-Session-Id", "s1");
+            return resp;
+        }
     }
 
     [Fact]

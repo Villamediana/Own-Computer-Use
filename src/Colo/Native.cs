@@ -77,6 +77,71 @@ static class Native
         SetWindowLongPtr(h, GWL_EXSTYLE, new IntPtr(ex));
     }
 
+    public delegate bool EnumWindowsProc(IntPtr h, IntPtr lParam);
+    [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc cb, IntPtr lParam);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+    [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+    [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr h);
+    [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
+    [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr h, uint cmd);
+    [DllImport("user32.dll")] public static extern int GetWindowTextLength(IntPtr h);
+    [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll")] static extern bool AttachThreadInput(uint a, uint b, bool attach);
+    public const int SW_MAXIMIZE = 3, SW_MINIMIZE = 6, SW_RESTORE = 9;
+    public const uint WM_CLOSE = 0x10, GW_OWNER = 4;
+
+    public static string Title(IntPtr h)
+    {
+        var sb = new StringBuilder(512);
+        GetWindowText(h, sb, sb.Capacity);
+        return sb.ToString();
+    }
+
+    public static string ProcessName(IntPtr h)
+    {
+        try
+        {
+            GetWindowThreadProcessId(h, out var pid);
+            using var p = Process.GetProcessById((int)pid);
+            return p.ProcessName;
+        }
+        catch { return ""; }
+    }
+
+    /// <summary>Ventanas normales visibles (con título, sin dueño, que no son de herramientas), de la de arriba hacia abajo.</summary>
+    public static System.Collections.Generic.List<IntPtr> AppWindows()
+    {
+        var list = new System.Collections.Generic.List<IntPtr>();
+        EnumWindows((h, _) =>
+        {
+            if (!IsWindowVisible(h) || GetWindowTextLength(h) == 0 || GetWindow(h, GW_OWNER) != IntPtr.Zero) return true;
+            if (((long)GetWindowLongPtr(h, GWL_EXSTYLE) & WS_EX_TOOLWINDOW) != 0 || IsOwnWindow(h)) return true;
+            list.Add(h);
+            return true;
+        }, IntPtr.Zero);
+        return list;
+    }
+
+    /// <summary>Trae una ventana al frente aunque Windows limite el cambio de foco entre programas.</summary>
+    public static bool Focus(IntPtr h)
+    {
+        if (IsIconic(h)) ShowWindow(h, SW_RESTORE);
+        if (SetForegroundWindow(h) && GetForegroundWindow() == h) return true;
+        var fg = GetForegroundWindow();
+        var fgThread = GetWindowThreadProcessId(fg, out _);
+        var me = GetCurrentThreadId();
+        AttachThreadInput(me, fgThread, true);
+        try
+        {
+            BringWindowToTop(h);
+            SetForegroundWindow(h);
+        }
+        finally { AttachThreadInput(me, fgThread, false); }
+        return GetForegroundWindow() == h;
+    }
+
     [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr h, int attr, ref int value, int size);
 
     public static void Send(params INPUT[] inputs)

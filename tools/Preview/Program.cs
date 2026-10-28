@@ -52,6 +52,42 @@ if (args[0] == "shots")
     return;
 }
 
+if (args[0] == "settings")
+{
+    Directory.CreateDirectory(outDir);
+    System.Windows.Forms.Application.SetHighDpiMode(System.Windows.Forms.HighDpiMode.PerMonitorV2);
+    var st = new Settings
+    {
+        Endpoint = "https://latamfoundryai.openai.azure.com", ApiKey = "x", Model = "gpt-5.6-luna",
+        DisabledTools = ["files"],
+        McpServers =
+        [
+            new() { Name = "Archivos", Command = @"npx -y @modelcontextprotocol/server-filesystem C:\Users\miguel", Tools = ["read_file", "list_directory"] },
+            new() { Name = "CRM", Kind = McpKind.Url, Url = "https://crm.vertis/mcp", Enabled = false },
+        ],
+    };
+    using var f = new SettingsForm(st);
+    f.Show();
+    for (var i = 0; i < 5; i++)
+    {
+        f.ShowPage(i);
+        System.Windows.Forms.Application.DoEvents();
+        using var bmp = new Bitmap(f.ClientSize.Width, f.ClientSize.Height);
+        f.DrawToBitmap(bmp, new Rectangle(Point.Empty, f.ClientSize));
+        bmp.Save(Path.Combine(outDir, $"settings-{i}.png"), ImageFormat.Png);
+    }
+    using var m = new McpServerForm(st.McpServers[0]);
+    m.Show();
+    System.Windows.Forms.Application.DoEvents();
+    using (var bmp = new Bitmap(m.ClientSize.Width, m.ClientSize.Height))
+    {
+        m.DrawToBitmap(bmp, new Rectangle(Point.Empty, m.ClientSize));
+        bmp.Save(Path.Combine(outDir, "mcp-form.png"), ImageFormat.Png);
+    }
+    Console.WriteLine("ok");
+    return;
+}
+
 if (args[0] == "run")
 {
     var settings = new Settings { Provider = Provider.OpenAI, Endpoint = args[1], ApiKey = "sk-preview", Model = "preview" };

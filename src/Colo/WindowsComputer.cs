@@ -21,8 +21,8 @@ namespace Colo;
 sealed class WindowsComputer : IComputer
 {
     const int MaxSide = 1366;
-    const int UiaBudgetMs = 1200;
-    const int MaxMarks = 220;
+    const int UiaBudgetMs = 1500;
+    const int MaxMarks = 160;
 
     static readonly Color[] Palette =
     [
@@ -41,9 +41,9 @@ sealed class WindowsComputer : IComputer
 
     public string ShotsDir { get; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "Colo");
 
-    sealed record Element(string Role, string Name, Rectangle Rect);
+    sealed record Element(string Role, string Name, string Value, Rectangle Rect);
 
-    public Task<Observation> ObserveAsync(CancellationToken ct) => Task.Run(() =>
+    public Task<Observation> ObserveAsync(bool withImage, CancellationToken ct) => Task.Run(() =>
     {
         var hwnd = Native.GetForegroundWindow();
         var screen = hwnd == IntPtr.Zero ? Screen.PrimaryScreen! : Screen.FromHandle(hwnd);
@@ -52,46 +52,23 @@ sealed class WindowsComputer : IComputer
 
         // UI Automation en paralelo con la captura; si tarda demasiado, sigue sin marcas.
         var uia = Task.Run(() => Collect(hwnd, b));
-
-        using var full = Capture(b);
+        Bitmap? full = withImage ? Capture(b) : null;
         var elements = uia.Wait(UiaBudgetMs, ct) ? uia.Result : [];
+        // Sin elementos legibles (juego, escritorio remoto…) la lista no sirve: va la captura.
+        if (full is null && elements.Count == 0) full = Capture(b);
 
         var scale = Math.Min(1.0, (double)MaxSide / Math.Max(b.Width, b.Height));
-        var w = (int)Math.Round(b.Width * scale);
-        var h = (int)Math.Round(b.Height * scale);
-        using var small = new Bitmap(w, h, PixelFormat.Format24bppRgb);
         var marks = new List<Mark>();
         var rects = new Dictionary<int, Rectangle>();
         var names = new Dictionary<int, string>();
-        using (var g = Graphics.FromImage(small))
+        var id = 0;
+        foreach (var e in elements)
         {
-            g.InterpolationMode = InterpolationMode.HighQualityBilinear;
-            g.DrawImage(full, 0, 0, w, h);
-            g.SmoothingMode = SmoothingMode.AntiAlias;
-            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
-            using var font = new Font("Segoe UI", 8.5f, FontStyle.Bold, GraphicsUnit.Pixel);
-            var id = 0;
-            foreach (var e in elements)
-            {
-                id++;
-                rects[id] = e.Rect;
-                names[id] = e.Name;
-                marks.Add(new Mark(id, e.Role, e.Name));
-                var color = Palette[id % Palette.Length];
-                var r = new RectangleF((float)((e.Rect.X - b.X) * scale), (float)((e.Rect.Y - b.Y) * scale),
-                    (float)(e.Rect.Width * scale), (float)(e.Rect.Height * scale));
-                using var pen = new Pen(Color.FromArgb(220, color), 1.4f);
-                g.DrawRectangle(pen, r.X, r.Y, r.Width, r.Height);
-                var label = id.ToString();
-                var size = g.MeasureString(label, font);
-                var lx = r.X;
-                var ly = r.Y - size.Height + 1 < 0 ? r.Y : r.Y - size.Height + 1;
-                using var bg = new SolidBrush(color);
-                g.FillRectangle(bg, lx, ly, size.Width, size.Height - 1);
-                g.DrawString(label, font, Brushes.White, lx, ly - 1);
-            }
+            id++;
+            rects[id] = e.Rect;
+            names[id] = e.Name;
+            marks.Add(new Mark(id, e.Role, e.Name, e.Value));
         }
-
         lock (_lock)
         {
             _screen = b;
@@ -99,7 +76,37 @@ sealed class WindowsComputer : IComputer
             _marks = rects;
             _names = names;
         }
-        return new Observation(Jpeg(small, 78), w, h, window, marks);
+        if (full is null) return new Observation([], 0, 0, window, marks);
+
+        using (full)
+        {
+            var w = (int)Math.Round(b.Width * scale);
+            var h = (int)Math.Round(b.Height * scale);
+            using var small = new Bitmap(w, h, PixelFormat.Format24bppRgb);
+            using (var g = Graphics.FromImage(small))
+            {
+                g.InterpolationMode = InterpolationMode.HighQualityBilinear;
+                g.DrawImage(full, 0, 0, w, h);
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+                using var font = new Font("Segoe UI", 8.5f, FontStyle.Bold, GraphicsUnit.Pixel);
+                foreach (var (n, rect) in rects)
+                {
+                    var color = Palette[n % Palette.Length];
+                    var r = new RectangleF((float)((rect.X - b.X) * scale), (float)((rect.Y - b.Y) * scale),
+                        (float)(rect.Width * scale), (float)(rect.Height * scale));
+                    using var pen = new Pen(Color.FromArgb(220, color), 1.4f);
+                    g.DrawRectangle(pen, r.X, r.Y, r.Width, r.Height);
+                    var label = n.ToString();
+                    var size = g.MeasureString(label, font);
+                    var ly = r.Y - size.Height + 1 < 0 ? r.Y : r.Y - size.Height + 1;
+                    using var bg = new SolidBrush(color);
+                    g.FillRectangle(bg, r.X, ly, size.Width, size.Height - 1);
+                    g.DrawString(label, font, Brushes.White, r.X, ly - 1);
+                }
+            }
+            return new Observation(Jpeg(small, 76), w, h, window, marks);
+        }
     }, ct);
 
     static Bitmap Capture(Rectangle b)
@@ -123,9 +130,9 @@ sealed class WindowsComputer : IComputer
     static readonly (ControlType Type, string Role)[] Roles =
     [
         (ControlType.Button, "botón"), (ControlType.SplitButton, "botón"), (ControlType.Hyperlink, "enlace"),
-        (ControlType.Edit, "campo de texto"), (ControlType.ComboBox, "lista desplegable"), (ControlType.CheckBox, "casilla"),
+        (ControlType.Edit, "campo"), (ControlType.ComboBox, "lista"), (ControlType.CheckBox, "casilla"),
         (ControlType.RadioButton, "opción"), (ControlType.MenuItem, "menú"), (ControlType.TabItem, "pestaña"),
-        (ControlType.ListItem, "elemento"), (ControlType.TreeItem, "nodo"), (ControlType.DataItem, "fila"),
+        (ControlType.ListItem, "ítem"), (ControlType.TreeItem, "nodo"), (ControlType.DataItem, "fila"),
         (ControlType.Slider, "deslizador"), (ControlType.Spinner, "número"),
     ];
 
@@ -149,6 +156,8 @@ sealed class WindowsComputer : IComputer
             cr.Add(AutomationElement.NameProperty);
             cr.Add(AutomationElement.ControlTypeProperty);
             cr.Add(AutomationElement.BoundingRectangleProperty);
+            cr.Add(AutomationElement.IsPasswordProperty);
+            cr.Add(ValuePattern.ValueProperty);
             using (cr.Activate())
             {
                 var root = AutomationElement.FromHandle(h);
@@ -163,7 +172,14 @@ sealed class WindowsComputer : IComputer
                     var role = Roles.FirstOrDefault(x => x.Type == type).Role ?? "elemento";
                     var name = (e.Cached.Name ?? "").Replace('\n', ' ').Replace('\r', ' ').Trim();
                     if (name.Length > 60) name = name[..60] + "…";
-                    found.Add(new Element(role, name, r));
+                    var value = "";
+                    if (type == ControlType.Edit || type == ControlType.ComboBox)
+                    {
+                        var v = e.GetCachedPropertyValue(ValuePattern.ValueProperty, true);
+                        if (v is string str && !(e.GetCachedPropertyValue(AutomationElement.IsPasswordProperty) is true))
+                            value = str.Length > 40 ? str[..40].Replace('\n', ' ') + "…" : str.Replace('\n', ' ');
+                    }
+                    found.Add(new Element(role, name, value, r));
                 }
             }
         }
@@ -179,12 +195,12 @@ sealed class WindowsComputer : IComputer
             .ToList();
     }
 
-    bool Target(ToolCall c, out Point p, out string error)
+    bool Target(ToolCall c, out Point p, out string error, string prefix = "")
     {
         lock (_lock)
         {
             error = "";
-            if (c.Int("mark") is int id)
+            if (c.Int(prefix + "mark") is int id)
             {
                 if (_marks.TryGetValue(id, out var r))
                 {
@@ -195,7 +211,7 @@ sealed class WindowsComputer : IComputer
                 error = $"error: no existe la marca {id}";
                 return false;
             }
-            if (c.Int("x") is int x && c.Int("y") is int y)
+            if (c.Int(prefix + "x") is int x && c.Int(prefix + "y") is int y)
             {
                 p = new Point(_screen.X + (int)Math.Round(x / _scale), _screen.Y + (int)Math.Round(y / _scale));
                 if (_screen.Contains(p)) return true;
@@ -222,9 +238,39 @@ sealed class WindowsComputer : IComputer
                 return "ok";
             }
             case "type_text":
+            {
+                if (c.Int("mark") is not null)
+                {
+                    if (!Target(c, out var p, out var err)) return err;
+                    Cursor?.Glide(p, "Clic" + NameOf(c));
+                    Input.Click(p, "left", false);
+                    Cursor?.Pulse();
+                    await Task.Delay(60, ct);
+                }
                 Cursor?.Say("Escribiendo…");
+                if (c.Bool("replace")) { Input.Combo(Colo.Core.Keys.Parse("ctrl+a")); await Task.Delay(30, ct); }
                 Input.Type(c.Str("text"));
+                if (c.Bool("submit")) { await Task.Delay(30, ct); Input.Combo(Colo.Core.Keys.Parse("enter")); }
                 return "ok";
+            }
+            case "drag":
+            {
+                if (!Target(c, out var from, out var err, "from_")) return err;
+                if (!Target(c, out var to, out err, "to_")) return err;
+                Cursor?.Glide(from, "Arrastrando");
+                Input.Drag(from, to, p => Cursor?.Glide(p, "Arrastrando"));
+                return "ok";
+            }
+            case "browser":
+                return await Browser(c, ct);
+            case "window":
+                Cursor?.Say(c.Str("action") == "list" ? "Ventanas" : "Ventana");
+                return Desktop.Window(c.Str("action"), c.Str("name"));
+            case "read_text":
+                Cursor?.Say("Leyendo…");
+                return await Desktop.ReadTextAsync(c.Str("what"), ct);
+            case "clipboard":
+                return c.Str("action") == "set" ? Desktop.SetClipboard(c.Str("text")) : Desktop.GetClipboard();
             case "press_keys":
             {
                 var keys = Colo.Core.Keys.Parse(c.Str("keys"));
@@ -237,6 +283,10 @@ sealed class WindowsComputer : IComputer
                 }
                 return "ok";
             }
+            case "scroll" when c.Str("to") is "top" or "bottom":
+                Cursor?.Say(c.Str("to") == "top" ? "Al principio" : "Al final");
+                Input.Combo(Colo.Core.Keys.Parse(c.Str("to") == "top" ? "ctrl+home" : "ctrl+end"));
+                return "ok";
             case "scroll":
             {
                 var hasTarget = c.Int("mark") is not null || c.Int("x") is not null;
@@ -251,7 +301,7 @@ sealed class WindowsComputer : IComputer
                 if (target.Length == 0) return "error: target vacío";
                 Cursor?.Say("Abriendo " + (target.Length > 30 ? target[..30] + "…" : target));
                 Process.Start(new ProcessStartInfo(target) { UseShellExecute = true })?.Dispose();
-                await Task.Delay(1200, ct);
+                await Task.Delay(900, ct);
                 return "ok";
             }
             case "screenshot":
@@ -268,6 +318,71 @@ sealed class WindowsComputer : IComputer
         }
     }
 
+    static readonly Dictionary<string, (string Keys, string Label)> BrowserKeys = new()
+    {
+        ["back"] = ("alt+left", "Atrás"),
+        ["forward"] = ("alt+right", "Adelante"),
+        ["reload"] = ("f5", "Recargando"),
+        ["close_tab"] = ("ctrl+w", "Cerrando pestaña"),
+        ["next_tab"] = ("ctrl+tab", "Pestaña siguiente"),
+        ["prev_tab"] = ("ctrl+shift+tab", "Pestaña anterior"),
+    };
+
+    /// <summary>Navegador por teclado: funciona igual en Chrome, Edge y Firefox, y es más rápido que buscar botones.</summary>
+    async Task<string> Browser(ToolCall c, CancellationToken ct)
+    {
+        var action = c.Str("action");
+        async Task Keys(string combo, int after = 70)
+        {
+            Input.Combo(Colo.Core.Keys.Parse(combo));
+            await Task.Delay(after, ct);
+        }
+        switch (action)
+        {
+            case "go":
+            case "search":
+            {
+                var text = action == "go" ? c.Str("url") : c.Str("text");
+                if (text.Length == 0) return "error: falta " + (action == "go" ? "url" : "text");
+                Cursor?.Say(action == "go" ? "Abriendo " + Short(text) : "Buscando «" + Short(text) + "»");
+                await Keys("ctrl+l", 90);
+                Input.Type(text);
+                await Keys("enter", 700);
+                return "ok";
+            }
+            case "new_tab":
+                Cursor?.Say("Pestaña nueva");
+                await Keys("ctrl+t", 150);
+                if (c.Str("url").Length > 0)
+                {
+                    Input.Type(c.Str("url"));
+                    await Keys("enter", 700);
+                }
+                return "ok";
+            case "find":
+                if (c.Str("text").Length == 0) return "error: falta text";
+                Cursor?.Say("Buscando en la página");
+                await Keys("ctrl+f", 150);
+                Input.Type(c.Str("text"));
+                await Keys("enter");
+                return "ok";
+            case "tab":
+            {
+                var n = Math.Clamp(c.Int("n") ?? 1, 1, 9);
+                Cursor?.Say($"Pestaña {n}");
+                await Keys($"ctrl+{n}");
+                return "ok";
+            }
+            default:
+                if (!BrowserKeys.TryGetValue(action, out var k)) return $"error: acción desconocida «{action}»";
+                Cursor?.Say(k.Label);
+                await Keys(k.Keys, action == "reload" ? 600 : 120);
+                return "ok";
+        }
+    }
+
+    static string Short(string s) => s.Length > 30 ? s[..30] + "…" : s;
+
     string NameOf(ToolCall c)
     {
         lock (_lock)
@@ -275,7 +390,7 @@ sealed class WindowsComputer : IComputer
                 ? $" «{(n.Length > 28 ? n[..28] + "…" : n)}»" : "";
     }
 
-    static string Fold(string s)
+    internal static string Fold(string s)
     {
         var d = s.Normalize(System.Text.NormalizationForm.FormD);
         var sb = new System.Text.StringBuilder(d.Length);
@@ -341,16 +456,9 @@ sealed class WindowsComputer : IComputer
         var path = Path.Combine(ShotsDir, $"print-{DateTime.Now:yyyyMMdd-HHmmss}.png");
         bmp.Save(path, ImageFormat.Png);
 
-        // El portapapeles exige un hilo STA.
         Exception? failure = null;
-        var t = new Thread(() =>
-        {
-            try { Clipboard.SetImage(bmp); }
-            catch (Exception ex) { failure = ex; }
-        });
-        t.SetApartmentState(ApartmentState.STA);
-        t.Start();
-        t.Join();
+        try { Desktop.Sta(() => { Clipboard.SetImage(bmp); return 0; }); }
+        catch (Exception ex) { failure = ex; }
         return failure is null
             ? $"ok: en el portapapeles (pegar con ctrl+v) y guardado en {path}"
             : $"error: guardado en {path} pero no entró al portapapeles ({failure.Message})";
