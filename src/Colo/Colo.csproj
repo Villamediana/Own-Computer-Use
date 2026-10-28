@@ -30,7 +30,15 @@
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="settings.html" LogicalName="Colo.settings.html" />
+    <!-- Whisper (whisper.cpp) para Windows dentro del .exe; se extraen a %LOCALAPPDATA%\Colo\native al arrancar. -->
+    <EmbeddedResource Include="$(NuGetPackageRoot)whisper.net.runtime/1.9.1/build/win-x64/*.dll" LogicalName="whisper/%(Filename)%(Extension)" />
   </ItemGroup>
+  <!-- Sin la carpeta runtimes/ al lado del .exe: todo va embebido. -->
+  <Target Name="NoWhisperRuntimeFolder" BeforeTargets="AssignTargetPaths">
+    <ItemGroup>
+      <None Remove="@(None)" Condition="$([System.String]::Copy('%(None.FullPath)').Contains('whisper.net.runtime'))" />
+    </ItemGroup>
+  </Target>
   <ItemGroup>
     <InternalsVisibleTo Include="Preview" />
   </ItemGroup>

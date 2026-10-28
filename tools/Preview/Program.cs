@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Threading;
 using System.Linq;
 using System.Collections.Generic;
 using System.Drawing;
@@ -80,29 +81,29 @@ if (args[0] == "menu")
 
 if (args[0] == "voice")
 {
-    // Mismo camino que el micrófono: PCM 16 kHz en bloques de 40 ms → Silero → Parakeet.
-    NativeLibs.PreferBundledOnnxRuntime();
-    var models = new SpeechModels(args[1]);
+    // Mismo camino que el micrófono: PCM 16 kHz en bloques de 40 ms → detector por volumen → Whisper.
+    // Uso: Preview voice <modelo.bin> <audio.wav>. Todo queda también en colo.log (en Wine la consola se pierde).
+    void Say(string t) { Console.WriteLine(t); Log.Write("preview: " + t); }
     var audio = Wav.Read(args[2], out var rate);
     var sw = System.Diagnostics.Stopwatch.StartNew();
-    Console.WriteLine("cargando silero…");
-    using var listener = new Listener(models.Silero, 6);
-    Console.WriteLine($"silero cargado: {sw.ElapsedMilliseconds} ms");
+    WhisperNative.Prepare();
+    Say($"librerías: {sw.ElapsedMilliseconds} ms");
     sw.Restart();
-    Console.WriteLine("cargando parakeet…");
-    using var stt = new LocalStt(models);
-    Console.WriteLine($"parakeet cargado: {sw.ElapsedMilliseconds} ms");
+    Say("cargando whisper…");
+    using var stt = new LocalStt(args[1]) { Language = "es" };
+    Say($"whisper cargado: {sw.ElapsedMilliseconds} ms");
+    using var listener = new Listener(7);
     var phrases = new List<float[]>();
     listener.Utterance += phrases.Add;
-    listener.SpeakingChanged += on => Console.WriteLine(on ? "vad: empieza" : "vad: termina");
-    var pcm = new short[24000].Concat(audio.Select(f => (short)(f * 32767))).Concat(new short[24000]).ToArray();
+    var a16 = audio; // el wav de prueba ya es 16 kHz
+    var pcm = new short[24000].Concat(a16.Select(f => (short)(f * 32767))).Concat(new short[40000]).ToArray();
     for (var i = 0; i < pcm.Length; i += 640) listener.Feed(pcm.AsSpan(i, Math.Min(640, pcm.Length - i)));
     foreach (var p in phrases)
     {
         sw.Restart();
-        Console.WriteLine($"frase {p.Length / 16000.0:0.0}s → «{stt.Transcribe(p)}» ({sw.ElapsedMilliseconds} ms)");
+        Say($"frase {p.Length / 16000.0:0.0}s → «{stt.Transcribe(p)}» ({sw.ElapsedMilliseconds} ms)");
     }
-    Console.WriteLine(phrases.Count == 0 ? "SIN FRASES" : "ok");
+    Say(phrases.Count == 0 ? "SIN FRASES" : "ok");
     return;
 }
 

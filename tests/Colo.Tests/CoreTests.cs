@@ -425,25 +425,6 @@ public class CoreTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void Listener_and_stt_survive_dispose_during_use()
-    {
-        var dir = ModelsDir();
-        if (dir is null) return;
-        var l = new Listener(Path.Combine(dir, "silero_vad.onnx"), 6);
-        var noise = new short[640];
-        var feeding = Task.Run(() => { for (var i = 0; i < 400; i++) l.Feed(noise); });
-        Thread.Sleep(20);
-        l.Dispose();
-        feeding.Wait();
-        l.Reset();
-        l.Dispose();
-
-        var stt = new LocalStt(new SpeechModels(dir));
-        stt.Dispose();
-        Assert.Equal("", stt.Transcribe(new float[16000]));
-    }
-
-    [Fact]
     public void Settings_json_matches_what_the_settings_page_sends()
     {
         var opts = new System.Text.Json.JsonSerializerOptions { Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() } };
@@ -510,14 +491,14 @@ public class CoreTests(ITestOutputHelper output)
         var dir = ModelsDir();
         if (dir is null) return;
         var speech = Wav.Read(Path.Combine(dir, "es.wav"), out _).Select(f => f * 0.15f).ToArray();
-        var signal = new float[16000].Concat(speech).Concat(new float[24000]).ToArray();
+        var signal = new float[16000].Concat(speech).Concat(new float[32000]).ToArray();
         var native = Resample(signal, 16000, rate);
 
         var format = isFloat
             ? (NAudio.Wave.WaveFormat)new NAudio.Wave.WaveFormatExtensible(rate, 32, channels)
             : new NAudio.Wave.WaveFormat(rate, 16, channels);
         var conv = new AudioConverter(format);
-        using var l = new Listener(Path.Combine(dir, "silero_vad.onnx"), 7);
+        using var l = new Listener(7);
         var phrases = new List<float[]>();
         l.Utterance += phrases.Add;
 
@@ -538,10 +519,10 @@ public class CoreTests(ITestOutputHelper output)
             conv.Push(block, b, pcm => l.Feed(pcm));
         }
         Assert.Single(phrases);
-        using var stt = new LocalStt(new SpeechModels(dir));
+        using var stt = Whisper(dir);
         var text = stt.Transcribe(phrases[0]);
         output.WriteLine($"{conv.Describe()}: «{text}»");
-        Assert.Contains("país", text);
+        Assert.Contains("país", text.ToLowerInvariant());
     }
 
     [Fact]
@@ -555,51 +536,57 @@ public class CoreTests(ITestOutputHelper output)
         Assert.Throws<ArgumentException>(() => Keys.Parse("ctrl+banana"));
     }
 
+    /// <summary>Carpeta .models del repo: whisper/ggml-base-q5_1.bin y es.wav (audio real en español).</summary>
     static string? ModelsDir()
     {
         var d = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../.models"));
-        return File.Exists(Path.Combine(d, "parakeet-v3", "encoder.int8.onnx")) ? d : null;
+        return File.Exists(Path.Combine(d, "whisper", "ggml-base-q5_1.bin")) && File.Exists(Path.Combine(d, "es.wav")) ? d : null;
     }
 
+    static LocalStt Whisper(string dir) => new(Path.Combine(dir, "whisper", "ggml-base-q5_1.bin")) { Language = "es" };
+
     [Fact]
-    public void Local_parakeet_transcribes_spanish_and_english()
+    public void Whisper_transcribes_real_spanish_fast()
     {
         var dir = ModelsDir();
-        if (dir is null) { output.WriteLine("sin modelos en .models; omitido"); return; }
+        if (dir is null) { output.WriteLine("sin modelos; omitido"); return; }
+        using var stt = Whisper(dir);
+        var audio = Wav.Read(Path.Combine(dir, "es.wav"), out var rate);
+        stt.Transcribe(audio, rate);
         var sw = Stopwatch.StartNew();
-        using var stt = new LocalStt(new SpeechModels(dir));
-        output.WriteLine($"carga: {sw.ElapsedMilliseconds} ms");
-        foreach (var lang in new[] { "es", "en" })
-        {
-            var audio = Wav.Read(Path.Combine(dir, lang + ".wav"), out var rate);
-            sw.Restart();
-            var text = stt.Transcribe(audio, rate);
-            output.WriteLine($"{lang} ({audio.Length / 16000.0:F1} s de audio, {sw.ElapsedMilliseconds} ms): {text}");
-            Assert.True(text.Length > 10);
-        }
+        var text = stt.Transcribe(audio, rate);
+        output.WriteLine($"{audio.Length / (double)rate:0.0} s en {sw.ElapsedMilliseconds} ms: {text}");
+        Assert.Contains("país", text.ToLowerInvariant());
+        Assert.Equal("", stt.Transcribe(new float[16000]));
+        stt.Dispose();
+        Assert.Equal("", stt.Transcribe(audio, rate));
     }
 
     [Fact]
-    public void Listener_cuts_phrases_on_silence()
+    public void Listener_cuts_phrases_on_silence_and_ignores_quiet_noise()
     {
         var dir = ModelsDir();
         if (dir is null) return;
         var speech = Wav.Read(Path.Combine(dir, "es.wav"), out _);
-        using var l = new Listener(Path.Combine(dir, "silero_vad.onnx"), 6);
+        var rnd = new Random(3);
+        var noise = Enumerable.Range(0, 24000).Select(_ => (float)(rnd.NextDouble() * 2 - 1) * 0.003f).ToArray();
+        var stream = noise.Concat(speech).Concat(noise).Concat(speech).Concat(noise).Concat(noise).ToArray();
+        var pcm = stream.Select(f => (short)(f * 32767)).ToArray();
+        using var l = new Listener(6);
         var got = new List<float[]>();
         var flips = new List<bool>();
         l.Utterance += got.Add;
         l.SpeakingChanged += flips.Add;
-        // frase · 1,5 s de silencio · frase · silencio, en trozos de 40 ms como llega del micrófono
-        var silence = new float[24000];
-        var stream = silence.Concat(speech).Concat(silence).Concat(speech).Concat(silence).ToArray();
-        var pcm = stream.Select(f => (short)(f * 32767)).ToArray();
         for (var i = 0; i < pcm.Length; i += 640) l.Feed(pcm.AsSpan(i, Math.Min(640, pcm.Length - i)));
-        output.WriteLine($"frases: {got.Count} ({string.Join(", ", got.Select(g => $"{g.Length / 16000.0:F1}s"))}); cambios: {flips.Count}");
-        Assert.True(got.Count >= 2);
-        Assert.Contains(true, flips);
+        output.WriteLine($"frases: {string.Join(", ", got.Select(g => $"{g.Length / 16000.0:0.0}s"))}");
+        Assert.Equal(2, got.Count);
+        Assert.Equal([true, false, true, false], flips);
+        using var stt = Whisper(dir);
+        Assert.Contains("país", stt.Transcribe(got[1]).ToLowerInvariant());
 
-        using var stt = new LocalStt(new SpeechModels(dir));
-        output.WriteLine("1ª frase: " + stt.Transcribe(got[0]));
+        l.Dispose();
+        l.Feed(pcm.AsSpan(0, 640));   // después de liberar no hace nada ni revienta
+        l.Reset();
     }
+
 }

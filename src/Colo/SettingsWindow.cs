@@ -30,6 +30,9 @@ sealed class SettingsWindow : Form
 
     /// <summary>La página cargó y ya recibe mensajes.</summary>
     public event Action? Ready;
+    /// <summary>Pidieron «Grabar 5 s y analizar».</summary>
+    public event Action? RecordTest;
+    public void ProbeResult(object result) => Post(new { type = "probe", result });
 
     // Prueba del micrófono en vivo (Ajustes › Voz). Se llaman desde el hilo de la interfaz.
     public void VoiceLevel(double rms) => Post(new { type = "voiceLevel", v = Math.Clamp(Math.Sqrt(rms) * 3.4, 0, 1) });
@@ -159,6 +162,10 @@ sealed class SettingsWindow : Form
                 DialogResult = DialogResult.OK;
                 break;
 
+            case "recordTest":
+                RecordTest?.Invoke();
+                break;
+
             case "cancel":
                 DialogResult = DialogResult.Cancel;
                 break;
@@ -220,6 +227,8 @@ sealed class SettingsWindow : Form
         to.Model = from.Model?.Trim() ?? "";
         to.ReasoningEffort = from.ReasoningEffort ?? "low";
         to.SpeechEngine = from.SpeechEngine;
+        to.LocalModel = SpeechModels.Find(from.LocalModel).Id;
+        to.Language = string.IsNullOrWhiteSpace(from.Language) ? "es" : from.Language;
         to.TranscribeModel = from.TranscribeModel?.Trim() ?? "";
         to.ElevenLabsKey = from.ElevenLabsKey?.Trim() ?? "";
         to.ElevenLabsModel = string.IsNullOrWhiteSpace(from.ElevenLabsModel) ? "scribe_v2" : from.ElevenLabsModel.Trim();

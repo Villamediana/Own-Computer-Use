@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
 using System.Drawing.Drawing2D;
@@ -40,6 +41,8 @@ sealed class Widget : LayeredWindow
     // diagnóstico del audio
     DateTime _listenSince, _lastSound, _lastSilenceWarning, _lastLevelPost;
     double _peak;
+    List<short>? _probe;
+    readonly object _probeLock = new();
     DateTime _peakSince = DateTime.Now;
 
     // ── dibujo
@@ -207,11 +210,12 @@ sealed class Widget : LayeredWindow
 
     async Task<bool> PrepareSpeechAsync()
     {
+        var model = SpeechModels.Find(_s.LocalModel);
         var needAsr = _s.SpeechEngine == SpeechEngine.Local;
-        if (!_models.Ready(needAsr))
+        if (needAsr && !_models.Ready(model))
         {
             _mode = Mode.Starting;
-            Log.Write("voz: descargando modelos a " + _models.Dir);
+            Log.Write($"voz: descargando {model.File} a {_models.Dir}");
             var lastLogged = -1;
             var progress = new Progress<double>(p =>
             {
@@ -220,7 +224,7 @@ sealed class Widget : LayeredWindow
                 var tenth = (int)(p * 10);
                 if (tenth != lastLogged) { lastLogged = tenth; Log.Write($"voz: descarga {p:P0}"); }
             });
-            try { await _models.DownloadAsync(needAsr, progress, CancellationToken.None); }
+            try { await _models.DownloadAsync(model, progress, CancellationToken.None); }
             catch (Exception ex)
             {
                 Log.Write("voz: descarga falló · " + ex);
@@ -237,13 +241,16 @@ sealed class Widget : LayeredWindow
                 _mode = Mode.Starting;
                 VoiceStatus("Cargando la voz local…");
                 var sw = System.Diagnostics.Stopwatch.StartNew();
-                _stt = await Task.Run(() => new LocalStt(_models));
-                Log.Write($"voz: Parakeet cargado en {sw.ElapsedMilliseconds} ms");
+                var path = _models.PathOf(model);
+                _stt = await Task.Run(() => new LocalStt(path) { Language = _s.Language });
+                // Prueba real: un segundo de silencio tiene que pasar por Whisper sin error.
+                var probe = await Task.Run(() => _stt.Transcribe(new float[Listener.Rate]));
+                Log.Write($"voz: Whisper {model.Id} listo en {sw.ElapsedMilliseconds} ms · idioma {_s.Language} · {new System.IO.FileInfo(path).Length:N0} bytes · prueba «{probe}»");
             }
             if (_listener is null)
             {
-                _listener = new Listener(_models.Silero, _s.Sensitivity);
-                Log.Write($"voz: detector listo (sensibilidad {_s.Sensitivity}, umbral {Listener.SensitivityToThreshold(_s.Sensitivity):0.00})");
+                _listener = new Listener(_s.Sensitivity);
+                Log.Write($"voz: detector por volumen listo (sensibilidad {_s.Sensitivity})");
             }
             Say("", Theme.Muted, 0);
             return true;
@@ -270,6 +277,8 @@ sealed class Widget : LayeredWindow
         l.SpeakingChanged += OnSpeaking;
         l.Level -= OnLevel;
         l.Level += OnLevel;
+        l.Raw -= OnRaw;
+        l.Raw += OnRaw;
         _speaker ??= TryCreateSpeaker();
         if (_speaker is not null) _speaker.Listener = l;
         try { _mic.Start(_s.MicId, l); }
@@ -343,6 +352,55 @@ sealed class Widget : LayeredWindow
 
     void OnUtterance(float[] samples) => _phrases.Writer.TryWrite(samples);
 
+    // Hilo de audio: junta 5 s para la prueba «Grabar y analizar».
+    void OnRaw(ReadOnlySpan<short> pcm)
+    {
+        short[]? done = null;
+        lock (_probeLock)
+        {
+            if (_probe is null) return;
+            foreach (var v in pcm) _probe.Add(v);
+            if (_probe.Count >= Listener.Rate * 5)
+            {
+                done = _probe.ToArray();
+                _probe = null;
+            }
+        }
+        if (done is not null) _ = Task.Run(() => AnalyzeProbe(done));
+    }
+
+    void StartProbe()
+    {
+        if (!_listening) { _settingsWindow?.ProbeResult(new { error = "El micrófono no está escuchando." }); return; }
+        lock (_probeLock) _probe = new List<short>(Listener.Rate * 5);
+        Log.Write("prueba: grabando 5 s");
+    }
+
+    void AnalyzeProbe(short[] pcm)
+    {
+        try
+        {
+            var wav = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(Log.FilePath)!, "prueba.wav");
+            System.IO.File.WriteAllBytes(wav, Wav.Encode(pcm.Select(v => v / 32768f).ToArray()));
+            var r = SpeechProbe.Analyze(pcm, _s.Sensitivity, _stt);
+            Log.Write($"prueba: {r.Seconds:0.0} s · pico {r.Peak:0.000} · rms {r.Rms:0.0000} · dc {r.Dc:0.0000} · frases {r.Phrases} · Whisper «{r.Text}» · {wav}");
+            Post(() => _settingsWindow?.ProbeResult(new
+            {
+                text = r.Text,
+                peak = r.Peak,
+                rms = r.Rms,
+                dc = r.Dc,
+                phrases = r.Phrases,
+                file = wav,
+            }));
+        }
+        catch (Exception ex)
+        {
+            Log.Write("prueba: falló · " + ex);
+            Post(() => _settingsWindow?.ProbeResult(new { error = ex.Message }));
+        }
+    }
+
     void VoiceStatus(string text) => _settingsWindow?.VoiceStatus(text);
 
     async Task PhraseLoopAsync()
@@ -355,7 +413,7 @@ sealed class Widget : LayeredWindow
                 string text;
                 if (_s.SpeechEngine == SpeechEngine.Local)
                 {
-                    if (_stt is null) { Log.Write("voz: frase descartada, Parakeet no está cargado"); continue; }
+                    if (_stt is null) { Log.Write("voz: frase descartada, Whisper no está cargado"); continue; }
                     text = _stt.Transcribe(samples);
                 }
                 else if (_s.SpeechEngine == SpeechEngine.ElevenLabs)
@@ -468,6 +526,7 @@ sealed class Widget : LayeredWindow
         {
             using var f = new SettingsWindow(_s);
             _settingsWindow = f;
+            f.RecordTest += StartProbe;
             f.Ready += () =>
             {
                 if (_listening) f.VoiceStatus($"Escuchando con «{_mic.DeviceName}»");
@@ -497,7 +556,9 @@ sealed class Widget : LayeredWindow
         StopListening();
         _listener?.Dispose();
         _listener = null;
-        if (_s.SpeechEngine != SpeechEngine.Local) { _stt?.Dispose(); _stt = null; }
+        // El modelo o el idioma pueden haber cambiado: se vuelve a cargar (tarda ~0,1 s).
+        _stt?.Dispose();
+        _stt = null;
         if (Configured())
         {
             Say("", Theme.Muted, 0);

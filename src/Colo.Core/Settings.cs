@@ -3,7 +3,7 @@ namespace Colo.Core;
 public enum Provider { Azure, OpenAI }
 
 /// <summary>
-/// Local = Parakeet en el propio PC (gratis). Api = modelo de transcripción del proveedor (OpenAI / Foundry).
+/// Local = Whisper en el propio PC (gratis). Api = modelo de transcripción del proveedor (OpenAI / Foundry).
 /// ElevenLabs = Scribe por la API de ElevenLabs.
 /// </summary>
 public enum SpeechEngine { Local, Api, ElevenLabs }
@@ -18,6 +18,10 @@ public sealed class Settings
     public string ApiKey { get; set; } = "";
     public string Model { get; set; } = "";
     public SpeechEngine SpeechEngine { get; set; } = SpeechEngine.Local;
+    /// <summary>Modelo de Whisper local: «base» o «small».</summary>
+    public string LocalModel { get; set; } = "base";
+    /// <summary>Idioma en que hablas: «es», «pt», «en» o «auto».</summary>
+    public string Language { get; set; } = "es";
     public string TranscribeModel { get; set; } = "";
     public string ElevenLabsKey { get; set; } = "";
     public string ElevenLabsModel { get; set; } = "scribe_v2";

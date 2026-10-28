@@ -1,0 +1,43 @@
+name: Windows
+
+# Prueba Colo en Windows real: tests, .exe único y la voz local (Whisper) con frases reales en español.
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Modelo Whisper base
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force .models/whisper | Out-Null
+          Invoke-WebRequest https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base-q5_1.bin -OutFile .models/whisper/ggml-base-q5_1.bin
+          Invoke-WebRequest https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/main/test_wavs/es.wav -OutFile .models/es.wav
+
+      - name: Tests
+        run: dotnet test tests/Colo.Tests -c Release --logger "console;verbosity=normal"
+
+      - name: Voz en el .exe único (como lo baja el usuario)
+        shell: pwsh
+        run: |
+          dotnet publish tools/Preview -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o out/preview
+          $p = Start-Process out/preview/Preview.exe -ArgumentList "voice", "$PWD\.models\whisper\ggml-base-q5_1.bin", "$PWD\tests\audio\frases_es.wav" -NoNewWindow -PassThru -Wait -RedirectStandardOutput voice.txt
+          Get-Content voice.txt
+          Get-Content "$env:LOCALAPPDATA\Colo\colo.log"
+          if (-not (Select-String -Path voice.txt -Pattern "^ok$")) { exit 1 }
+
+      - name: Colo.exe
+        run: dotnet publish src/Colo -c Release -o out/colo
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Colo
+          path: out/colo/Colo.exe

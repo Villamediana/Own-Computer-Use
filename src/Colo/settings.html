@@ -293,6 +293,9 @@
   .meter i { display: block; height: 100%; width: 0; border-radius: 8px; background: linear-gradient(90deg, #60a5fa, var(--blue)); transition: width .08s linear; }
   .heard { min-height: 40px; padding: 10px 12px; border-radius: 10px; background: var(--fill); font-size: 14.5px; user-select: text; }
   .heard .placeholder { color: #a5a5ad; }
+  .probe { font-size: 13px; line-height: 1.6; background: var(--fill); border-radius: 10px; padding: 10px 12px; user-select: text; }
+  .probe b { font-weight: 600; }
+  .probe .k { color: var(--muted); }
   .heard .ms { color: var(--muted); font-size: 12px; margin-left: 8px; }
 </style>
 </head>
@@ -393,19 +396,30 @@
             <div class="meter"><i id="vMeter"></i></div>
             <div class="heard" id="vHeard"><span class="placeholder">Lo que digas aparecerá aquí</span></div>
           </div>
+          <div class="row stack">
+            <div style="display:flex;align-items:center;gap:12px">
+              <button class="btn" id="probe">Grabar 5 s y analizar</button>
+              <span class="status" id="probeStatus">Pulsa y habla normal durante 5 segundos.</span>
+            </div>
+            <div class="probe" id="probeOut" hidden></div>
+          </div>
         </div>
 
         <h2>Transcripción</h2>
         <div class="seg" data-bind="SpeechEngine" data-options="Local:En tu PC · gratis|Api:OpenAI / Foundry|ElevenLabs:ElevenLabs"></div>
         <p class="hint" id="engineHint"></p>
         <div id="localVoice">
-          <div class="group" style="margin-top:14px">
-            <div class="row">
-              <div class="icon"><svg><use href="#i-mic"/></svg></div>
-              <div class="label"><b>Parakeet TDT 0.6B v3</b><small>NVIDIA · 25 idiomas (español, portugués, inglés…) · corre en el procesador</small></div>
-            </div>
-          </div>
+          <h2>Modelo local</h2>
+          <div class="seg" data-bind="LocalModel" data-options="base:Whisper base · rápido|small:Whisper small · más preciso"></div>
+          <p class="hint" id="modelHint"></p>
         </div>
+        <h2>Idioma en que hablas</h2>
+        <select class="input" id="language">
+          <option value="es">Español</option>
+          <option value="pt">Português</option>
+          <option value="en">English</option>
+          <option value="auto">Detectar solo (menos fiable en frases cortas)</option>
+        </select>
         <div id="apiVoice" hidden>
           <h2>Modelo de transcripción</h2>
           <div class="field combo" id="voiceCombo">
@@ -669,7 +683,7 @@ function init(msg) {
     $("#apiVoice").hidden = S.SpeechEngine !== "Api";
     $("#elevenVoice").hidden = S.SpeechEngine !== "ElevenLabs";
     $("#engineHint").textContent = {
-      Local: "Rápido, sin internet y sin gastar tokens. Se descarga una vez (≈670 MB).",
+      Local: "Whisper en tu PC: sin internet y sin gastar tokens. Se descarga una vez.",
       Api: "Cada frase se manda al modelo de transcripción de tu proveedor.",
       ElevenLabs: "Cada frase se manda a ElevenLabs Scribe: muy preciso, cobra por minuto de audio.",
     }[S.SpeechEngine] || "";
@@ -678,6 +692,13 @@ function init(msg) {
   syncEngine();
   $("#voiceModel").value = S.TranscribeModel || "";
   window.voiceCombo = combo($("#voiceCombo"), () => models, v => { S.TranscribeModel = v; touch(); });
+  const syncModel = () => $("#modelHint").textContent = S.LocalModel === "small"
+    ? "190 MB · ~0,5 s por frase · entiende mejor palabras difíciles."
+    : "60 MB · ~0,2 s por frase · lo más rápido.";
+  seg($("[data-bind=LocalModel]"), S.LocalModel || "base", v => { S.LocalModel = v; syncModel(); touch(); });
+  syncModel();
+  $("#language").value = S.Language || "es";
+  $("#language").onchange = e => { S.Language = e.target.value; touch(); };
   $("#elevenKey").value = S.ElevenLabsKey || "";
   $("#elevenKey").oninput = e => { S.ElevenLabsKey = e.target.value.trim(); touch(); };
   $("#revealEleven").onclick = () => { const k = $("#elevenKey"); k.type = k.type === "password" ? "text" : "password"; };
@@ -871,6 +892,32 @@ $("#sSave").onclick = () => {
 // ── general
 $("#openPrints").onclick = () => host.send({ type: "openFolder" });
 $("#openLog").onclick = () => host.send({ type: "openLog" });
+$("#probe").onclick = () => {
+  $("#probe").disabled = true;
+  $("#probeOut").hidden = true;
+  let left = 5;
+  $("#probeStatus").innerHTML = `<b>Habla ahora…</b> ${left} s`;
+  clearInterval(window.probeTimer);
+  window.probeTimer = setInterval(() => {
+    left--;
+    $("#probeStatus").innerHTML = left > 0 ? `<b>Habla ahora…</b> ${left} s` : "Analizando…";
+    if (left <= 0) clearInterval(window.probeTimer);
+  }, 1000);
+  host.send({ type: "recordTest" });
+};
+function onProbe(r) {
+  clearInterval(window.probeTimer);
+  $("#probe").disabled = false;
+  const out = $("#probeOut");
+  out.hidden = false;
+  if (r.error) { $("#probeStatus").textContent = ""; out.innerHTML = `<span style="color:var(--red)">${esc(r.error)}</span>`; return; }
+  $("#probeStatus").textContent = "Listo. Copia esto si algo falla:";
+  out.innerHTML =
+    `<div><span class="k">Whisper entendió:</span> <b>${r.text ? "«" + esc(r.text) + "»" : "(nada)"}</b></div>` +
+    `<div><span class="k">Frases detectadas:</span> ${r.phrases}</div>` +
+    `<div><span class="k">Nivel:</span> pico ${r.peak.toFixed(3)} · rms ${r.rms.toFixed(4)} · dc ${r.dc.toFixed(4)}</div>` +
+    `<div class="path">${esc(r.file)}</div>`;
+}
 
 // ── prueba del micrófono en vivo
 function voiceStatus(text) {
@@ -904,6 +951,7 @@ host.on(msg => {
   else if (msg.type === "voiceLevel") voiceLevel(msg.v);
   else if (msg.type === "voiceVad") voiceVad(msg.on);
   else if (msg.type === "voiceHeard") voiceHeard(msg.text, msg.ms);
+  else if (msg.type === "probe") onProbe(msg.result);
 });
 host.send({ type: "ready" });
 
@@ -932,7 +980,7 @@ function demoHost() {
             ],
             settings: {
               Provider: "Azure", Endpoint: "https://latamfoundryai.openai.azure.com", ApiKey: "sk-demo-123", Model: "gpt-5.6-luna",
-              ReasoningEffort: "low", SpeechEngine: page.get("engine") || "Local", TranscribeModel: "", ElevenLabsKey: "", ElevenLabsModel: "scribe_v2", MicId: "", Sensitivity: 6,
+              ReasoningEffort: "low", SpeechEngine: page.get("engine") || "Local", LocalModel: "base", Language: "es", TranscribeModel: "", ElevenLabsKey: "", ElevenLabsModel: "scribe_v2", MicId: "", Sensitivity: 6,
               SpeakReplies: false, StartWithWindows: true, Vision: "Auto", DisabledTools: ["files"],
               McpServers: [
                 { Name: "Archivos", Kind: "Command", Command: "npx -y @modelcontextprotocol/server-filesystem C:\\Users\\miguel", Env: "", Url: "", Headers: "", Enabled: true, Tools: ["read_file", "list_directory"] },

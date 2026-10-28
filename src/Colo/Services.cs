@@ -125,6 +125,7 @@ sealed class Mic : IDisposable
         var stopped = new ManualResetEventSlim(false);
         var errors = 0;
         var first = true;
+        var reported = false;
         capture.DataAvailable += (_, e) =>
         {
             if (first)
@@ -133,7 +134,15 @@ sealed class Mic : IDisposable
                 Log.Write($"micrófono: llegan datos ({e.BytesRecorded} bytes por bloque)");
             }
             // Un error procesando el audio no puede matar la grabación en silencio.
-            try { converter.Push(e.Buffer, e.BytesRecorded, pcm => listener.Feed(pcm)); }
+            try
+            {
+                converter.Push(e.Buffer, e.BytesRecorded, pcm => listener.Feed(pcm));
+                if (!reported && converter.ChannelReport is { } report)
+                {
+                    reported = true;
+                    Log.Write("micrófono: " + report);
+                }
+            }
             catch (Exception ex)
             {
                 if (errors++ < 3) Log.Write("audio: error procesando · " + ex);

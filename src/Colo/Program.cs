@@ -16,7 +16,7 @@ static class Program
         System.Threading.Tasks.TaskScheduler.UnobservedTaskException += (_, e) => { Log.Write("ERROR en tarea: " + e.Exception); e.SetObserved(); };
         // Proxy de empresa que pide usuario: se usan las credenciales de Windows.
         try { System.Net.Http.HttpClient.DefaultProxy.Credentials = System.Net.CredentialCache.DefaultNetworkCredentials; } catch { }
-        NativeLibs.PreferBundledOnnxRuntime();
+        WhisperNative.Prepare();
         Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
