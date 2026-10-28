@@ -231,7 +231,25 @@ sealed class WindowsComputer : IComputer
         }
     }
 
+    /// <summary>Ejecuta y deja en el registro qué se pidió, sobre qué ventana y qué pasó.</summary>
     public async Task<string> ExecuteAsync(ToolCall c, CancellationToken ct)
+    {
+        var front = Native.WindowLabel(Native.GetForegroundWindow());
+        var sw = Stopwatch.StartNew();
+        string result;
+        try { result = await ExecuteCoreAsync(c, ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Log.Write($"acción {c.Name} {c.Args.ToJsonString()} · ventana «{front}» · EXCEPCIÓN {ex.Message}");
+            throw;
+        }
+        var shortResult = result.Replace('\n', ' ');
+        if (shortResult.Length > 160) shortResult = shortResult[..160] + "…";
+        Log.Write($"acción {c.Name} {c.Args.ToJsonString()} · ventana «{front}» → {shortResult} ({sw.ElapsedMilliseconds} ms)");
+        return result;
+    }
+
+    async Task<string> ExecuteCoreAsync(ToolCall c, CancellationToken ct)
     {
         switch (c.Name)
         {
@@ -342,10 +360,18 @@ sealed class WindowsComputer : IComputer
     async Task<string> Browser(ToolCall c, CancellationToken ct)
     {
         var action = c.Str("action");
-        // Los atajos del navegador en otra app escribirían donde no toca (p. ej. la URL dentro del Bloc de notas).
+        // Los atajos del navegador en otra app escribirían donde no toca (p. ej. la URL dentro del Bloc de notas):
+        // si delante no hay un navegador, se trae al frente el último navegador abierto.
         var front = Native.ProcessName(Native.GetForegroundWindow()).ToLowerInvariant();
         if (!Browsers.Contains(front))
-            return $"error: la ventana activa es {(front.Length > 0 ? front : "otra cosa")}, no un navegador. Usa window focus o open con la URL.";
+        {
+            var browser = Native.AppWindows().FirstOrDefault(h => Browsers.Contains(Native.ProcessName(h).ToLowerInvariant()));
+            if (browser == IntPtr.Zero)
+                return "error: no hay ningún navegador abierto. Usa open con la URL (abre el navegador predeterminado).";
+            var focus = Desktop.Window("focus", Native.ProcessName(browser));
+            if (focus.StartsWith("error", StringComparison.Ordinal)) return focus;
+            await Task.Delay(150, ct);
+        }
         async Task Keys(string combo, int after = 70)
         {
             Input.Combo(Colo.Core.Keys.Parse(combo));

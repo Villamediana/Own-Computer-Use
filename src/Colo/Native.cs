@@ -129,6 +129,11 @@ static class Native
     {
         if (IsIconic(h)) ShowWindow(h, SW_RESTORE);
         if (SetForegroundWindow(h) && GetForegroundWindow() == h) return true;
+        // Windows solo deja cambiar el foco a quien recibió la última entrada: un ALT sintético lo habilita.
+        var alt = new INPUT { type = INPUT_KEYBOARD, U = new InputUnion { ki = new KEYBDINPUT { wVk = 0x12 } } };
+        var altUp = new INPUT { type = INPUT_KEYBOARD, U = new InputUnion { ki = new KEYBDINPUT { wVk = 0x12, dwFlags = KEYEVENTF_KEYUP } } };
+        try { Send(alt, altUp); } catch { }
+        if (SetForegroundWindow(h) && GetForegroundWindow() == h) return true;
         var fg = GetForegroundWindow();
         var fgThread = GetWindowThreadProcessId(fg, out _);
         var me = GetCurrentThreadId();

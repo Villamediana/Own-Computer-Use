@@ -110,30 +110,24 @@ sealed class WavePainter
         }
     }
 
+    /// <summary>Texto discreto sobre la onda: pequeño, en cursiva, gris y casi transparente, sin caja.</summary>
     void DrawCaption(Graphics g, RectangleF pill, float s)
     {
         if (Caption.Length == 0 || CaptionAlpha <= 0) return;
         var alpha = CaptionAlpha;
-        var text = Caption.Length > 120 ? Caption[..120] + "…" : Caption;
-        using var font = Theme.Text(9.5f * s);
-        var maxW = (CanvasW - 24) * s;
-        var size = g.MeasureString(text, font, (int)(maxW - 28 * s));
-        var bw = Math.Min(maxW, size.Width + 28 * s);
-        var bh = size.Height + 14 * s;
-        var r = new RectangleF((CanvasW * s - bw) / 2, pill.Y - bh - 10 * s, bw, bh);
-        if (r.Y < 2) r.Y = 2;
-        using (var b = new SolidBrush(Color.FromArgb((int)(10 * alpha), 15, 23, 42)))
-        using (var sp = Theme.Round(new RectangleF(r.X - 1, r.Y + 2 * s, r.Width + 2, r.Height), 14 * s))
-            g.FillPath(b, sp);
-        using (var b = new SolidBrush(Color.FromArgb((int)(250 * alpha), 255, 255, 255)))
-        using (var p = Theme.Round(r, 14 * s))
-        {
-            g.FillPath(b, p);
-            using var edge = new Pen(Color.FromArgb((int)(16 * alpha), 0, 0, 0), 1f);
-            g.DrawPath(edge, p);
-        }
-        using var ink = new SolidBrush(Color.FromArgb((int)(255 * alpha), CaptionColor));
-        using var fmt = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
+        var text = Caption.Length > 90 ? Caption[..90] + "…" : Caption;
+        using var font = new Font(Theme.Family, 8.5f * s, FontStyle.Italic);
+        var maxW = (CanvasW - 20) * s;
+        using var fmt = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Far, Trimming = StringTrimming.EllipsisWord };
+        var size = g.MeasureString(text, font, (int)maxW, fmt);
+        var r = new RectangleF((CanvasW * s - maxW) / 2, pill.Y - size.Height - 6 * s, maxW, size.Height + 2);
+        if (r.Y < 1) r.Y = 1;
+        // Un halo blanco muy suave para que se lea sobre fondos oscuros sin parecer una caja.
+        using (var halo = new SolidBrush(Color.FromArgb((int)(70 * alpha), 255, 255, 255)))
+            foreach (var (dx, dy) in new[] { (-1f, 0f), (1f, 0f), (0f, -1f), (0f, 1f) })
+                g.DrawString(text, font, halo, new RectangleF(r.X + dx, r.Y + dy, r.Width, r.Height), fmt);
+        var tone = CaptionColor == Theme.Danger ? Color.FromArgb(200, 70, 70) : Color.FromArgb(105, 105, 115);
+        using var ink = new SolidBrush(Color.FromArgb((int)(185 * alpha), tone));
         g.DrawString(text, font, ink, r, fmt);
     }
 
