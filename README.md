@@ -10,13 +10,19 @@ dónde va a hacer clic y qué está haciendo.
   interpreta y no se ven en pantalla, o la voz de Windows. El micrófono se pausa mientras habla.
 - **Contexto**: recuerda los últimos pedidos y lo que hizo en cada uno («ahí no, en la barra»); se olvida solo
   tras 10 minutos sin pedidos.
+- **Memoria**: con remember/forget el modelo guarda lo que aprende de ti (cómo llamas a tus cosas, qué app usas)
+  y lo usa otros días (`%APPDATA%\Colo\memory.json`; se ve y se borra en Ajustes › General).
+- **Cada turno** lleva las demás ventanas abiertas y qué campo tiene el foco y qué pestaña está activa.
+- **Económico**: las acciones traen un campo `done` opcional; si con la última acción el pedido queda hecho,
+  termina sin otra llamada al modelo (una orden simple = una llamada). Tope de 25 pasos por orden.
 - **Tokens**: el menú de la onda muestra los de hoy y el total (`%APPDATA%\Colo\usage.json`); el registro, los de cada orden.
 - **Ajustes**: página web (`src/Colo/settings.html`) dentro de WebView2; prueba del micrófono en vivo en Voz.
   Probar la página: `node tests/ui/settings.test.js <carpeta>` (playwright-core).
 - **Registro**: `%LOCALAPPDATA%\Colo\colo.log` (micrófono, frases, órdenes, errores).
 - **Cerebro**: Azure AI Foundry (`/openai/v1/responses`, nombre del deployment) u OpenAI.
   Cada paso manda una captura con los elementos de UI Automation numerados.
-- **Herramientas**: ratón (click, drag, scroll), teclado (type_text con clic/reemplazo/Enter, press_keys),
+- **Herramientas**: ratón (click, drag, scroll), teclado (type_text con clic/reemplazo/Enter, edit_text para
+  corregir un trozo sin reescribirlo, press_keys),
   navegador (go, new_tab, search, find, back, tab…), ventanas (open, window focus/list/minimize/close),
   lectura (read_text, clipboard), find_files, screenshot, look, wait, done, ignore. Se apagan por grupo en Ajustes.
 - **MCP**: servidores por comando (stdio) o URL (Streamable HTTP); se elige qué tools usa. Llegan como `mcp_<servidor>_<tool>`.

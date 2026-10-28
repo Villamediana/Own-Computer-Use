@@ -41,8 +41,11 @@ public sealed class ElevenLabsTts(HttpClient? http = null)
         return list;
     }
 
-    /// <summary>La frase como PCM 16 bits mono a <see cref="Rate"/> Hz.</summary>
-    public async Task<byte[]> SpeechAsync(string key, string voiceId, string model, string text, CancellationToken ct)
+    /// <summary>
+    /// La frase como PCM 16 bits mono a <see cref="Rate"/> Hz, a trozos mientras se genera (/stream): se puede
+    /// empezar a sonar con el primero. Quien llama libera la respuesta.
+    /// </summary>
+    public async Task<HttpResponseMessage> SpeechStreamAsync(string key, string voiceId, string model, string text, CancellationToken ct)
     {
         if (!ActsTags(model)) text = Expressive.Clean(text);
         var settings = new JsonObject { ["stability"] = 0.5, ["similarity_boost"] = 0.8 };
@@ -52,13 +55,14 @@ public sealed class ElevenLabsTts(HttpClient? http = null)
             settings["use_speaker_boost"] = true;
         }
         var json = new JsonObject { ["text"] = text, ["model_id"] = model, ["voice_settings"] = settings };
-        using var req = new HttpRequestMessage(HttpMethod.Post, $"{Base}/text-to-speech/{Uri.EscapeDataString(voiceId.Trim())}?output_format=pcm_{Rate}");
+        var url = $"{Base}/text-to-speech/{Uri.EscapeDataString(voiceId.Trim())}/stream?output_format=pcm_{Rate}";
+        using var req = new HttpRequestMessage(HttpMethod.Post, url);
         req.Headers.Add("xi-api-key", key.Trim());
         req.Headers.Add("Accept", "audio/pcm");
         req.Content = new StringContent(json.ToJsonString(), Encoding.UTF8, "application/json");
-        using var resp = await _http.SendAsync(req, ct);
-        if (!resp.IsSuccessStatusCode) throw new AiException(Error(resp, await resp.Content.ReadAsStringAsync(ct)));
-        return await resp.Content.ReadAsByteArrayAsync(ct);
+        var resp = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+        if (resp.IsSuccessStatusCode) return resp;
+        using (resp) throw new AiException(Error(resp, await resp.Content.ReadAsStringAsync(ct)));
     }
 
     static string Error(HttpResponseMessage resp, string body)

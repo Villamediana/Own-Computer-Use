@@ -576,6 +576,76 @@ public class CoreTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public async Task Action_with_done_finishes_in_one_call_only_when_last()
+    {
+        var step = 0;
+        // 1ª orden: una acción con done → termina sin segundo turno.
+        // 2ª orden: done en la primera de dos acciones → no cierra; hace falta otro turno.
+        var h = new FakeHandler((_, body) => (HttpStatusCode.OK, Interlocked.Increment(ref step) switch
+        {
+            1 => Calls(("browser", """{"action":"new_tab","done":"Pestaña nueva abierta."}""")),
+            2 => Calls(("browser", """{"action":"new_tab","done":"Abierta"}"""), ("browser", """{"action":"search","text":"clima"}""")),
+            _ => Calls(("done", """{"message":"Buscado."}""")),
+        }));
+        var s = Azure();
+        var pc = new FakeComputer();
+        var agent = new Agent(new AiClient(s, new HttpClient(h)), s, pc) { SettleMs = 0 };
+        var events = new List<AgentEvent>();
+        agent.Event += e => { lock (events) events.Add(e); };
+        await agent.Hear("abre una pestaña");
+        Assert.Equal(1, step);
+        Assert.Equal("Pestaña nueva abierta.", events[^1].Text);
+        await agent.Hear("abre una pestaña y busca clima");
+        Assert.Equal(3, step);
+        Assert.Equal("Buscado.", events[^1].Text);
+        Assert.Equal(3, pc.Done.Count);
+    }
+
+    [Fact]
+    public async Task Memory_is_kept_between_days_and_sent_with_each_request()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"colo-mem-{Guid.NewGuid():N}.json");
+        var bodies = new List<string>();
+        var step = 0;
+        var h = new FakeHandler((_, body) =>
+        {
+            lock (bodies) bodies.Add(body);
+            return (HttpStatusCode.OK, Interlocked.Increment(ref step) == 1
+                ? Calls(("remember", """{"fact":"«El backlog» es la pestaña P&I · Backlog"}"""), ("done", """{"message":"Anotado."}"""))
+                : Calls(("done", """{"message":"ok"}""")));
+        });
+        var s = Azure();
+        var agent = new Agent(new AiClient(s, new HttpClient(h)), s, new FakeComputer()) { SettleMs = 0, Memory = new Memory(path) };
+        await agent.Hear("el backlog es la pestaña P&I");
+        var tomorrow = new Agent(new AiClient(s, new HttpClient(h)), s, new FakeComputer()) { SettleMs = 0, Memory = new Memory(path) };
+        await tomorrow.Hear("abre el backlog");
+        Assert.Contains("Lo que sabes del usuario", bodies[1]);
+        Assert.Contains("es la pesta", bodies[1]);
+        var mem = new Memory(path);
+        Assert.Equal("ok: ya lo sabía", mem.Remember("«el backlog» es la pestaña p&i · backlog"));
+        Assert.Equal("ok: olvidado", mem.Forget("backlog"));
+        Assert.Empty(new Memory(path).Facts);
+        File.Delete(path);
+    }
+
+    [Fact]
+    public void Screen_text_shows_focus_and_other_windows()
+    {
+        var s = Azure();
+        var agent = new Agent(new AiClient(s), s, new FakeComputer());
+        var obs = new Observation([], 0, 0, "P&I · Backlog - Comet [comet]",
+            [new Mark(1, "pestaña", "P&I · Backlog", "", "activa"), new Mark(2, "campo", "Barra de endereço", "x", "foco")],
+            ["Bandeja de entrada - Outlook [olk]"]);
+        var text = agent.BuildRequest(["hola"], [], obs)["input"]![0]!["content"]![0]!["text"]!.GetValue<string>();
+        Assert.Contains("Otras ventanas: Bandeja de entrada - Outlook [olk]", text);
+        Assert.Contains("[1] pestaña «P&I · Backlog» (activa)", text);
+        Assert.Contains("=x (foco)", text);
+        var tools = Tools.Build(null).Select(t => t!["name"]!.GetValue<string>()).ToList();
+        Assert.Contains("edit_text", tools);
+        Assert.Contains("remember", tools);
+    }
+
+    [Fact]
     public async Task Rate_limit_is_retried()
     {
         // Visto en Windows real: Foundry contestó 429 («exceeded token rate limit») y la orden se perdía.

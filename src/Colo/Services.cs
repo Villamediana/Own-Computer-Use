@@ -249,29 +249,60 @@ sealed class Speaker : IDisposable
     async Task ElevenAsync(string text, int turn, CancellationToken ct)
     {
         var model = string.IsNullOrWhiteSpace(_s.ElevenTtsModel) ? ElevenLabsTts.Models[0] : _s.ElevenTtsModel;
+        var sw = Stopwatch.StartNew();
+        var started = false;
         try
         {
-            var sw = Stopwatch.StartNew();
-            var pcm = await _eleven.SpeechAsync(_s.ElevenLabsKey, _s.ElevenVoiceId, model, text, ct);
-            Log.Write($"voz: ElevenLabs {model} «{text}» → {pcm.Length / 2.0 / ElevenLabsTts.Rate:0.0} s de audio en {sw.ElapsedMilliseconds} ms");
-            ct.ThrowIfCancellationRequested();
-            Play(pcm, turn);
+            // Suena con el primer trozo: no se espera a que ElevenLabs genere la frase entera.
+            using var resp = await _eleven.SpeechStreamAsync(_s.ElevenLabsKey, _s.ElevenVoiceId, model, text, ct);
+            await using var audio = await resp.Content.ReadAsStreamAsync(ct);
+            var buffer = new BufferedWaveProvider(new WaveFormat(ElevenLabsTts.Rate, 16, 1))
+            {
+                BufferDuration = TimeSpan.FromMinutes(2),
+                ReadFully = true,
+            };
+            var chunk = new byte[8192];
+            var odd = -1;
+            long total = 0;
+            int n;
+            while ((n = await audio.ReadAsync(chunk, ct)) > 0)
+            {
+                // Muestras de 16 bits: un byte suelto espera al siguiente trozo.
+                var start = 0;
+                if (odd >= 0) { buffer.AddSamples([(byte)odd, chunk[0]], 0, 2); start = 1; odd = -1; }
+                var even = (n - start) & ~1;
+                buffer.AddSamples(chunk, start, even);
+                if (start + even < n) odd = chunk[n - 1];
+                total += n;
+                if (!started && buffer.BufferedDuration >= TimeSpan.FromMilliseconds(180))
+                {
+                    started = true;
+                    Log.Write($"voz: ElevenLabs {model} empieza a sonar a los {sw.ElapsedMilliseconds} ms");
+                    if (!Play(buffer, turn)) return;
+                }
+            }
+            if (!started && total > 0 && !Play(buffer, turn)) return;
+            Log.Write($"voz: ElevenLabs «{text}» → {total / 2.0 / ElevenLabsTts.Rate:0.0} s de audio en {sw.ElapsedMilliseconds} ms");
+            // ReadFully da silencio cuando se vacía: se para a mano al terminar lo recibido.
+            while (buffer.BufferedBytes > 0) await Task.Delay(40, ct);
+            await Task.Delay(120, ct);
+            StopIf(turn);
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
             Log.Write("voz: ElevenLabs falló, uso la voz de Windows · " + ex.Message);
-            if (!ct.IsCancellationRequested) _tts.SpeakAsync(Expressive.Clean(text));
+            if (!ct.IsCancellationRequested && !started) _tts.SpeakAsync(Expressive.Clean(text));
         }
     }
 
-    void Play(byte[] pcm, int turn)
+    /// <summary>Empieza a sonar lo que vaya llegando a <paramref name="buffer"/>; false si ya se pidió otra cosa.</summary>
+    bool Play(IWaveProvider buffer, int turn)
     {
         using var devices = new MMDeviceEnumerator();
         var device = devices.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
         var mix = device.AudioClient.MixFormat;
-        var source = new RawSourceWaveStream(new MemoryStream(pcm), new WaveFormat(ElevenLabsTts.Rate, 16, 1));
-        ISampleProvider samples = source.ToSampleProvider();
+        ISampleProvider samples = buffer.ToSampleProvider();
         if (mix.SampleRate != ElevenLabsTts.Rate) samples = new WdlResamplingSampleProvider(samples, mix.SampleRate);
         // Al formato del altavoz (float, sus canales): WASAPI compartido no convierte solo.
         var output = new WasapiOut(device, AudioClientShareMode.Shared, true, 80);
@@ -279,7 +310,6 @@ sealed class Speaker : IDisposable
         output.PlaybackStopped += async (_, _) =>
         {
             output.Dispose();
-            source.Dispose();
             // Un poco de margen para que la cola del audio no entre por el micrófono.
             await Task.Delay(250);
             lock (_gate) if (turn != _turn) return;
@@ -287,10 +317,23 @@ sealed class Speaker : IDisposable
         };
         lock (_gate)
         {
-            if (turn != _turn) { output.Dispose(); source.Dispose(); return; }
+            if (turn != _turn) { output.Dispose(); return false; }
             _out = output;
         }
         output.Play();
+        return true;
+    }
+
+    void StopIf(int turn)
+    {
+        WasapiOut? playing;
+        lock (_gate)
+        {
+            if (turn != _turn) return;
+            playing = _out;
+            _out = null;
+        }
+        try { playing?.Stop(); } catch { }
     }
 
     public void Stop()

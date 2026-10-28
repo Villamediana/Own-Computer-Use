@@ -2,11 +2,15 @@ using System.Text.Json.Nodes;
 
 namespace Colo.Core;
 
-/// <summary>Elemento interactivo marcado con número en la captura.</summary>
-public sealed record Mark(int Id, string Role, string Name, string Value = "");
+/// <summary>Elemento interactivo marcado con número en la captura. State: «foco», «activa», «marcada»… (vacío = nada).</summary>
+public sealed record Mark(int Id, string Role, string Name, string Value = "", string State = "");
 
-/// <summary>Jpeg vacío = este turno va sin captura (solo la lista de elementos).</summary>
-public sealed record Observation(byte[] Jpeg, int Width, int Height, string Window, IReadOnlyList<Mark> Marks);
+/// <summary>
+/// Jpeg vacío = este turno va sin captura (solo la lista de elementos).
+/// Others: las demás ventanas abiertas, para cambiar a una sin tener que listarlas antes.
+/// </summary>
+public sealed record Observation(byte[] Jpeg, int Width, int Height, string Window, IReadOnlyList<Mark> Marks,
+    IReadOnlyList<string>? Others = null);
 
 public sealed record ToolCall(string Name, JsonObject Args)
 {

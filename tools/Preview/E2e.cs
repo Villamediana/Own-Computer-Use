@@ -160,7 +160,8 @@ static class E2e
             Thread.Sleep(1500);
             var obs = pc.ObserveAsync(false, CancellationToken.None).Result;
             Console.WriteLine($"{name}: {obs.Marks.Count} elementos · {obs.Window}");
-            foreach (var m in obs.Marks.Take(25)) Console.WriteLine($"   [{m.Id}] {m.Role} «{m.Name}» {m.Value}");
+            Console.WriteLine("   otras ventanas: " + string.Join(" · ", obs.Others ?? []));
+            foreach (var m in obs.Marks.Take(40)) Console.WriteLine($"   [{m.Id}] {m.Role} «{m.Name}» {m.Value} {(m.State.Length > 0 ? "(" + m.State + ")" : "")}");
             if (!obs.Marks.Any(m => m.Name.Length > 0)) failed++;
         }
         Process.Start("notepad.exe")?.Dispose();

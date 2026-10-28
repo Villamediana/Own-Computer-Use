@@ -23,12 +23,15 @@ public sealed class Agent
     bool _running;
     CancellationTokenSource? _cts;
 
-    public int MaxSteps { get; init; } = 40;
+    /// <summary>Tope de pasos por orden: corta una tarea que se enreda antes de gastar demasiado.</summary>
+    public int MaxSteps { get; init; } = 25;
     public int SettleMs { get; init; } = 250;
     /// <summary>La misma acción idéntica seguida: a la tercera se avisa al modelo, a la cuarta se para.</summary>
     public int MaxRepeats { get; init; } = 3;
     /// <summary>Herramientas de servidores MCP (se cambia al guardar Ajustes).</summary>
     public IToolHost? Extra { get; set; }
+    /// <summary>Lo que sabe del usuario entre días (null = sin memoria).</summary>
+    public Memory? Memory { get; set; }
     public event Action<AgentEvent>? Event;
 
     public Agent(AiClient ai, Settings settings, IComputer pc)
@@ -99,6 +102,7 @@ public sealed class Agent
                 var finished = false;
                 var ignored = false;
                 var closed = false;
+                string? closing = null;
                 // Cada herramienta se ejecuta en cuanto llega del stream, sin esperar al resto.
                 try
                 {
@@ -118,6 +122,9 @@ public sealed class Agent
                         if (closed) continue;
                         anyCall = true;
                         var call = ParseCall(item);
+                        // Un done en una acción que no fue la última no cierra nada: venían más pasos
+                        // (recordar algo después no cuenta como paso).
+                        if (call.Name is not ("remember" or "forget")) closing = null;
                         if (call.Name == "done") { final = call.Str("message"); finished = closed = true; continue; }
                         if (call.Name == "ignore") { ignored = finished = closed = true; continue; }
                         if (call.Name == "look")
@@ -140,13 +147,19 @@ public sealed class Agent
                             return;
                         }
                         Emit(AgentEventKind.Action, label);
-                        acted = true;
+                        var remembers = call.Name is "remember" or "forget";
+                        // Recordar no toca la pantalla: no hace falta esperar a que se asiente.
+                        if (!remembers) acted = true;
                         string result;
                         try
                         {
-                            result = Extra is { } host && host.Handles(call.Name)
-                                ? await host.CallAsync(call.Name, call.Args, ct)
-                                : await _pc.ExecuteAsync(call, ct);
+                            result = remembers
+                                ? Memory is { } mem
+                                    ? call.Name == "remember" ? mem.Remember(call.Str("fact")) : mem.Forget(call.Str("fact"))
+                                    : "error: memoria apagada"
+                                : Extra is { } host && host.Handles(call.Name)
+                                    ? await host.CallAsync(call.Name, call.Args, ct)
+                                    : await _pc.ExecuteAsync(call, ct);
                         }
                         catch (Exception ex) when (ex is not OperationCanceledException) { result = "error: " + ex.Message; }
                         // El resultado largo viaja entero solo en el turno siguiente; en el registro queda corto.
@@ -156,6 +169,8 @@ public sealed class Agent
                         if (repeats == MaxRepeats)
                             log.Add($"Ya hiciste «{label}» {repeats} veces seguidas. Si el pedido está cumplido, done; si no tuvo efecto, prueba de otra forma.");
                         if (result.StartsWith("error", StringComparison.Ordinal)) closed = true;
+                        // La acción traía la frase final: si es la última de la respuesta, hecho sin otro turno.
+                        else closing = Tools.Finishing.Contains(call.Name) && call.Str("done").Trim() is { Length: > 0 } f ? f : null;
                     }
                 }
                 catch (AiException ex) when (AiClient.IsRateLimit(ex.Message) && !anyCall && message.Length == 0 && waits < 4)
@@ -169,6 +184,11 @@ public sealed class Agent
                     continue;
                 }
                 waits = 0;
+                if (closing is not null && !finished)
+                {
+                    final = closing;
+                    finished = true;
+                }
 
                 var said = message.ToString().Trim();
                 if (said.Length > 0)
@@ -254,6 +274,13 @@ public sealed class Agent
         IReadOnlyList<string>? fresh = null)
     {
         var sb = new StringBuilder();
+        var facts = Memory is { } mem && !(_s.DisabledTools?.Contains("memory") ?? false) ? mem.Facts : [];
+        if (facts.Count > 0)
+        {
+            sb.AppendLine("Lo que sabes del usuario:");
+            foreach (var f in facts) sb.AppendLine("- " + f);
+            sb.AppendLine();
+        }
         string[] past;
         lock (_lock) past = [.. _past];
         if (past.Length > 0)
@@ -276,6 +303,7 @@ public sealed class Agent
         }
         var withImage = obs.Jpeg.Length > 0;
         sb.AppendLine().AppendLine($"Ventana activa: {obs.Window}");
+        if (obs.Others is { Count: > 0 } others) sb.AppendLine("Otras ventanas: " + string.Join(" · ", others));
         sb.AppendLine(withImage
             ? $"Captura {obs.Width}x{obs.Height} adjunta. Elementos:"
             : "Sin captura en este turno (look si la necesitas). Elementos:");
@@ -284,6 +312,7 @@ public sealed class Agent
             sb.Append('[').Append(m.Id).Append("] ").Append(m.Role);
             if (m.Name.Length > 0) sb.Append(" «").Append(m.Name).Append('»');
             if (m.Value.Length > 0) sb.Append(" =").Append(m.Value);
+            if (m.State.Length > 0) sb.Append(" (").Append(m.State).Append(')');
             sb.AppendLine();
         }
         if (obs.Marks.Count == 0) sb.AppendLine(withImage ? "(ninguno; usa x,y)" : "(ninguno; llama look)");
@@ -345,6 +374,7 @@ public sealed class Agent
             "click" => (c.Bool("double") ? "Doble clic" : c.Str("button") == "right" ? "Clic derecho" : "Clic") + Target(),
             "type_text" => $"Escribe «{Trunc(c.Str("text"), 60)}»" + (c.Mark() is not null ? " en" + Target() : "")
                 + (c.Bool("submit") ? " ⏎" : ""),
+            "edit_text" => $"Cambia «{Trunc(c.Str("find"), 30)}» por «{Trunc(c.Str("replace"), 30)}»",
             "press_keys" => $"Teclas {c.Str("keys")}" + (c.Int("repeat") is > 1 and var n ? $" ×{n}" : ""),
             "scroll" => c.Str("to") switch
             {
@@ -367,6 +397,8 @@ public sealed class Agent
                 var a => a,
             },
             "open" => $"Abre {c.Str("target")}",
+            "remember" => $"Recuerda «{Trunc(c.Str("fact"), 60)}»",
+            "forget" => $"Olvida «{Trunc(c.Str("fact"), 60)}»",
             "window" => c.Str("action") switch
             {
                 "list" => "Mira las ventanas",

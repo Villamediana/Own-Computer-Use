@@ -19,27 +19,42 @@ Entender
   cabeza y busca la orden que encaja con lo que hay en pantalla («una nueva engin de aplicador» → una nueva
   pestaña en el navegador; «la orella», «la URLE» → la barra de la URL).
 - Usa todo el contexto: la pantalla, lo que acabas de hacer y los pedidos anteriores. Una corrección («ahí no»,
-  «en la barra») habla de lo último que hiciste: rehazlo donde dice (y quita lo puesto en el sitio equivocado).
+  «en la barra») habla de lo último que hiciste: rehazlo donde dice, sin más vueltas.
 - Si hay una interpretación razonable, actúa sin preguntar. Pregunta solo si falta un dato que no se deduce.
 - Lo que no es para ti → ignore, sin preguntar: ruido, una frase suelta o cortada, una charla con otra persona,
   y las frases que el reconocedor inventa con ruido (despedidas de vídeo tipo «¡Suscríbete!»).
   Las preguntas sobre lo que hay en pantalla sí son para ti: léelo y responde.
 
 Actuar
-- Rápido. Encadena en una respuesta lo que no necesite ver el resultado (p. ej. type_text con mark + submit).
-  Tras algo que cambia la pantalla, termina el turno y mira el resultado.
+- Rápido y económico: el mínimo de pasos y de herramientas; no leas ni mires de más si ya basta con la lista.
+  Encadena en una respuesta lo que no necesite ver el resultado (p. ej. type_text con mark + submit).
+  Campo done de las acciones: solo en la última acción, cuando con ella TODO lo pedido queda hecho y el
+  resultado es seguro (abrir una pestaña, cambiar de ventana, escribir, una tecla). Así no hace falta otro turno.
+  Si quedan pasos o no sabes cómo quedará la pantalla, déjalo vacío y mira el resultado. Cuenta solo lo hecho.
 - Apunta con mark. x,y solo si tienes la captura a la vista. Si la lista no basta, look (la captura llega en
   el siguiente turno). Para leer contenido (correo, página, documento) usa read_text.
 - Navegador: browser (go, new_tab, search, back, find, tab…) antes que clics.
-- Programas: open o window focus. Archivos: find_files y luego open. «Toma un print» = screenshot.
+- Programas: si ya está en «Otras ventanas», window focus; si no, open. Archivos: find_files y luego open.
+  «Toma un print» = screenshot.
+- Escribe en el campo marcado (foco) si es el que pide; si no, apunta con mark al campo correcto.
+- Corregir lo escrito («cambia X por Y», «quita eso», «pon tilde»): edit_text en el campo con foco; si no sabes
+  qué pone, read_text focused primero. Reescribir todo solo si lo pide.
 - Cuando la pantalla muestra que ya está, done enseguida; no repitas lo que ya funcionó.
 - Enviar, publicar, comprar, pagar o borrar solo si lo pidió; si no, déjalo listo y pregunta con done.
 - Palabras nuevas a mitad de la tarea mandan: corrigen, añaden o piden parar.
 - Las herramientas mcp_* vienen de servidores MCP del usuario; úsalas cuando encajen mejor que la pantalla.
 
+Memoria
+- «Lo que sabes del usuario» viene de otros días: úsalo para entenderle.
+- remember cuando aprendes algo que servirá otro día: cómo llama a sus cosas («el backlog» = la pestaña
+  P&I · Backlog), qué programa usa para qué, una corrección que te hizo. No tareas del momento ni datos sensibles.
+  forget si deja de ser cierto o te lo pide. Si además hay una tarea, sigue con ella sin comentarlo; si solo te
+  estaba enseñando algo, done con una confirmación muy corta.
+
 Responder
-- done con una frase corta y natural, en el idioma de su última frase (portugués si habló en portugués), como
-  la diría una persona que te ayuda: qué hiciste o qué encontraste. Nada de «Hecho.» a secas.
+- done con una frase corta y natural, en el idioma de la frase que acaba de decir (español → español,
+  portugués → portugués; lo anterior no cuenta), como la diría una persona que te ayuda: qué hiciste o qué
+  encontraste. Nada de «Hecho.» a secas. Lo que escribas o busques por él, en el idioma en que lo pidió.
   Texto plano: se muestra pequeño sobre la onda, sin markdown.
 - Si te preguntó algo, la respuesta va en done.
 """;
@@ -47,12 +62,13 @@ Responder
     public static readonly ToolGroup[] Groups =
     [
         new("mouse", "Ratón", "Clic, doble clic, arrastrar y scroll", ["click", "drag", "scroll"]),
-        new("keyboard", "Teclado", "Escribir, atajos y teclas", ["type_text", "press_keys"]),
+        new("keyboard", "Teclado", "Escribir, corregir, atajos y teclas", ["type_text", "edit_text", "press_keys"]),
         new("browser", "Navegador", "Ir a sitios, pestañas, buscar, atrás", ["browser"]),
         new("windows", "Programas y ventanas", "Abrir, cambiar, minimizar, cerrar", ["open", "window"]),
         new("read", "Lectura", "Leer el texto de la pantalla y el portapapeles", ["read_text", "clipboard"]),
         new("files", "Archivos", "Buscar archivos del usuario", ["find_files"]),
         new("print", "Print", "Captura al portapapeles", ["screenshot"]),
+        new("memory", "Memoria", "Recordar lo que aprende de ti entre días", ["remember", "forget"]),
     ];
 
     const string Defs = """
@@ -70,6 +86,8 @@ Responder
  {"type":"function","name":"type_text","description":"Escribe texto. mark: clic antes en ese campo. replace: borra lo que había. submit: Enter al final.",
   "parameters":{"type":"object","properties":{"text":{"type":"string"},"mark":{"type":"integer"},
    "replace":{"type":"boolean"},"submit":{"type":"boolean"}},"required":["text"]}},
+ {"type":"function","name":"edit_text","description":"Corrige un trozo del texto del campo o documento con foco sin reescribirlo: cambia la primera aparición de find por replace (replace vacío = borrar). Para corregir palabras, frases o errores de dictado.",
+  "parameters":{"type":"object","properties":{"find":{"type":"string"},"replace":{"type":"string"}},"required":["find","replace"]}},
  {"type":"function","name":"press_keys","description":"Combinación de teclas: \"ctrl+c\", \"enter\", \"alt+tab\", \"win\", \"ctrl+shift+t\", \"pagedown\", \"f5\"…",
   "parameters":{"type":"object","properties":{"keys":{"type":"string"},"repeat":{"type":"integer"}},"required":["keys"]}},
  {"type":"function","name":"browser","description":"Navegador activo (Chrome, Edge, Firefox). go: URL en esta pestaña. new_tab: pestaña nueva (con url opcional). search: busca text en el buscador del navegador. find: busca text en la página. tab: ir a la pestaña n (1-9). Más: back, forward, reload, close_tab, next_tab, prev_tab.",
@@ -87,6 +105,10 @@ Responder
   "parameters":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}},
  {"type":"function","name":"screenshot","description":"Print al portapapeles (y guardado como PNG). Se pega con ctrl+v.",
   "parameters":{"type":"object","properties":{"area":{"type":"string","enum":["screen","window"]}}}},
+ {"type":"function","name":"remember","description":"Guarda algo duradero sobre el usuario para los próximos días (cómo llama a sus cosas, qué app usa para qué, una corrección que te hizo). Una frase corta.",
+  "parameters":{"type":"object","properties":{"fact":{"type":"string"}},"required":["fact"]}},
+ {"type":"function","name":"forget","description":"Borra un recuerdo que ya no es cierto o que pidió olvidar (el texto o parte de él).",
+  "parameters":{"type":"object","properties":{"fact":{"type":"string"}},"required":["fact"]}},
  {"type":"function","name":"look","description":"Pide la captura de pantalla para el siguiente turno.",
   "parameters":{"type":"object","properties":{}}},
  {"type":"function","name":"wait","description":"Espera a que algo cargue.",
@@ -98,12 +120,22 @@ Responder
 ]
 """;
 
+    /// <summary>Acciones que pueden cerrar el pedido en la misma llamada (campo done): ahorra un turno entero.</summary>
+    public static readonly HashSet<string> Finishing = ["click", "type_text", "edit_text", "press_keys", "browser", "open", "window", "scroll", "clipboard", "screenshot"];
+
     /// <summary>Herramientas activas: todas menos los grupos apagados (look, wait, done e ignore van siempre).</summary>
     public static JsonArray Build(IEnumerable<string>? disabledGroups)
     {
         var off = new HashSet<string>(
             Groups.Where(g => disabledGroups?.Contains(g.Id) == true).SelectMany(g => g.Tools));
         var all = JsonNode.Parse(Defs)!.AsArray();
+        foreach (var t in all)
+            if (Finishing.Contains(t!["name"]!.GetValue<string>()))
+                t["parameters"]!["properties"]!["done"] = new JsonObject
+                {
+                    ["type"] = "string",
+                    ["description"] = "Solo si con esta acción TODO lo pedido queda hecho y el resultado es seguro: la frase final para el usuario (termina sin otro turno). Si quedan pasos, vacío.",
+                };
         var result = new JsonArray();
         foreach (var t in all.ToList())
         {

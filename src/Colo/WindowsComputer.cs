@@ -42,7 +42,7 @@ sealed class WindowsComputer : IComputer
 
     public string ShotsDir { get; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "Colo");
 
-    sealed record Element(string Role, string Name, string Value, Rectangle Rect);
+    sealed record Element(string Role, string Name, string Value, Rectangle Rect, string State);
 
     public Task<Observation> ObserveAsync(bool withImage, CancellationToken ct) => Task.Run(() =>
     {
@@ -80,7 +80,7 @@ sealed class WindowsComputer : IComputer
             id++;
             rects[id] = e.Rect;
             names[id] = e.Name;
-            marks.Add(new Mark(id, e.Role, e.Name, e.Value));
+            marks.Add(new Mark(id, e.Role, e.Name, e.Value, e.State));
         }
         lock (_lock)
         {
@@ -89,7 +89,8 @@ sealed class WindowsComputer : IComputer
             _marks = rects;
             _names = names;
         }
-        if (full is null) return new Observation([], 0, 0, window, marks);
+        var others = OtherWindows(hwnd);
+        if (full is null) return new Observation([], 0, 0, window, marks, others);
 
         using (full)
         {
@@ -118,9 +119,23 @@ sealed class WindowsComputer : IComputer
                     g.DrawString(label, font, Brushes.White, r.X, ly - 1);
                 }
             }
-            return new Observation(Jpeg(small, 76), w, h, window, marks);
+            return new Observation(Jpeg(small, 76), w, h, window, marks, others);
         }
     }, ct);
+
+    static List<string> OtherWindows(IntPtr front)
+    {
+        try
+        {
+            return Native.AppWindows().Where(h => h != front).Take(12).Select(h =>
+            {
+                var title = Native.Title(h);
+                if (title.Length > 50) title = title[..50] + "…";
+                return $"{title} [{Native.ProcessName(h)}]";
+            }).ToList();
+        }
+        catch { return []; }
+    }
 
     static Bitmap Capture(Rectangle b)
     {
@@ -171,6 +186,9 @@ sealed class WindowsComputer : IComputer
             cr.Add(AutomationElement.BoundingRectangleProperty);
             cr.Add(AutomationElement.IsPasswordProperty);
             cr.Add(ValuePattern.ValueProperty);
+            cr.Add(AutomationElement.HasKeyboardFocusProperty);
+            cr.Add(SelectionItemPattern.IsSelectedProperty);
+            cr.Add(TogglePattern.ToggleStateProperty);
             // La raíz se pide antes de activar la caché: con AutomationElementMode.None quedaría sin
             // referencia viva y FindAll falla («SafeHandle cannot be null»), o sea, nunca había marcas.
             var root = AutomationElement.FromHandle(h);
@@ -194,7 +212,10 @@ sealed class WindowsComputer : IComputer
                         if (v is string str && !(e.GetCachedPropertyValue(AutomationElement.IsPasswordProperty) is true))
                             value = str.Length > 40 ? str[..40].Replace('\n', ' ') + "…" : str.Replace('\n', ' ');
                     }
-                    found.Add(new Element(role, name, value, r));
+                    var state = e.GetCachedPropertyValue(AutomationElement.HasKeyboardFocusProperty, true) is true ? "foco"
+                        : e.GetCachedPropertyValue(SelectionItemPattern.IsSelectedProperty, true) is true ? (type == ControlType.TabItem ? "activa" : "elegido")
+                        : e.GetCachedPropertyValue(TogglePattern.ToggleStateProperty, true) is ToggleState.On ? "marcada" : "";
+                    found.Add(new Element(role, name, value, r, state));
                 }
             }
         }
@@ -302,6 +323,9 @@ sealed class WindowsComputer : IComputer
             case "read_text":
                 Cursor?.Say("Leyendo…");
                 return await Desktop.ReadTextAsync(c.Str("what"), ct);
+            case "edit_text":
+                Cursor?.Say("Corrigiendo…");
+                return await EditTextAsync(c.Str("find"), c.Str("replace"), ct);
             case "clipboard":
                 return c.Str("action") == "set" ? Desktop.SetClipboard(c.Str("text")) : Desktop.GetClipboard();
             case "press_keys":
@@ -349,6 +373,41 @@ sealed class WindowsComputer : IComputer
             default:
                 return $"error: herramienta desconocida «{c.Name}»";
         }
+    }
+
+    /// <summary>
+    /// Cambia un trozo del texto con foco sin reescribirlo entero: lo busca con UI Automation, lo selecciona y
+    /// escribe encima (así se conserva el formato en Word, correos…). Sin TextPattern, por el valor del campo.
+    /// </summary>
+    static async Task<string> EditTextAsync(string find, string replace, CancellationToken ct)
+    {
+        if (find.Length == 0) return "error: falta find";
+        var selected = await Task.Run(() =>
+        {
+            var el = AutomationElement.FocusedElement;
+            if (el is null) return "error: no hay ningún campo con foco";
+            if (el.TryGetCurrentPattern(TextPattern.Pattern, out var tp))
+            {
+                var range = ((TextPattern)tp).DocumentRange.FindText(find, false, true);
+                if (range is null) return $"error: no encontré «{find}» en el texto con foco";
+                range.Select();
+                return "selected";
+            }
+            if (el.TryGetCurrentPattern(ValuePattern.Pattern, out var vp) && !((ValuePattern)vp).Current.IsReadOnly)
+            {
+                var value = ((ValuePattern)vp).Current.Value ?? "";
+                var i = value.IndexOf(find, StringComparison.OrdinalIgnoreCase);
+                if (i < 0) return $"error: no encontré «{find}» en el campo";
+                ((ValuePattern)vp).SetValue(value[..i] + replace + value[(i + find.Length)..]);
+                return "ok";
+            }
+            return "error: este campo no deja editar por partes; usa read_text focused y type_text con replace";
+        }, ct);
+        if (selected != "selected") return selected;
+        await Task.Delay(50, ct);
+        if (replace.Length > 0) Input.Type(replace);
+        else Input.Combo(Colo.Core.Keys.Parse("delete"));
+        return "ok";
     }
 
     static readonly Dictionary<string, (string Keys, string Label)> BrowserKeys = new()

@@ -58,6 +58,7 @@ sealed class Widget : LayeredWindow
     readonly NotifyIcon _tray = new();
     readonly PopMenu _menu = new();
     readonly TokenMeter _tokens = new(System.IO.Path.Combine(Store.Dir, "usage.json"));
+    readonly Memory _memory = new(System.IO.Path.Combine(Store.Dir, "memory.json"));
     long _orderTokens;
 
     // ── arrastre
@@ -70,7 +71,7 @@ sealed class Widget : LayeredWindow
     {
         _ai = new AiClient(_s);
         _eleven = new ElevenLabsStt(_s);
-        _agent = new Agent(_ai, _s, _pc);
+        _agent = new Agent(_ai, _s, _pc) { Memory = _memory };
         _pc.Cursor = _cursor;
         _ = _cursor.Handle;
         Text = "Colo";
@@ -431,7 +432,8 @@ sealed class Widget : LayeredWindow
                 {
                     // Con Ajustes abierto es la prueba del micrófono: se muestra, no se ejecuta.
                     if (_settingsWindow is not null) { _settingsWindow.VoiceHeard(text, ms); return; }
-                    if (text.Length < 2) { Say("No entendí", Theme.Muted, 1200); return; }
+                    // Una letra suelta («¡Y!», «Eh.») es ruido: ni se manda al modelo. «Sí» o «no» sí pasan.
+                    if (text.Count(char.IsLetter) < 2) { if (text.Length > 0) Log.Write($"voz: descartado «{text}» (sin palabras)"); return; }
                     Command(text);
                 });
             }
@@ -547,7 +549,7 @@ sealed class Widget : LayeredWindow
         bool saved;
         try
         {
-            using var f = new SettingsWindow(_s);
+            using var f = new SettingsWindow(_s, _memory);
             _settingsWindow = f;
             f.RecordTest += StartProbe;
             f.SayTest += TrySpeaking;

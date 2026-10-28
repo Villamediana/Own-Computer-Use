@@ -18,7 +18,7 @@ const assert = (c, m) => { if (!c) { console.log('FAIL:', m); process.exitCode =
   const last = async t => (await sent()).filter(m => m.type === t).pop();
   assert((await sent())[0]?.type === 'ready', 'pide init al cargar');
   await page.evaluate(() => window.__deliver({
-    type: 'init', version: '1.2.0', printsDir: 'C:\\x', mics: [{ id: 'id-a', name: 'Mic A' }, { id: 'id-b', name: 'Mic B' }],
+    type: 'init', version: '1.2.0', printsDir: 'C:\\x', memory: ['Su navegador es Comet', '«El backlog» es la pestaña P&I'], mics: [{ id: 'id-a', name: 'Mic A' }, { id: 'id-b', name: 'Mic B' }],
     groups: [{ id: 'mouse', title: 'Ratón', summary: 's' }, { id: 'browser', title: 'Navegador', summary: 's' }],
     settings: { Provider: 'Azure', Endpoint: 'https://a.openai.azure.com', ApiKey: 'k1', Model: '', ReasoningEffort: 'low', SpeechEngine: 'Local',
       TranscribeModel: '', MicId: '', LocalModel: 'base', Language: 'es', Sensitivity: 6, SpeakReplies: false, StartWithWindows: true, Vision: 'Auto', DisabledTools: [], McpServers: [], WidgetX: 5 },
@@ -96,6 +96,9 @@ const assert = (c, m) => { if (!c) { console.log('FAIL:', m); process.exitCode =
   // general
   await page.click('nav button[data-page=general]');
   await page.click('label.switch:has(#autostart)');
+  assert((await page.textContent('#facts')).includes('Su navegador es Comet'), 'muestra lo que Colo sabe');
+  await page.click('[data-forget="0"]');
+  assert((await last('forgetFact'))?.text === 'Su navegador es Comet' && !(await page.textContent('#facts')).includes('Comet'), 'olvidar un recuerdo');
   assert(await page.isVisible('#dirty.on'), 'marca cambios sin guardar');
 
   await page.click('#save');

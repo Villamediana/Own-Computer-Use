@@ -24,6 +24,7 @@ sealed class SettingsWindow : Form
     static readonly JsonSerializerOptions Json = new() { Converters = { new JsonStringEnumConverter() } };
 
     readonly Settings _s;
+    readonly Memory? _memory;
     readonly WebView2 _web = new() { Dock = DockStyle.Fill, DefaultBackgroundColor = Color.White };
     readonly CancellationTokenSource _closing = new();
     string _voiceStatus = "";
@@ -46,9 +47,10 @@ sealed class SettingsWindow : Form
         Post(new { type = "voiceStatus", text });
     }
 
-    public SettingsWindow(Settings s)
+    public SettingsWindow(Settings s, Memory? memory = null)
     {
         _s = s;
+        _memory = memory;
         Text = "Colo · Ajustes";
         BackColor = Color.White;
         StartPosition = FormStartPosition.CenterScreen;
@@ -133,6 +135,7 @@ sealed class SettingsWindow : Form
                     version = Application.ProductVersion.Split('+')[0],
                     printsDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "Colo"),
                     logFile = Log.FilePath,
+                    memory = _memory?.Facts ?? [],
                 });
                 if (_voiceStatus.Length > 0) Post(new { type = "voiceStatus", text = _voiceStatus });
                 Ready?.Invoke();
@@ -162,6 +165,11 @@ sealed class SettingsWindow : Form
                 if (edited is null) return;
                 CopyEditable(edited, _s);
                 DialogResult = DialogResult.OK;
+                break;
+
+            case "forgetFact":
+                var fact = msg["text"]?.GetValue<string>() ?? "";
+                if (fact.Length > 0) Log.Write($"memoria: olvidado desde Ajustes «{fact}» → {_memory?.Forget(fact)}");
                 break;
 
             case "listVoices":
