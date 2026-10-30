@@ -123,14 +123,28 @@ public class CoreTests(ITestOutputHelper output)
     {
         var h = new FakeHandler((_, _) => (HttpStatusCode.OK, """{"text":" abre chrome "}"""));
         var wav = Wav.Encode(new float[1600]);
-        Assert.Equal("abre chrome", await new AiClient(Azure(), new HttpClient(h)).TranscribeAsync(wav, default));
+        Assert.Equal("abre chrome", await new AiClient(Azure(), new HttpClient(h)).TranscribeAsync(wav, "Glosario: Comet.", default));
         Assert.Equal("https://latam.openai.azure.com/openai/deployments/gpt-4o-mini-transcribe/audio/transcriptions?api-version=2025-03-01-preview",
             h.Seen[0].Req.RequestUri!.ToString());
         Assert.Contains("name=model", h.Seen[0].Body);
+        // Idioma fijo y glosario van en la petición.
+        Assert.Contains("name=language", h.Seen[0].Body);
+        Assert.Contains("Glosario: Comet.", h.Seen[0].Body);
 
-        var o = new Settings { Provider = Provider.OpenAI, ApiKey = "sk", TranscribeModel = "gpt-4o-mini-transcribe" };
-        await new AiClient(o, new HttpClient(h)).TranscribeAsync(wav, default);
+        var o = new Settings { Provider = Provider.OpenAI, ApiKey = "sk", TranscribeModel = "gpt-4o-mini-transcribe", Language = "auto" };
+        await new AiClient(o, new HttpClient(h)).TranscribeAsync(wav, "", default);
         Assert.Equal("https://api.openai.com/v1/audio/transcriptions", h.Seen[1].Req.RequestUri!.ToString());
+        Assert.DoesNotContain("name=language", h.Seen[1].Body);
+
+        // Conexión propia para la voz: otro recurso y otra llave que el modelo.
+        var own = Azure();
+        own.VoiceOwn = true;
+        own.VoiceProvider = Provider.Azure;
+        own.VoiceEndpoint = "https://voz.openai.azure.com/";
+        own.VoiceKey = "k-voz";
+        await new AiClient(own, new HttpClient(h)).TranscribeAsync(wav, "", default);
+        Assert.StartsWith("https://voz.openai.azure.com/openai/deployments/", h.Seen[2].Req.RequestUri!.ToString());
+        Assert.Equal("k-voz", h.Seen[2].Req.Headers.GetValues("api-key").Single());
     }
 
     [Fact]
@@ -645,61 +659,6 @@ public class CoreTests(ITestOutputHelper output)
         Assert.Contains("remember", tools);
     }
 
-    static short[] Pcm(string name)
-    {
-        var bytes = File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "wake", name + ".pcm"));
-        var pcm = new short[bytes.Length / 2];
-        Buffer.BlockCopy(bytes, 0, pcm, 0, bytes.Length);
-        return pcm;
-    }
-
-    static List<float> WakeScores(string name)
-    {
-        using var model = WakeModel.Bundled();
-        var audio = Pcm(name);
-        var scores = new List<float>();
-        for (var i = 0; i + WakeModel.Chunk <= audio.Length; i += WakeModel.Chunk)
-            scores.Add(model.Score(audio.AsSpan(i, WakeModel.Chunk)));
-        return scores;
-    }
-
-    [Fact]
-    public void Wake_word_scores_match_the_phone_chunk_by_chunk()
-    {
-        // Las mismas notas que el bucle de referencia de la Luna (oww_stream.py) con la misma persona real.
-        foreach (var name in new[] { "luna", "lua" })
-        {
-            var expected = File.ReadAllLines(Path.Combine(AppContext.BaseDirectory, "wake", name + ".scores"))
-                .Where(l => l.Trim().Length > 0).Select(l => float.Parse(l, System.Globalization.CultureInfo.InvariantCulture)).ToList();
-            var actual = WakeScores(name);
-            Assert.Equal(expected.Count, actual.Count);
-            for (var i = 0; i < expected.Count; i++) Assert.True(Math.Abs(expected[i] - actual[i]) < 1e-3, $"{name}[{i}]: {expected[i]} vs {actual[i]}");
-        }
-        Assert.Contains(WakeScores("luna"), s => s >= WakeWord.Cutoff);
-        Assert.DoesNotContain(WakeScores("lua"), s => s >= WakeWord.Cutoff);
-    }
-
-    [Fact]
-    public async Task Wake_word_fires_once_from_the_microphone_stream()
-    {
-        using var wake = new WakeWord(WakeModel.Bundled());
-        var woke = 0;
-        wake.Woke += _ => Interlocked.Increment(ref woke);
-        // Medio segundo de ruido suave (para el calentamiento) y luego «luna», en bloques de 40 ms como el micrófono.
-        var rnd = new Random(3);
-        var audio = Enumerable.Range(0, 8000).Select(_ => (short)rnd.Next(-30, 30)).Concat(Pcm("luna")).ToArray();
-        for (var i = 0; i < audio.Length; i += 640) wake.Feed(audio.AsSpan(i, Math.Min(640, audio.Length - i)));
-        await Task.Delay(1500);
-        Assert.Equal(1, woke);
-        var lua = 0;
-        using var other = new WakeWord(WakeModel.Bundled());
-        other.Woke += _ => Interlocked.Increment(ref lua);
-        var neg = Enumerable.Range(0, 8000).Select(_ => (short)rnd.Next(-30, 30)).Concat(Pcm("lua")).ToArray();
-        for (var i = 0; i < neg.Length; i += 640) other.Feed(neg.AsSpan(i, Math.Min(640, neg.Length - i)));
-        await Task.Delay(1500);
-        Assert.Equal(0, lua);
-    }
-
     [Fact]
     public async Task Rate_limit_is_retried()
     {
@@ -878,5 +837,202 @@ public class CoreTests(ITestOutputHelper output)
         Assert.Equal(2, quiet.Seen.Count);
         Assert.Contains("y no dijo nada", quiet.Seen[1].Body);
         Assert.False(a2.Busy);
+    }
+
+    // ── atajos que se mantienen
+
+    static (HoldKeys keys, List<string> log) Hold(string talk, string? dictate = null)
+    {
+        var k = new HoldKeys();
+        Assert.True(k.Set("talk", talk));
+        Assert.True(k.Set("dictate", dictate));
+        var log = new List<string>();
+        k.Pressed += id => log.Add("+" + id);
+        k.Released += id => log.Add("-" + id);
+        k.Cancelled += id => log.Add("x" + id);
+        k.Replay += keys => log.Add("replay " + string.Join(",", keys.Select(x => $"{(char)x.Vk}{(x.Down ? "↓" : "↑")}")));
+        return (k, log);
+    }
+
+    [Fact]
+    public void Hold_ctrl_win_presses_and_releases_without_swallowing_modifiers()
+    {
+        var (k, log) = Hold("Ctrl+Win");
+        Assert.False(k.Key(0xA2, true));   // LCtrl
+        Assert.False(k.Key(0x5B, true));   // LWin → activo
+        Assert.False(k.Key(0x5B, true));   // repetición
+        Assert.False(k.Key(0x5B, false));
+        Assert.False(k.Key(0xA2, false));
+        Assert.Equal(["+talk", "-talk"], log);
+    }
+
+    [Fact]
+    public void Hold_with_another_key_is_another_shortcut_and_cancels()
+    {
+        var (k, log) = Hold("Ctrl+Win");
+        k.Key(0xA2, true);
+        k.Key(0x5B, true);
+        Assert.False(k.Key('D', true));     // Ctrl+Win+D (escritorio) pasa
+        k.Key('D', false);
+        k.Key(0x5B, false);
+        k.Key(0xA2, false);
+        Assert.Equal(["+talk", "xtalk"], log);
+    }
+
+    [Fact]
+    public void Hold_two_letters_retains_the_first_and_replays_it_when_typing()
+    {
+        var (k, log) = Hold("Ctrl+Win", "J+K");
+        // J y luego K, mantenidas: dictar; ninguna llega a la ventana.
+        Assert.True(k.Key('J', true));
+        Assert.True(k.Key('J', true));      // repetición, retenida
+        Assert.True(k.Key('K', true));
+        Assert.True(k.Key('K', false));
+        Assert.True(k.Key('J', false));     // su «up» tampoco pasa
+        Assert.Equal(["+dictate", "-dictate"], log);
+        log.Clear();
+
+        // Escribir «ja»: J sale delante de A, en orden.
+        Assert.True(k.Key('J', true));
+        Assert.True(k.Key('A', true));
+        Assert.False(k.Key('J', false));
+        Assert.False(k.Key('A', false));
+        Assert.Equal(["replay J↓,A↓"], log);
+        log.Clear();
+
+        // Una J suelta: se reenvía al soltarla.
+        Assert.True(k.Key('J', true));
+        Assert.True(k.Key('J', false));
+        Assert.Equal(["replay J↓,J↑"], log);
+        log.Clear();
+
+        // Mayús+J (una J mayúscula) no es el atajo: pasa directo.
+        Assert.False(k.Key(0xA0, true));
+        Assert.False(k.Key('J', true));
+        Assert.Empty(log);
+    }
+
+    [Fact]
+    public void Hold_shortcut_validation()
+    {
+        Assert.True(Keys.Hold("J+K", out _));
+        Assert.True(Keys.Hold("Ctrl+Win", out _));
+        Assert.True(Keys.Hold("Ctrl+Mayús+K", out var vks) && vks.Count == 3);
+        Assert.False(Keys.Hold("K", out _));
+        Assert.False(Keys.Hold("K+K", out _));
+        Assert.False(Keys.Hold("Ctrl+Nada", out _));
+    }
+
+    [Fact]
+    public void Listener_take_keeps_what_was_said_while_held_with_preroll()
+    {
+        using var l = new Listener(6) { Detect = false };
+        var said = 0;
+        l.Utterance += _ => said++;
+        l.Feed(Enumerable.Repeat((short)100, 16000).ToArray());     // 1 s antes de apretar
+        l.BeginTake();
+        l.Feed(Enumerable.Repeat((short)9000, 8000).ToArray());     // 0,5 s apretado
+        var take = l.EndTake();
+        Assert.Equal(4800 + 8000, take.Length);                      // 300 ms de antes + lo apretado
+        Assert.Empty(l.EndTake());
+        Assert.Equal(0, said);
+    }
+
+    // ── GPT-Live
+
+    [Fact]
+    public void Live_url_and_start_event()
+    {
+        var s = Azure();
+        Assert.Equal("wss://latam.openai.azure.com/openai/v1/live/sessions", LiveCall.Url(AiClient.VoiceConnection(s)).ToString());
+        Assert.Equal("wss://api.openai.com/v1/live/sessions", LiveCall.Url(new Settings { Provider = Provider.OpenAI }).ToString());
+        s.LiveVoice = "cedar";
+        var start = LiveCall.StartEvent(s);
+        Assert.Equal("session.start", start["type"]!.GetValue<string>());
+        Assert.Equal("gpt-live-1", start["session"]!["model"]!.GetValue<string>());
+        Assert.Equal("cedar", start["session"]!["audio"]!["output"]!["voice"]!.GetValue<string>());
+        Assert.Equal(24000, start["session"]!["audio"]!["format"]!["rate"]!.GetValue<int>());
+        // Las tareas las hace Colo: delegación al cliente.
+        Assert.Equal("client", start["session"]!["delegation"]!["type"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void Live_upsampler_keeps_rate_across_blocks()
+    {
+        var up = new LiveCall.Upsampler();
+        var total = 0;
+        var sine = Enumerable.Range(0, 16000).Select(i => (short)(8000 * Math.Sin(i * 2 * Math.PI * 440 / 16000))).ToArray();
+        for (var i = 0; i < sine.Length; i += 640) total += up.Push(sine.AsSpan(i, 640)).Length / 2;
+        Assert.InRange(total, 23990, 24010);
+    }
+
+    // ── parar
+
+    [Fact]
+    public async Task Stop_tool_ends_the_task_without_acting()
+    {
+        var h = new FakeHandler((_, _) => (HttpStatusCode.OK, Calls(("stop", "{}"))));
+        var pc = new FakeComputer();
+        var events = new List<AgentEvent>();
+        var agent = new Agent(new AiClient(Azure(), new HttpClient(h)), Azure(), pc) { SettleMs = 0 };
+        agent.Event += e => { lock (events) events.Add(e); };
+        await agent.Hear("para todo");
+        Assert.Empty(pc.Done);
+        Assert.Equal(AgentEventKind.Stopped, events.Last().Kind);
+        Assert.Contains(Tools.Build(null), t => t!["name"]!.GetValue<string>() == "stop");
+        Assert.Contains(Tools.Build(null), t => t!["name"]!.GetValue<string>() == "dictate");
+    }
+
+    /// <summary>La primera respuesta tarda (el modelo aún piensa); las demás, al momento.</summary>
+    sealed class SlowFirst(HttpMessageHandler inner, TaskCompletionSource started) : DelegatingHandler(inner)
+    {
+        int _n;
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage r, CancellationToken ct)
+        {
+            if (Interlocked.Increment(ref _n) == 1)
+            {
+                started.TrySetResult();
+                await Task.Delay(10_000, ct);
+            }
+            return await base.SendAsync(r, ct);
+        }
+    }
+
+    [Fact]
+    public async Task Speaking_mid_step_interrupts_and_the_new_words_rule()
+    {
+        var bodies = new List<string>();
+        var h = new FakeHandler((_, body) => { lock (bodies) bodies.Add(body); return (HttpStatusCode.OK, Calls(("stop", "{}"))); });
+        var started = new TaskCompletionSource();
+        var pc = new FakeComputer();
+        var agent = new Agent(new AiClient(Azure(), new HttpClient(new SlowFirst(h, started))), Azure(), pc) { SettleMs = 0 };
+        var events = new List<AgentEvent>();
+        agent.Event += e => { lock (events) events.Add(e); };
+        var run = agent.Hear("abre el correo y busca facturas");
+        await started.Task;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        await agent.Hear("para, para todo");
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+        while (agent.Busy && sw.ElapsedMilliseconds < 5000) await Task.Delay(20);
+        Assert.True(sw.ElapsedMilliseconds < 5000, "no esperó a que terminara el paso viejo");
+        Assert.Empty(pc.Done);
+        Assert.Equal(AgentEventKind.Stopped, events.Last().Kind);
+        var text = JsonNode.Parse(bodies.Single())!["input"]![0]!["content"]![0]!["text"]!.GetValue<string>();
+        Assert.Contains("«para, para todo»", text);
+        Assert.Contains("te interrumpió", text);
+    }
+
+    [Fact]
+    public void Request_puts_fixed_parts_first_and_uses_a_cache_key()
+    {
+        var s = Azure();
+        var agent = new Agent(new AiClient(s), s, new FakeComputer());
+        var obs = new Observation([], 100, 100, "Chrome", [new Mark(1, "botón", "OK")]);
+        var a = agent.BuildRequest(["uno"], [], obs);
+        var b = agent.BuildRequest(["dos"], ["hecho algo"], obs);
+        Assert.Equal("colo", a["prompt_cache_key"]!.GetValue<string>());
+        // Instrucciones y tools idénticas entre pasos: el prefijo se cachea.
+        Assert.Equal(a["instructions"]!.ToJsonString(), b["instructions"]!.ToJsonString());
+        Assert.Equal(a["tools"]!.ToJsonString(), b["tools"]!.ToJsonString());
     }
 }

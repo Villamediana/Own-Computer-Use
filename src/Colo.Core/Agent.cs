@@ -22,6 +22,8 @@ public sealed class Agent
     readonly List<string> _past = [];
     bool _running;
     CancellationTokenSource? _cts;
+    // El paso en curso: si dice algo nuevo a mitad, se corta para que lo lea ya (no sigue con lo de antes).
+    CancellationTokenSource? _step;
 
     /// <summary>Tope de pasos por orden: corta una tarea que se enreda antes de gastar demasiado.</summary>
     public int MaxSteps { get; init; } = 25;
@@ -57,6 +59,7 @@ public sealed class Agent
             if (_running)
             {
                 _incoming.Enqueue(text);
+                try { _step?.Cancel(); } catch (ObjectDisposedException) { }
                 return Task.CompletedTask;
             }
             _running = true;
@@ -105,12 +108,20 @@ public sealed class Agent
                 var finished = false;
                 var ignored = false;
                 var listening = false;
+                var stopped = false;
                 var closed = false;
                 string? closing = null;
+                using var stepCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                lock (_lock)
+                {
+                    _step = stepCts;
+                    if (_incoming.Count > 0) stepCts.Cancel();
+                }
+                var stepCt = stepCts.Token;
                 // Cada herramienta se ejecuta en cuanto llega del stream, sin esperar al resto.
                 try
                 {
-                    await foreach (var item in _ai.StreamAsync(body, ct))
+                    await foreach (var item in _ai.StreamAsync(body, stepCt))
                     {
                         var type = item["type"]?.GetValue<string>();
                         if (type == "message")
@@ -130,6 +141,7 @@ public sealed class Agent
                         // (recordar algo después no cuenta como paso).
                         if (call.Name is not ("remember" or "forget")) closing = null;
                         if (call.Name == "done") { final = call.Str("message"); finished = closed = true; continue; }
+                        if (call.Name == "stop") { stopped = finished = closed = true; continue; }
                         if (call.Name == "ignore") { ignored = finished = closed = true; continue; }
                         if (call.Name == "listen" && !acted) { listening = closed = true; continue; }
                         if (call.Name == "look")
@@ -163,8 +175,8 @@ public sealed class Agent
                                     ? call.Name == "remember" ? mem.Remember(call.Str("fact")) : mem.Forget(call.Str("fact"))
                                     : "error: memoria apagada"
                                 : Extra is { } host && host.Handles(call.Name)
-                                    ? await host.CallAsync(call.Name, call.Args, ct)
-                                    : await _pc.ExecuteAsync(call, ct);
+                                    ? await host.CallAsync(call.Name, call.Args, stepCt)
+                                    : await _pc.ExecuteAsync(call, stepCt);
                         }
                         catch (Exception ex) when (ex is not OperationCanceledException) { result = "error: " + ex.Message; }
                         // El resultado largo viaja entero solo en el turno siguiente; en el registro queda corto.
@@ -177,6 +189,13 @@ public sealed class Agent
                         // La acción traía la frase final: si es la última de la respuesta, hecho sin otro turno.
                         else closing = Tools.Finishing.Contains(call.Name) && call.Str("done").Trim() is { Length: > 0 } f ? f : null;
                     }
+                }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                {
+                    // Habló a mitad del paso: lo que iba a hacer se deja y se vuelve a mirar con lo nuevo.
+                    log.Add("[te interrumpió: lee lo nuevo que dijo antes de seguir]");
+                    step--;
+                    continue;
                 }
                 catch (AiException ex) when (AiClient.IsRateLimit(ex.Message) && !anyCall && message.Length == 0 && waits < 4)
                 {
@@ -231,6 +250,12 @@ public sealed class Agent
                         Emit(AgentEventKind.Ignored, "");
                         return;
                     }
+                    if (stopped)
+                    {
+                        Remember(heard, did, "el usuario la detuvo");
+                        Emit(AgentEventKind.Stopped, "Detenido.");
+                        return;
+                    }
                     Remember(heard, did, final);
                     Emit(AgentEventKind.Done, string.IsNullOrWhiteSpace(final) ? "Listo." : final!);
                     return;
@@ -254,6 +279,7 @@ public sealed class Agent
         }
         finally
         {
+            lock (_lock) _step = null;
             if (!released)
                 lock (_lock)
                 {
@@ -369,6 +395,9 @@ public sealed class Agent
             ["tool_choice"] = "auto",
             ["parallel_tool_calls"] = true,
             ["store"] = false,
+            // Todo lo fijo (instrucciones, tools) va delante y lo que cambia al final: con la misma clave el
+            // proveedor reutiliza el prefijo cacheado entre pasos y pedidos.
+            ["prompt_cache_key"] = "colo",
             ["input"] = new JsonArray(new JsonObject { ["role"] = "user", ["content"] = content }),
         };
         if (!string.IsNullOrEmpty(_s.ReasoningEffort))
@@ -404,6 +433,7 @@ public sealed class Agent
             "click" => (c.Bool("double") ? "Doble clic" : c.Str("button") == "right" ? "Clic derecho" : "Clic") + Target(),
             "type_text" => $"Escribe «{Trunc(c.Str("text"), 60)}»" + (c.Mark() is not null ? " en" + Target() : "")
                 + (c.Bool("submit") ? " ⏎" : ""),
+            "dictate" => $"Dicta «{Trunc(c.Str("text"), 60)}»",
             "edit_text" => $"Cambia «{Trunc(c.Str("find"), 30)}» por «{Trunc(c.Str("replace"), 30)}»",
             "press_keys" => $"Teclas {c.Str("keys")}" + (c.Int("repeat") is > 1 and var n ? $" ×{n}" : ""),
             "scroll" => c.Str("to") switch

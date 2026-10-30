@@ -39,9 +39,37 @@ const assert = (c, m) => { if (!c) { console.log('FAIL:', m); process.exitCode =
   // voz
   await page.click('nav button[data-page=voice]');
   assert(await page.isVisible('#p-voice'), 'navega a Voz');
-  await page.click('[data-bind=WakeWord] button[data-v=off]');
-  await page.click('[data-bind=WakeWord] button[data-v=on]');
-  assert((await page.textContent('#wakeHint')).includes('Luna'), 'explica la activación con «Luna»');
+  assert((await page.textContent('#talkKeys')).replace(/\s/g, '') === 'CtrlWin', 'muestra el atajo para hablar');
+  assert((await page.textContent('#dictateKeys')).includes('Apagado'), 'dictar empieza apagado');
+  // dos letras cualesquiera, apretadas a la vez
+  await page.click('#recordDictate');
+  await page.keyboard.down('KeyJ');
+  await page.keyboard.down('KeyK');
+  await page.keyboard.up('KeyK');
+  await page.keyboard.up('KeyJ');
+  assert((await page.textContent('#dictateKeys')).replace(/\s/g, '') === 'JK', 'graba un atajo de dos letras');
+  await page.click('#recordTalk');
+  await page.keyboard.down('KeyJ');
+  await page.keyboard.up('KeyJ');
+  assert((await page.textContent('#talkKeyHint')).includes('dos teclas'), 'una tecla sola no vale');
+  await page.keyboard.down('Control');
+  await page.keyboard.down('Shift');
+  await page.keyboard.down('KeyK');
+  await page.keyboard.up('KeyK');
+  assert((await page.textContent('#talkKeys')).replace(/\s/g, '') === 'CtrlMayúsK', 'graba Ctrl+Mayús+K');
+  await page.keyboard.up('Shift');
+  await page.keyboard.up('Control');
+  assert((await sent()).some(m => m.type === 'recordingKeys' && m.on) && (await last('recordingKeys'))?.on === false, 'pausa los atajos mientras graba');
+  await page.click('label.switch:has(#live)');
+  assert(await page.isVisible('#liveModel') && await page.isVisible('#voiceConn'), 'GPT-Live muestra modelo y conexión');
+  await page.click('[data-bind=VoiceOwn] button[data-v=own]');
+  await page.fill('#voiceKey', 'k-voz');
+  await page.evaluate(() => document.querySelector('#talkKeys').scrollIntoView());
+  await page.waitForTimeout(800);
+  await page.screenshot({ path: process.argv[2] + '/voz-atajos.png' });
+  await page.evaluate(() => document.querySelector('#voiceConn').scrollIntoView());
+  await page.waitForTimeout(800);
+  await page.screenshot({ path: process.argv[2] + '/voz-conexion.png' });
   await page.click('label.switch:has(#speak)');
   await page.selectOption('#mic', 'id-b');
   await page.click('[data-bind=LocalModel] button[data-v=small]');
@@ -101,15 +129,7 @@ const assert = (c, m) => { if (!c) { console.log('FAIL:', m); process.exitCode =
   // general
   await page.click('nav button[data-page=general]');
   await page.click('label.switch:has(#autostart)');
-  assert((await page.textContent('#wakeKeys')).includes('L'), 'muestra el atajo para despertarla');
-  await page.click('#recordKey');
-  await page.keyboard.press('Control+Shift+KeyK');
-  assert((await page.textContent('#wakeKeys')).replace(/\s/g, '') === 'CtrlShiftK', 'graba un atajo nuevo');
-  await page.click('#recordKey');
-  await page.keyboard.press('KeyJ');
-  assert((await page.textContent('#wakeKeyHint')).includes('Añade'), 'sin modificador no se acepta');
-  await page.keyboard.press('Escape');
-  assert(await page.isVisible('#p-general'), 'Esc cancela la grabación sin cerrar Ajustes');
+  assert((await page.textContent('#talkKeysGeneral')).replace(/\s/g, '') === 'CtrlMayúsK', 'General muestra el atajo para hablar');
   assert((await page.textContent('#facts')).includes('Su navegador es Comet'), 'muestra lo que Colo sabe');
   await page.click('[data-forget="0"]');
   assert((await last('forgetFact'))?.text === 'Su navegador es Comet' && !(await page.textContent('#facts')).includes('Comet'), 'olvidar un recuerdo');
@@ -129,7 +149,8 @@ const assert = (c, m) => { if (!c) { console.log('FAIL:', m); process.exitCode =
     Whisper: sv?.LocalModel === 'small' && sv?.Language === 'pt',
     Mcp: sv?.McpServers?.length === 1 && JSON.stringify(sv.McpServers[0].Tools) === '["read_file"]' && sv.McpServers[0].Enabled === true,
     Keeps: sv?.WidgetX === 5,
-    Wake: sv?.WakeWord === true && sv?.WakeHotkey === 'Ctrl+Shift+K',
+    Keys: sv?.TalkHotkey === 'Ctrl+Shift+K' && sv?.DictateHotkey === 'J+K',
+    Live: sv?.Live === true && sv?.LiveModel === 'gpt-live-1' && sv?.VoiceOwn === true && sv?.VoiceKey === 'k-voz',
   };
   for (const [k, v] of Object.entries(checks)) assert(v, 'se guarda solo con ' + k);
 

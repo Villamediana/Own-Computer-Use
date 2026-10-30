@@ -46,16 +46,23 @@ public sealed class AiClient
 
     string V1 => _s.Provider == Provider.OpenAI ? Root(_s) : Root(_s) + "/openai/v1";
 
-    HttpRequestMessage Req(HttpMethod method, string url)
+    HttpRequestMessage Req(HttpMethod method, string url) => Req(_s, method, url);
+
+    static HttpRequestMessage Req(Settings s, HttpMethod method, string url)
     {
-        if (string.IsNullOrWhiteSpace(_s.ApiKey)) throw new AiException("Falta la API key.");
+        if (string.IsNullOrWhiteSpace(s.ApiKey)) throw new AiException("Falta la API key.");
         var r = new HttpRequestMessage(method, url);
-        if (_s.Provider == Provider.OpenAI)
-            r.Headers.Authorization = new("Bearer", _s.ApiKey.Trim());
+        if (s.Provider == Provider.OpenAI)
+            r.Headers.Authorization = new("Bearer", s.ApiKey.Trim());
         else
-            r.Headers.Add("api-key", _s.ApiKey.Trim());
+            r.Headers.Add("api-key", s.ApiKey.Trim());
         return r;
     }
+
+    /// <summary>La conexión de la voz (transcripción por API y GPT-Live): la propia o la del modelo.</summary>
+    public static Settings VoiceConnection(Settings s) => s.VoiceOwn
+        ? new Settings { Provider = s.VoiceProvider, Endpoint = s.VoiceEndpoint, ApiKey = s.VoiceKey }
+        : new Settings { Provider = s.Provider, Endpoint = s.Endpoint, ApiKey = s.ApiKey };
 
     async Task<JsonNode> Send(HttpRequestMessage req, CancellationToken ct)
     {
@@ -196,18 +203,23 @@ public sealed class AiClient
         }
     }
 
-    public async Task<string> TranscribeAsync(byte[] wav, CancellationToken ct)
+    /// <param name="prompt">Glosario que orienta al modelo (nombres de programas, palabras de las órdenes).</param>
+    public async Task<string> TranscribeAsync(byte[] wav, string prompt, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(_s.TranscribeModel)) throw new AiException("Elige el modelo de voz.");
-        var url = _s.Provider == Provider.OpenAI
-            ? V1 + "/audio/transcriptions"
-            : $"{Root(_s)}/openai/deployments/{Uri.EscapeDataString(_s.TranscribeModel)}/audio/transcriptions?api-version={AzureTranscribeApiVersion}";
-        var r = Req(HttpMethod.Post, url);
+        var c = VoiceConnection(_s);
+        var url = c.Provider == Provider.OpenAI
+            ? Root(c) + "/audio/transcriptions"
+            : $"{Root(c)}/openai/deployments/{Uri.EscapeDataString(_s.TranscribeModel)}/audio/transcriptions?api-version={AzureTranscribeApiVersion}";
+        var r = Req(c, HttpMethod.Post, url);
         var form = new MultipartFormDataContent();
         var file = new ByteArrayContent(wav);
         file.Headers.ContentType = new("audio/wav");
         form.Add(file, "file", "voz.wav");
         form.Add(new StringContent(_s.TranscribeModel), "model");
+        // Idioma fijo y glosario: en frases cortas el modelo acierta mucho más que adivinando.
+        if (_s.Language is { Length: > 0 } lang && lang != "auto") form.Add(new StringContent(lang), "language");
+        if (prompt.Length > 0) form.Add(new StringContent(prompt), "prompt");
         r.Content = form;
         var j = await Send(r, ct);
         return j["text"]?.GetValue<string>()?.Trim() ?? "";

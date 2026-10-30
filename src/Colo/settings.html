@@ -419,13 +419,13 @@
       <!-- VOZ -->
       <section class="page" id="p-voice">
         <h1>Voz</h1>
-        <p class="lead">Colo escucha siempre. Cada frase se ejecuta cuando terminas de decirla.</p>
+        <p class="lead">Mantén el atajo mientras hablas; al soltarlo, transcribe y lo hace.</p>
 
         <h2>Prueba del micrófono</h2>
         <div class="group test">
           <div class="row">
             <span class="dot" id="vDot"></span>
-            <div class="label"><b id="vStatus">Esperando al micrófono…</b><small>Habla: aquí ves lo que oye y lo que entiende. Mientras Ajustes está abierto no ejecuta nada.</small></div>
+            <div class="label"><b id="vStatus">Esperando al micrófono…</b><small>Mantén el atajo y habla: aquí ves lo que oye y lo que entiende. Mientras Ajustes está abierto no ejecuta nada.</small></div>
           </div>
           <div class="row stack">
             <div class="meter"><i id="vMeter"></i></div>
@@ -440,9 +440,42 @@
           </div>
         </div>
 
-        <h2>Para hablarle</h2>
-        <div class="seg" data-bind="WakeWord" data-options="on:Al decir «Luna»|off:Siempre escuchando"></div>
-        <p class="hint" id="wakeHint"></p>
+        <h2>Atajos para hablar</h2>
+        <div class="group">
+          <div class="row">
+            <div class="label"><b>Hablarle</b><small id="talkKeyHint">Mantén apretado, habla y suelta.</small></div>
+            <div class="keys" id="talkKeys"></div>
+            <button class="btn" id="recordTalk">Cambiar</button>
+          </div>
+          <div class="row">
+            <div class="label"><b>Dictar</b><small id="dictateKeyHint">Opcional: escribe tal cual donde está el cursor, sin pasar por el modelo.</small></div>
+            <div class="keys" id="dictateKeys"></div>
+            <button class="btn" id="recordDictate">Poner</button>
+            <button class="icon-btn" id="clearDictate" title="Quitar"><svg><use href="#i-trash"/></svg></button>
+          </div>
+        </div>
+        <p class="hint">Valen dos teclas cualesquiera, también dos letras cercanas: aprieta una, luego la otra, y mantenlas. Sin el atajo de dictar, el modelo decide igual cuándo es un dictado.</p>
+
+        <h2>Conversación en vivo</h2>
+        <div class="group">
+          <div class="row">
+            <div class="label"><b>GPT-Live</b><small>Habla y responde con voz; lo que haya que hacer en el PC se lo pasa a Colo. La llamada sigue hasta que la tarea termina; con el atajo vuelves a hablarle.</small></div>
+            <label class="switch"><input type="checkbox" id="live"><span></span></label>
+          </div>
+          <div id="liveRows">
+            <div class="row stack">
+              <div class="label"><b>Modelo</b><small>Deployment en Foundry o modelo en OpenAI.</small></div>
+              <input class="input mono" id="liveModel" spellcheck="false" autocomplete="off" placeholder="gpt-live-1">
+            </div>
+            <div class="row stack">
+              <div class="label"><b>Voz</b></div>
+              <select class="input" id="liveVoice">
+                <option>marin</option><option>cedar</option><option>alloy</option><option>ash</option><option>ballad</option>
+                <option>coral</option><option>echo</option><option>sage</option><option>shimmer</option><option>verse</option>
+              </select>
+            </div>
+          </div>
+        </div>
 
         <h2>Transcripción</h2>
         <div class="seg" data-bind="SpeechEngine" data-options="Local:En tu PC · gratis|Api:OpenAI / Foundry|ElevenLabs:ElevenLabs"></div>
@@ -465,7 +498,28 @@
             <input class="input" id="voiceModel" spellcheck="false" autocomplete="off" placeholder="gpt-4o-mini-transcribe">
             <div class="pop"></div>
           </div>
-          <p class="hint">Usa la llave y el endpoint de la sección Modelo.</p>
+          <p class="hint">Va con el idioma elegido y un glosario con los programas abiertos.</p>
+        </div>
+        <div id="voiceConn" hidden>
+          <h2>Conexión de la voz</h2>
+          <div class="seg" data-bind="VoiceOwn" data-options="same:La misma del Modelo|own:Otra"></div>
+          <div class="group" id="voiceOwnRows" style="margin-top:10px">
+            <div class="row stack">
+              <div class="seg" data-bind="VoiceProvider" data-options="Azure:Azure AI Foundry|OpenAI:OpenAI"></div>
+            </div>
+            <div class="row stack">
+              <div class="label"><b>Endpoint</b></div>
+              <input class="input mono" id="voiceEndpoint" spellcheck="false" autocomplete="off">
+            </div>
+            <div class="row stack">
+              <div class="label"><b>API key</b></div>
+              <div class="field with-btn">
+                <input class="input mono" id="voiceKey" type="password" spellcheck="false" autocomplete="off" placeholder="Pega tu llave">
+                <button class="inline-btn" id="revealVoice" title="Mostrar"><svg><use href="#i-eye"/></svg></button>
+              </div>
+            </div>
+          </div>
+          <p class="hint">Para la transcripción por API y GPT-Live.</p>
         </div>
         <div id="elevenVoice" hidden>
           <h2>Modelo de Scribe</h2>
@@ -479,11 +533,6 @@
         <div class="group">
           <div class="row stack">
             <select class="input" id="mic"></select>
-          </div>
-          <div class="row stack">
-            <div class="label"><b>Sensibilidad</b><small>Más sensible capta voz baja; menos sensible ignora ruido de fondo.</small></div>
-            <input type="range" id="sens" min="1" max="10" step="1">
-            <div class="range-ends"><span>Menos</span><span>Más</span></div>
           </div>
         </div>
 
@@ -553,18 +602,14 @@
         <p class="lead">&nbsp;</p>
         <div class="group">
           <div class="row">
-            <div class="label"><b>Abrir al iniciar Windows</b><small>Colo queda escuchando desde que enciendes el PC.</small></div>
+            <div class="label"><b>Abrir al iniciar Windows</b><small>Colo queda listo desde que enciendes el PC.</small></div>
             <label class="switch"><input type="checkbox" id="autostart"><span></span></label>
           </div>
         </div>
 
         <h2>Atajos</h2>
         <div class="group">
-          <div class="row">
-            <div class="label"><b>Hablarle sin decir «Luna»</b><small id="wakeKeyHint">La onda aparece y escucha al momento.</small></div>
-            <div class="keys" id="wakeKeys"></div>
-            <button class="btn" id="recordKey">Cambiar</button>
-          </div>
+          <div class="row"><div class="label"><b>Hablarle</b><small>Se cambia en Voz.</small></div><div class="keys" id="talkKeysGeneral"></div></div>
           <div class="row"><div class="label"><b>Pausar o seguir escuchando</b></div><div class="keys"><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>Espacio</kbd></div></div>
           <div class="row"><div class="label"><b>Detener lo que está haciendo</b></div><div class="keys"><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>X</kbd></div></div>
           <div class="row"><div class="label"><b>Mover la onda</b></div><div class="keys"><kbd>Arrastrar</kbd></div></div>
@@ -749,41 +794,67 @@ function renderFacts() {
   });
 }
 
-// ── atajo para despertarla: se graba pulsándolo
-function showWakeKeys() {
-  $("#wakeKeys").innerHTML = (S.WakeHotkey || "").split("+").map(k => `<kbd>${esc(k === "Space" ? "Espacio" : k)}</kbd>`).join("");
+// ── atajos que se mantienen: se graban apretándolos (todas las teclas a la vez) y soltando
+const KEY_NAMES = { Space: "Espacio", Shift: "Mayús" };
+function keyName(code) {
+  if (/^Control/.test(code)) return "Ctrl";
+  if (/^Alt/.test(code)) return "Alt";
+  if (/^Shift/.test(code)) return "Shift";
+  if (/^(Meta|OS)/.test(code)) return "Win";
+  if (/^Key[A-Z]$/.test(code)) return code.slice(3);
+  if (/^Digit\d$/.test(code)) return code.slice(5);
+  if (/^F\d{1,2}$/.test(code)) return code;
+  return { Space: "Space", Tab: "Tab", CapsLock: "CapsLock", Comma: ",", Period: ".", Semicolon: ";", Slash: "/",
+    Backquote: "`", BracketLeft: "[", BracketRight: "]", Backslash: "\\", Quote: "'", Minus: "-", Equal: "=" }[code] || null;
 }
-function recordWakeKey() {
-  const btn = $("#recordKey");
-  btn.textContent = "Pulsa el atajo…";
-  $("#wakeKeyHint").textContent = "Con Ctrl, Alt, Mayús o Win y una tecla. Esc para dejarlo como estaba.";
+const ORDER = ["Ctrl", "Alt", "Shift", "Win"];
+function kbd(combo) {
+  return combo ? combo.split("+").map(k => `<kbd>${esc(KEY_NAMES[k] || k)}</kbd>`).join("") : '<small class="muted">Apagado</small>';
+}
+function showKeys() {
+  $("#talkKeys").innerHTML = kbd(S.TalkHotkey);
+  $("#talkKeysGeneral").innerHTML = kbd(S.TalkHotkey);
+  $("#dictateKeys").innerHTML = kbd(S.DictateHotkey);
+  $("#recordDictate").textContent = S.DictateHotkey ? "Cambiar" : "Poner";
+  $("#clearDictate").hidden = !S.DictateHotkey;
+}
+function recordHold(field, btn, hint) {
+  const idle = hint.textContent;
+  btn.textContent = "Aprieta las teclas…";
+  hint.textContent = "Mantén dos teclas o más a la vez y suelta. Esc para dejarlo como estaba.";
+  // Mientras se graba, el atajo actual no se dispara.
+  host.send({ type: "recordingKeys", on: true });
+  const held = [];
   const done = () => {
-    window.removeEventListener("keydown", onKey, true);
+    window.removeEventListener("keydown", onDown, true);
+    window.removeEventListener("keyup", onUp, true);
+    host.send({ type: "recordingKeys", on: false });
+    hint.textContent = idle;
     btn.textContent = "Cambiar";
-    $("#wakeKeyHint").textContent = "La onda aparece y escucha al momento.";
+    showKeys();
   };
-  const onKey = e => {
+  const onDown = e => {
     e.preventDefault();
     e.stopImmediatePropagation();
-    if (e.key === "Escape") return done();
-    const code = e.code;
-    const key = /^Key[A-Z]$/.test(code) ? code.slice(3) : /^Digit\d$/.test(code) ? code.slice(5)
-      : /^F\d{1,2}$/.test(code) ? code : code === "Space" ? "Space" : null;
-    if (!key) return;                       // todavía solo modificadores
-    const mods = [e.ctrlKey && "Ctrl", e.altKey && "Alt", e.shiftKey && "Shift", e.metaKey && "Win"].filter(Boolean);
-    if (!mods.length) { $("#wakeKeyHint").textContent = "Añade Ctrl, Alt, Mayús o Win: una tecla sola se dispararía al escribir."; return; }
-    S.WakeHotkey = [...mods, key].join("+");
-    showWakeKeys();
-    syncWake();
+    if (e.code === "Escape") return done();
+    const k = keyName(e.code);
+    if (k && !held.includes(k)) held.push(k);
+    btn.textContent = held.map(k => KEY_NAMES[k] || k).join(" + ") || "Aprieta las teclas…";
+  };
+  const onUp = e => {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (!held.length) return;
+    if (held.length < 2) { held.length = 0; hint.textContent = "Tienen que ser dos teclas o más, apretadas a la vez."; btn.textContent = "Aprieta las teclas…"; return; }
+    const combo = held.slice().sort((a, b) => (ORDER.indexOf(a) + 1 || 9) - (ORDER.indexOf(b) + 1 || 9)).join("+");
+    const other = field === "TalkHotkey" ? S.DictateHotkey : S.TalkHotkey;
+    if (other && other === combo) { held.length = 0; hint.textContent = "Ese ya es el otro atajo."; btn.textContent = "Aprieta las teclas…"; return; }
+    S[field] = combo;
     touch();
     done();
   };
-  window.addEventListener("keydown", onKey, true);
-}
-function syncWake() {
-  $("#wakeHint").textContent = S.WakeWord !== false
-    ? `Dormida no oye ni gasta nada y no se ve nada (ni la onda ni el icono). Di «Luna» (o ${S.WakeHotkey}) y te escucha; vuelve a dormir tras 45 s sin hablarle.`
-    : "Atiende todo lo que oye: cada frase va al modelo, también las charlas con otras personas.";
+  window.addEventListener("keydown", onDown, true);
+  window.addEventListener("keyup", onUp, true);
 }
 
 // ── voz de las respuestas
@@ -792,6 +863,9 @@ function syncReply() {
   $("#replyVoiceRow").hidden = !speak;
   $("#elevenReply").hidden = !eleven;
   $("#elevenAccount").hidden = !(eleven || S.SpeechEngine === "ElevenLabs");
+  $("#voiceConn").hidden = !(S.SpeechEngine === "Api" || S.Live);
+  $("#voiceOwnRows").hidden = !S.VoiceOwn;
+  $("#liveRows").hidden = !S.Live;
   $("#sayTest").disabled = eleven && !S.ElevenVoiceId;
 }
 function loadVoices() {
@@ -886,17 +960,33 @@ function init(msg) {
   mic.value = S.MicId || "";
   if (mic.selectedIndex < 0) mic.value = "";
   mic.onchange = () => { S.MicId = mic.value; touch(); };
-  const sens = $("#sens");
-  const paint = () => sens.style.setProperty("--p", ((sens.value - 1) / 9 * 100) + "%");
-  sens.value = S.Sensitivity || 6;
-  paint();
-  sens.oninput = () => { S.Sensitivity = +sens.value; paint(); touch(); };
-  // ── «Luna» y su atajo
-  S.WakeHotkey ||= "Ctrl+Alt+L";
-  seg($("[data-bind=WakeWord]"), S.WakeWord === false ? "off" : "on", v => { S.WakeWord = v === "on"; syncWake(); touch(); });
-  syncWake();
-  showWakeKeys();
-  $("#recordKey").onclick = recordWakeKey;
+  // ── atajos
+  S.TalkHotkey ||= "Ctrl+Win";
+  S.DictateHotkey ||= "";
+  showKeys();
+  $("#recordTalk").onclick = () => recordHold("TalkHotkey", $("#recordTalk"), $("#talkKeyHint"));
+  $("#recordDictate").onclick = () => recordHold("DictateHotkey", $("#recordDictate"), $("#dictateKeyHint"));
+  $("#clearDictate").onclick = () => { S.DictateHotkey = ""; showKeys(); touch(); };
+  // ── GPT-Live y la conexión de la voz
+  S.LiveModel ||= "gpt-live-1";
+  S.LiveVoice ||= "marin";
+  sw("live", "Live", syncReply);
+  $("#liveModel").value = S.LiveModel;
+  $("#liveModel").oninput = e => { S.LiveModel = e.target.value.trim(); touch(); };
+  $("#liveVoice").value = S.LiveVoice;
+  $("#liveVoice").onchange = e => { S.LiveVoice = e.target.value; touch(); };
+  seg($("[data-bind=VoiceOwn]"), S.VoiceOwn ? "own" : "same", v => { S.VoiceOwn = v === "own"; syncReply(); touch(); });
+  S.VoiceProvider ||= "Azure";
+  const syncVoiceProvider = () => {
+    $("#voiceEndpoint").placeholder = S.VoiceProvider === "OpenAI" ? "https://api.openai.com/v1  (opcional)" : "https://mi-recurso.openai.azure.com";
+  };
+  seg($("[data-bind=VoiceProvider]"), S.VoiceProvider, v => { S.VoiceProvider = v; syncVoiceProvider(); touch(); });
+  syncVoiceProvider();
+  $("#voiceEndpoint").value = S.VoiceEndpoint || "";
+  $("#voiceEndpoint").oninput = e => { S.VoiceEndpoint = e.target.value.trim(); touch(); };
+  $("#voiceKey").value = S.VoiceKey || "";
+  $("#voiceKey").oninput = e => { S.VoiceKey = e.target.value.trim(); touch(); };
+  $("#revealVoice").onclick = () => { const k = $("#voiceKey"); k.type = k.type === "password" ? "text" : "password"; };
   sw("speak", "SpeakReplies", syncReply);
   S.ReplyVoice ||= "ElevenLabs";
   S.ElevenTtsModel ||= "eleven_v4";
@@ -1184,7 +1274,7 @@ function demoHost() {
             settings: {
               Provider: "Azure", Endpoint: "https://latamfoundryai.openai.azure.com", ApiKey: "sk-demo-123", Model: "gpt-5.6-luna",
               ReasoningEffort: "low", SpeechEngine: page.get("engine") || "Local", LocalModel: "base", Language: "es", TranscribeModel: "", ElevenLabsKey: page.has("speak") ? "sk_demo" : "", ElevenLabsModel: "scribe_v2", MicId: "", Sensitivity: 6,
-              WakeWord: true, WakeHotkey: "Ctrl+Alt+L", SpeakReplies: page.has("speak"), ReplyVoice: "ElevenLabs", ElevenVoiceId: "", ElevenVoiceName: "", ElevenTtsModel: "eleven_v4",
+              TalkHotkey: "Ctrl+Win", DictateHotkey: "", Live: page.has("live"), LiveModel: "gpt-live-1", LiveVoice: "marin", VoiceOwn: false, VoiceProvider: "Azure", VoiceEndpoint: "", VoiceKey: "", SpeakReplies: page.has("speak"), ReplyVoice: "ElevenLabs", ElevenVoiceId: "", ElevenVoiceName: "", ElevenTtsModel: "eleven_v4",
               StartWithWindows: true, Vision: "Auto", DisabledTools: ["files"],
               McpServers: [
                 { Name: "Archivos", Kind: "Command", Command: "npx -y @modelcontextprotocol/server-filesystem C:\\Users\\miguel", Env: "", Url: "", Headers: "", Enabled: true, Tools: ["read_file", "list_directory"] },

@@ -9,10 +9,5 @@
     <PackageReference Include="Whisper.net" Version="1.9.1" />
     <PackageReference Include="Whisper.net.Runtime" Version="1.9.1" />
     <PackageReference Include="NAudio.Core" Version="2.2.1" />
-    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.20.1" />
-  </ItemGroup>
-  <ItemGroup>
-    <!-- «Luna»: openWakeWord (mel + embedding, Apache-2.0) y el clasificador entrenado para la Luna. -->
-    <EmbeddedResource Include="Wake/*.onnx" LogicalName="Colo.wake.%(Filename)%(Extension)" />
   </ItemGroup>
 </Project>

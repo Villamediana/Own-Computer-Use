@@ -44,6 +44,8 @@ sealed class SettingsWindow : Form
     public void ProbeResult(object result) => Post(new { type = "probe", result });
     /// <summary>Pidieron «Probar voz» con lo que hay en pantalla (aún sin guardar).</summary>
     public event Action<Settings>? SayTest;
+    /// <summary>La página está grabando un atajo: el actual no debe dispararse.</summary>
+    public event Action<bool>? RecordingKeys;
 
     // Prueba del micrófono en vivo (Ajustes › Voz). Se llaman desde el hilo de la interfaz.
     public void VoiceLevel(double rms) => Post(new { type = "voiceLevel", v = Math.Clamp(Math.Sqrt(rms) * 3.4, 0, 1) });
@@ -186,6 +188,10 @@ sealed class SettingsWindow : Form
                 if (trial is not null) SayTest?.Invoke(trial);
                 break;
 
+            case "recordingKeys":
+                RecordingKeys?.Invoke(msg["on"]?.GetValue<bool>() == true);
+                break;
+
             case "recordTest":
                 RecordTest?.Invoke();
                 break;
@@ -272,8 +278,16 @@ sealed class SettingsWindow : Form
         to.ElevenLabsModel = string.IsNullOrWhiteSpace(from.ElevenLabsModel) ? "scribe_v2" : from.ElevenLabsModel.Trim();
         to.MicId = from.MicId ?? "";
         to.Sensitivity = Math.Clamp(from.Sensitivity, 1, 10);
-        to.WakeWord = from.WakeWord;
-        to.WakeHotkey = Colo.Core.Keys.Hotkey(from.WakeHotkey ?? "", out _, out _) ? from.WakeHotkey!.Trim() : to.WakeHotkey;
+        to.TalkHotkey = Colo.Core.Keys.Hold(from.TalkHotkey ?? "", out _) ? from.TalkHotkey!.Trim() : to.TalkHotkey;
+        to.DictateHotkey = string.IsNullOrWhiteSpace(from.DictateHotkey) ? ""
+            : Colo.Core.Keys.Hold(from.DictateHotkey, out _) ? from.DictateHotkey.Trim() : to.DictateHotkey;
+        to.VoiceOwn = from.VoiceOwn;
+        to.VoiceProvider = from.VoiceProvider;
+        to.VoiceEndpoint = from.VoiceEndpoint?.Trim() ?? "";
+        to.VoiceKey = from.VoiceKey?.Trim() ?? "";
+        to.Live = from.Live;
+        to.LiveModel = string.IsNullOrWhiteSpace(from.LiveModel) ? "gpt-live-1" : from.LiveModel.Trim();
+        to.LiveVoice = string.IsNullOrWhiteSpace(from.LiveVoice) ? "marin" : from.LiveVoice.Trim();
         to.SpeakReplies = from.SpeakReplies;
         to.ReplyVoice = from.ReplyVoice;
         to.ElevenVoiceId = from.ElevenVoiceId?.Trim() ?? "";

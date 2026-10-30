@@ -10,10 +10,10 @@ transformar em multiplataforma ou fazer uma versão nova?
 - No Core já ficam o cérebro e quase tudo que define "como ele é": `Agent.cs` (loop, done/listen, repetição,
   contexto de 10 min), `AiClient.cs` (Foundry/OpenAI streaming), `Tools.cs` (prompt + tools), `Memory.cs`,
   `TokenMeter.cs`, `Mcp.cs`, `Speech.cs` (detector por volume + Whisper.net), `ElevenLabsStt/Tts.cs`,
-  `WakeWord.cs` (ONNX «Luna»), `Spring.cs`/`Motion.cs`, `Settings.cs`.
+  `HoldKeys.cs` (atalho segurado), `LiveCall.cs` (GPT-Live), `Spring.cs`/`Motion.cs`, `Settings.cs`.
 - A fronteira com o sistema é uma interface só: `IComputer` (`ObserveAsync` + `ExecuteAsync`) em `Computer.cs`.
   `WindowsComputer.cs` é a implementação de Windows.
-- As dependências do Core têm versão Android: Whisper.net (runtime android-arm64), ONNX Runtime (AAR no NuGet),
+- As dependências do Core têm versão Android: Whisper.net (runtime android-arm64),
   NAudio.Core (gerenciado puro).
 - Servidor já tem JDK 21, Android SDK 36, NDK e keystores — dá pra compilar APK aqui (sem emulador).
 
@@ -24,7 +24,7 @@ Não é nem "um app multiplataforma único" nem "um app novo do zero":
 - **Colo.Android** (novo) — app Android em C# (.NET for Android, **sem MAUI**) que usa o **mesmo Colo.Core**.
 
 Por quê:
-- **Igual de verdade**: prompt, tools, loop, memória, voz e wake word são o mesmo código. Corrigiu/ajustou
+- **Igual de verdade**: prompt, tools, loop, memória e voz são o mesmo código. Corrigiu/ajustou
   no Core → vale nos dois no próximo build. Reescrever em Kotlin seria duplicar ~3 mil linhas e elas iriam
   se afastar com o tempo.
 - **Não mexe no que funciona**: MAUI/Avalonia obrigaria a refazer a parte Windows (onda layered, cursor no

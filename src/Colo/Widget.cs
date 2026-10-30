@@ -15,8 +15,8 @@ using Microsoft.Win32;
 namespace Colo;
 
 /// <summary>
-/// Colo en pantalla: una pastilla blanca con una onda, siempre encima. La onda respira mientras
-/// escucha, sigue la voz cuando oyes hablar y brilla cuando está trabajando. Escucha siempre.
+/// Colo en pantalla: una pastilla blanca con una onda, siempre encima. Aparece mientras mantienes el atajo
+/// (sigue tu voz), brilla cuando está trabajando y se va cuando no hay nada que contar.
 /// Clic = pausar/seguir · arrastrar = mover · clic derecho = menú.
 /// </summary>
 sealed class Widget : LayeredWindow
@@ -31,7 +31,7 @@ sealed class Widget : LayeredWindow
     readonly AiCursor _cursor = AiCursor.Create();
     readonly Mic _mic = new();
     readonly SpeechModels _models = new(Store.ModelsDir, System.IO.Path.Combine(AppContext.BaseDirectory, "models"));
-    readonly Channel<float[]> _phrases = Channel.CreateUnbounded<float[]>(new UnboundedChannelOptions { SingleReader = true });
+    readonly Channel<(float[] Samples, bool Dictate)> _phrases = Channel.CreateUnbounded<(float[], bool)>(new UnboundedChannelOptions { SingleReader = true });
     Speaker? _speaker;
     Listener? _listener;
     LocalStt? _stt;
@@ -39,7 +39,7 @@ sealed class Widget : LayeredWindow
     bool _listening, _settingsOpen;
     SettingsWindow? _settingsWindow;
     // diagnóstico del audio
-    DateTime _listenSince, _lastSound, _lastSilenceWarning, _lastLevelPost;
+    DateTime _lastLevelPost;
     double _peak;
     List<short>? _probe;
     readonly object _probeLock = new();
@@ -66,12 +66,18 @@ sealed class Widget : LayeredWindow
     readonly NotifyIcon _tray = new();
     readonly PopMenu _menu = new();
 
-    // ── «Luna»: dormida no transcribe nada ni se ve; despierta 45 s desde lo último que oye o hace.
-    static readonly TimeSpan AwakeFor = TimeSpan.FromSeconds(45);
-    WakeWord? _wake;
-    volatile bool _awake;
-    DateTime _awakeUntil;
+    // ── atajo: mientras está apretado guarda lo que dices; al soltar, transcribe y actúa (o dicta).
+    const string Talk = "talk", Dictate = "dictate";
+    KeyHook? _keys;
+    volatile string? _holding;
     double _presence = 1;
+    // ── GPT-Live: la llamada sigue abierta hasta que la tarea termina y se calla.
+    LiveCall? _live;
+    LivePlayer? _livePlayer;
+    string? _liveTask;
+    string _liveSaid = "";
+    DateTime _liveQuietSince;
+    static readonly TimeSpan LiveHangup = TimeSpan.FromSeconds(8);
     readonly TokenMeter _tokens = new(System.IO.Path.Combine(Store.Dir, "usage.json"));
     readonly Memory _memory = new(System.IO.Path.Combine(Store.Dir, "memory.json"));
     long _orderTokens;
@@ -116,6 +122,7 @@ sealed class Widget : LayeredWindow
         Bounds = new Rectangle(_pos, new Size(w, h));
         _frame.Start();
         RegisterHotkeys();
+        SetupKeys();
         ApplyAutostart();
         _ = StartAsync();
     }
@@ -200,7 +207,8 @@ sealed class Widget : LayeredWindow
             SpeechEngine.Api => !string.IsNullOrWhiteSpace(_s.TranscribeModel),
             SpeechEngine.ElevenLabs => !string.IsNullOrWhiteSpace(_s.ElevenLabsKey),
             _ => true,
-        };
+        }
+        && (!_s.Live || (!string.IsNullOrWhiteSpace(_s.LiveModel) && !string.IsNullOrWhiteSpace(AiClient.VoiceConnection(_s).ApiKey)));
 
     void ApplyAutostart()
     {
@@ -266,7 +274,8 @@ sealed class Widget : LayeredWindow
             }
             if (_listener is null)
             {
-                _listener = new Listener(_s.Sensitivity);
+                // Sin detector por volumen: las frases salen solo del atajo.
+                _listener = new Listener(_s.Sensitivity) { Detect = false };
                 Log.Write($"voz: detector por volumen listo (sensibilidad {_s.Sensitivity})");
             }
             Say("", Theme.Muted, 0);
@@ -288,17 +297,12 @@ sealed class Widget : LayeredWindow
         if (!forTest && !Configured()) { OpenSettings(); return; }
         if (!await EnsureSpeechAsync() || _listening || (_settingsOpen && !forTest)) return;
         var l = _listener!;
-        l.Utterance -= OnUtterance;
-        l.Utterance += OnUtterance;
-        l.SpeakingChanged -= OnSpeaking;
-        l.SpeakingChanged += OnSpeaking;
         l.Level -= OnLevel;
         l.Level += OnLevel;
         l.Raw -= OnRaw;
         l.Raw += OnRaw;
         _speaker ??= TryCreateSpeaker();
         if (_speaker is not null) _speaker.Listener = l;
-        EnsureWake();
         try { _mic.Start(_s.MicId, l); }
         catch (Exception ex)
         {
@@ -308,10 +312,8 @@ sealed class Widget : LayeredWindow
             return;
         }
         _listening = true;
-        _listenSince = _lastSilenceWarning = DateTime.Now;
-        _lastSound = DateTime.MinValue;
-        VoiceStatus($"Escuchando con «{_mic.DeviceName}»");
-        if (Asleep && !forTest) Say($"Di «Luna» o {_s.WakeHotkey} para hablarme", Theme.Muted, 3500);
+        VoiceStatus($"Micrófono «{_mic.DeviceName}» · mantén {_s.TalkHotkey} y habla para probar");
+        if (!forTest) Say($"Mantén {_s.TalkHotkey} para hablarme", Theme.Muted, 3500);
         _micRetries = 0;
         _mode = _agent.Busy ? Mode.Busy : Mode.Listening;
     }
@@ -342,7 +344,6 @@ sealed class Widget : LayeredWindow
     {
         _target = Math.Clamp(Math.Sqrt(rms) * 3.4, 0, 1);
         var now = DateTime.Now;
-        if (rms > 0.0001) _lastSound = now;
         if (rms > _peak) _peak = rms;
         if ((now - _peakSince).TotalSeconds >= 15)
         {
@@ -357,76 +358,182 @@ sealed class Widget : LayeredWindow
         }
     }
 
-    void OnSpeaking(bool speaking)
+    // ───────────────────────── atajo
+
+    void SetupKeys()
     {
-        Log.Write(speaking ? "voz: empieza a hablar" : "voz: termina la frase");
-        Post(() =>
+        _keys ??= new KeyHook();
+        var k = _keys.Keys;
+        k.Pressed -= OnPressed;
+        k.Pressed += OnPressed;
+        k.Released -= OnReleased;
+        k.Released += OnReleased;
+        k.Cancelled -= OnCancelled;
+        k.Cancelled += OnCancelled;
+        if (!k.Set(Talk, _s.TalkHotkey)) Log.Write($"atajo: «{_s.TalkHotkey}» no vale");
+        if (!k.Set(Dictate, _s.DictateHotkey)) Log.Write($"atajo: «{_s.DictateHotkey}» no vale");
+    }
+
+    // Llegan desde el gancho de teclado: se contesta al momento y lo demás va por la cola de la interfaz.
+    void OnPressed(string id) => Post(() => Press(id));
+    void OnReleased(string id) => Post(() => Release(id));
+    void OnCancelled(string id) => Post(() => Cancel(id));
+
+    void Press(string id)
+    {
+        if (!_listening)
         {
-            _hearing = speaking && _listening;
-            _settingsWindow?.VoiceVad(speaking);
+            if (!Configured()) { OpenSettings(); return; }
+            Say("El micrófono está en pausa · clic en la onda para seguir", Theme.Muted, 2500);
+            return;
+        }
+        _speaker?.Stop();
+        if (_listener is null) return;
+        _listener.Muted = false;
+        _holding = id;
+        _hearing = true;
+        _settingsWindow?.VoiceVad(true);
+        Kick(-0.9);     // aparece estirándose hacia arriba, como una gota que cae y rebota
+        if (id == Talk && _s.Live && _settingsWindow is null)
+        {
+            _livePlayer?.Flush();
+            _liveSaid = "";
+            StartLive();
+            return;
+        }
+        _listener.BeginTake();
+        Log.Write($"atajo: {(id == Talk ? "hablar" : "dictar")} apretado");
+    }
+
+    void Release(string id)
+    {
+        if (_holding != id) return;
+        _holding = null;
+        _hearing = false;
+        _settingsWindow?.VoiceVad(false);
+        if (id == Talk && _live is not null && _listener?.Taking != true)
+        {
+            _live.Mute();
+            _liveQuietSince = DateTime.Now;
+            return;
+        }
+        // Un poco de cola: al soltar rápido no se pierde la última sílaba.
+        _ = Task.Delay(150).ContinueWith(_ => Post(() => FinishTake(id == Dictate)));
+    }
+
+    void Cancel(string id)
+    {
+        if (_holding != id) return;
+        _holding = null;
+        _hearing = false;
+        _settingsWindow?.VoiceVad(false);
+        if (_live is not null && _listener?.Taking != true) { _live.Mute(); return; }
+        _listener?.EndTake();
+        Log.Write("atajo: cancelado (era otro atajo)");
+    }
+
+    void FinishTake(bool dictate)
+    {
+        if (_holding is not null || _listener is null) return;
+        var samples = _listener.EndTake();
+        var seconds = samples.Length / (double)Listener.Rate;
+        var peak = samples.Length == 0 ? 0 : samples.Max(Math.Abs);
+        Log.Write($"atajo: soltado · {seconds:0.0} s · pico {peak:0.000}");
+        if (seconds < 0.5) { Say("Mantén las teclas mientras hablas", Theme.Muted, 2200); return; }
+        if (peak < 0.003) { Say($"No me llega sonido de «{_mic.DeviceName}». Revisa el micrófono en Ajustes › Voz.", Theme.Danger, 6000); return; }
+        _phrases.Writer.TryWrite((samples, dictate));
+    }
+
+    // ───────────────────────── GPT-Live
+
+    void StartLive()
+    {
+        if (_live is not null)
+        {
+            _live.Unmute();
+            return;
+        }
+        try { _livePlayer ??= new LivePlayer(); }
+        catch (Exception ex) { Log.Write("live: sin altavoz · " + ex.Message); }
+        var call = new LiveCall();
+        _live = call;
+        _liveTask = null;
+        _liveQuietSince = DateTime.Now;
+        call.Trace += t => Log.Write("live: " + t);
+        call.Audio += pcm => _livePlayer?.Add(pcm);
+        call.Said += d => Post(() =>
+        {
+            if (_live != call) return;
+            _liveSaid += d;
+            var t = _liveSaid.Trim();
+            Say(t.Length > 140 ? "…" + t[^140..] : t, Theme.Ink, 4000);
+        });
+        call.Delegated += (id, request) => Post(() => OnDelegated(call, id, request));
+        call.Closed += reason => Post(() => { if (_live == call) EndLive("se cerró: " + reason); });
+        Say("Conectando…", Theme.Muted, 3000);
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                // Lo que dices mientras conecta queda en cola y sale detrás de session.start.
+                await call.StartAsync(_s, CancellationToken.None);
+                Post(() =>
+                {
+                    Log.Write($"live: llamada abierta {call.SessionId} · {_s.LiveModel} · voz {_s.LiveVoice}");
+                    if (_live == call && _holding != Talk) call.Mute();
+                    if (_caption == "Conectando…") Say("", Theme.Muted, 0);
+                });
+            }
+            catch (Exception ex)
+            {
+                Log.Write("live: no abrió · " + ex.Message);
+                Post(() =>
+                {
+                    Say(ex.Message, Theme.Danger, 6000);
+                    if (_live == call) EndLive("no abrió");
+                });
+            }
         });
     }
 
-    /// <summary>Dormida: lo que se oye no se transcribe ni va al modelo (salvo la prueba en Ajustes).</summary>
-    bool Asleep => _s.WakeWord && _wake is not null && !_awake && _settingsWindow is null;
-
-    void EnsureWake()
+    void OnDelegated(LiveCall call, string id, string request)
     {
-        if (!_s.WakeWord || _wake is not null) return;
-        try
+        if (_live != call) return;
+        Log.Write($"live: tarea {id} «{request}»");
+        if (request.Count(char.IsLetter) < 2)
         {
-            var sw = System.Diagnostics.Stopwatch.StartNew();
-            _wake = new WakeWord(WakeModel.Bundled());
-            _wake.Woke += score => Post(() => Wake($"«Luna» ({score:0.00})"));
-            Log.Write($"voz: «Luna» lista en {sw.ElapsedMilliseconds} ms");
-        }
-        catch (Exception ex)
-        {
-            // Sin detector no se queda sorda: escucha siempre, como antes.
-            Log.Write("voz: «Luna» no arrancó, escucho siempre · " + ex);
-        }
-    }
-
-    void Wake(string why)
-    {
-        if (!_awake)
-        {
-            Log.Write("despierta: " + why);
-            Kick(-0.9);     // aparece estirándose hacia arriba, como una gota que cae y rebota
-        }
-        _awake = true;
-        KeepAwake();
-    }
-
-    void KeepAwake() => _awakeUntil = DateTime.Now + AwakeFor;
-
-    /// <summary>45 s sin hablarle ni trabajar: vuelve a dormir y la onda se va.</summary>
-    void MaybeSleep()
-    {
-        if (!_awake || !_s.WakeWord || _wake is null) return;
-        if (_agent.Busy || _hearing || _listener?.Muted == true || _settingsOpen) { if (_agent.Busy || _hearing) KeepAwake(); return; }
-        if (DateTime.Now < _awakeUntil) return;
-        _awake = false;
-        _wake.Settle();
-        Log.Write($"duerme: {AwakeFor.TotalSeconds:0} s sin hablarle");
-    }
-
-    void OnUtterance(float[] samples)
-    {
-        if (Asleep)
-        {
-            Log.Write($"voz: {samples.Length / 16000.0:0.0} s sin «Luna», no se transcribe");
+            call.Commentary(id, "No te entendí bien; pídeselo otra vez.");
             return;
         }
-        Post(KeepAwake);
-        _phrases.Writer.TryWrite(samples);
+        _liveTask = id;
+        Command(request);
+    }
+
+    /// <summary>Cuelga cuando la tarea acabó, ya no habla y no le hablas desde hace unos segundos.</summary>
+    void MaybeEndLive()
+    {
+        if (_live is null) return;
+        var now = DateTime.Now;
+        if (_holding is not null || _agent.Busy || _liveTask is not null || _livePlayer?.Playing == true) { _liveQuietSince = now; return; }
+        var last = _livePlayer is { } p && p.LastAudio > _liveQuietSince ? p.LastAudio : _liveQuietSince;
+        if (now - last > LiveHangup) EndLive("tarea terminada");
+    }
+
+    void EndLive(string why)
+    {
+        var call = _live;
+        if (call is null) return;
+        _live = null;
+        _liveTask = null;
+        Log.Write("live: cuelgo · " + why);
+        _ = Task.Run(async () => { try { await call.DisposeAsync(); } catch { } });
     }
 
     // Hilo de audio: junta 5 s para la prueba «Grabar y analizar».
     void OnRaw(ReadOnlySpan<short> pcm)
     {
-        // Mientras duerme, solo el detector de «Luna» oye (en el PC, sin mandar nada).
-        if (_wake is not null && _s.WakeWord && !_awake && _listener is { Muted: false }) _wake.Feed(pcm);
+        // En llamada, lo que dices con el atajo apretado va directo a GPT-Live.
+        if (_holding == Talk && _live is { } live && _listener?.Taking != true) live.Append(pcm);
         short[]? done = null;
         lock (_probeLock)
         {
@@ -477,7 +584,7 @@ sealed class Widget : LayeredWindow
 
     async Task PhraseLoopAsync()
     {
-        await foreach (var samples in _phrases.Reader.ReadAllAsync())
+        await foreach (var (samples, dictate) in _phrases.Reader.ReadAllAsync())
         {
             try
             {
@@ -486,7 +593,7 @@ sealed class Widget : LayeredWindow
                 if (_s.SpeechEngine == SpeechEngine.Local)
                 {
                     if (_stt is null) { Log.Write("voz: frase descartada, Whisper no está cargado"); continue; }
-                    _stt.Prompt = LocalStt.PromptFor(Native.AppWindows().Select(Native.ProcessName));
+                    _stt.Prompt = Glossary();
                     text = _stt.Transcribe(samples);
                 }
                 else if (_s.SpeechEngine == SpeechEngine.ElevenLabs)
@@ -495,7 +602,7 @@ sealed class Widget : LayeredWindow
                 }
                 else
                 {
-                    text = await _ai.TranscribeAsync(Wav.Encode(samples), CancellationToken.None);
+                    text = await _ai.TranscribeAsync(Wav.Encode(samples), Glossary(), CancellationToken.None);
                 }
                 var ms = sw.ElapsedMilliseconds;
                 Log.Write($"voz: {samples.Length / 16000.0:0.0} s → «{text}» ({ms} ms)");
@@ -503,10 +610,9 @@ sealed class Widget : LayeredWindow
                 {
                     // Con Ajustes abierto es la prueba del micrófono: se muestra, no se ejecuta.
                     if (_settingsWindow is not null) { _settingsWindow.VoiceHeard(text, ms); return; }
-                    // Solo su nombre: ya está despierta, no hace falta preguntarle nada al modelo.
-                    if (WindowsComputer.Fold(text).Trim(' ', '.', ',', '!', '¡', '?', '¿') == "luna") { Log.Write("voz: solo «Luna», escuchando"); return; }
                     // Una letra suelta («¡Y!», «Eh.») es ruido: ni se manda al modelo. «Sí» o «no» sí pasan.
                     if (text.Count(char.IsLetter) < 2) { if (text.Length > 0) Log.Write($"voz: descartado «{text}» (sin palabras)"); return; }
+                    if (dictate) { DictateNow(text); return; }
                     Command(text);
                 });
             }
@@ -516,6 +622,18 @@ sealed class Widget : LayeredWindow
                 Post(() => Say(ex.Message, Theme.Danger, 5000));
             }
         }
+    }
+
+    /// <summary>Glosario para la transcripción: palabras de las órdenes y los programas abiertos.</summary>
+    static string Glossary() => LocalStt.PromptFor(Native.AppWindows().Select(Native.ProcessName));
+
+    /// <summary>Atajo de dictar: lo transcrito, tal cual, donde está el cursor (sin el modelo).</summary>
+    void DictateNow(string text)
+    {
+        Log.Write($"dicta: «{text}»");
+        Say("«" + text + "»", Theme.Muted, 1500 + text.Length * 30);
+        try { Input.Type(text); }
+        catch (Exception ex) { Say(ex.Message, Theme.Danger, 5000); }
     }
 
     /// <summary>Lo que se ejecuta al oír una frase (también lo usa la prueba de punta a punta).</summary>
@@ -533,8 +651,6 @@ sealed class Widget : LayeredWindow
     {
         if (ev.Kind != AgentEventKind.Thinking) Log.Write($"agente {ev.Kind}: {ev.Text}");
         if (ev.Kind is AgentEventKind.Done or AgentEventKind.Error or AgentEventKind.Ignored or AgentEventKind.Stopped)
-            KeepAwake();
-        if (ev.Kind is AgentEventKind.Done or AgentEventKind.Error or AgentEventKind.Ignored or AgentEventKind.Stopped)
             Log.Write($"tokens: {Interlocked.Exchange(ref _orderTokens, 0):N0} esta orden · hoy {_tokens.TodayTokens:N0} · total {_tokens.AllTokens:N0}");
         switch (ev.Kind)
         {
@@ -550,27 +666,40 @@ sealed class Widget : LayeredWindow
                 // Las [etiquetas] de emoción son para la voz; en la onda va el texto limpio.
                 var reply = Expressive.Clean(ev.Text);
                 Say(reply, Theme.Ink, Math.Min(9000, 2500 + reply.Length * 60));
-                if (_s.SpeakReplies) _speaker?.Say(ev.Text);
+                // En llamada lo dice GPT-Live con su voz; si no, la voz de las respuestas.
+                if (!LiveResult(c => c.Commentary(_liveTask!, reply)) && _s.SpeakReplies) _speaker?.Say(ev.Text);
                 Idle();
                 break;
             case AgentEventKind.Ignored:
+                LiveResult(c => c.Thinking(_liveTask!, "En el PC no había nada que hacer con eso."));
                 Idle();
                 break;
             case AgentEventKind.Listening:
-                // Espera a que termine la idea: la onda vuelve a escuchar (y no se duerme mientras).
-                KeepAwake();
+                // Espera a que termine la idea: la onda vuelve a escuchar.
                 _mode = Mode.Listening;
                 break;
             case AgentEventKind.Stopped:
                 Say("Detenido", Theme.Muted, 1500);
+                LiveResult(c => c.Commentary(_liveTask!, "Lo detuve."));
                 Idle();
                 break;
             case AgentEventKind.Error:
                 Say(ev.Text, Theme.Danger, 6000);
+                LiveResult(c => c.Commentary(_liveTask!, "No pude: " + ev.Text));
                 Idle();
                 break;
         }
         SetClickThroughIfBusy();
+    }
+
+    /// <summary>Devuelve el resultado a la tarea que delegó GPT-Live (si la hay). false = no había llamada.</summary>
+    bool LiveResult(Action<LiveCall> send)
+    {
+        if (_live is not { } call || _liveTask is null) return false;
+        send(call);
+        _liveTask = null;
+        _liveQuietSince = DateTime.Now;
+        return true;
     }
 
     /// <summary>«Probar voz» en Ajustes: habla con la voz elegida aunque aún no se haya guardado.</summary>
@@ -634,6 +763,12 @@ sealed class Widget : LayeredWindow
             _settingsWindow = f;
             f.RecordTest += StartProbe;
             f.SayTest += TrySpeaking;
+            f.RecordingKeys += on =>
+            {
+                if (_keys is null) return;
+                _keys.Paused = on;
+                _keys.Keys.Reset();
+            };
             var testing = false;
             bool CanTest() => _s.SpeechEngine == SpeechEngine.Local
                 || (_s.SpeechEngine == SpeechEngine.ElevenLabs && _s.ElevenLabsKey.Length > 0) || Configured();
@@ -665,6 +800,7 @@ sealed class Widget : LayeredWindow
         }
         finally
         {
+            if (_keys is not null) _keys.Paused = false;
             _settingsOpen = false;
             _settingsWindow = null;
         }
@@ -674,7 +810,8 @@ sealed class Widget : LayeredWindow
 
         Store.Save(_s);
         RegisterHotkeys();
-        if (!_s.WakeWord) { _wake?.Dispose(); _wake = null; }
+        SetupKeys();
+        EndLive("ajustes cambiados");
         _ = StartMcpAsync();
         ApplyAutostart();
         StopListening();
@@ -804,14 +941,11 @@ sealed class Widget : LayeredWindow
         var kicking = !Spring.Settled(_clock.Elapsed.TotalMilliseconds - _kickAt, 420, 0.32);
         var still = _mode is Mode.Paused or Mode.Problem && _level < 0.01 && _caption.Length == 0 && !kicking;
         _frame.Interval = still ? 120 : FrameMs;
-        CheckSilence();
-        MaybeSleep();
-        // Dormida y sin nada que contar, la onda se desvanece; al despertar vuelve subiendo un poco.
-        var shown = !_s.WakeWord || _wake is null || _awake || _agent.Busy || !_listening || _settingsOpen
+        MaybeEndLive();
+        // Sin nada que hacer ni contar, la onda se desvanece; con el atajo vuelve subiendo un poco.
+        var shown = _holding is not null || _agent.Busy || _live is not null || !_listening || _settingsOpen
             || _mode == Mode.Problem || _caption.Length > 0;
         _presence += ((shown ? 1 : 0) - _presence) * Ease(shown ? 0.22 : 0.12);
-        // Dormida no queda nada a la vista, tampoco el icono de la bandeja; vuelve con «Luna» o el atajo.
-        if (_tray.Visible != (shown || _presence > 0.02)) _tray.Visible = shown || _presence > 0.02;
         if (!shown && _presence < 0.02)
         {
             _presence = 0;
@@ -820,18 +954,6 @@ sealed class Widget : LayeredWindow
             return;
         }
         Render();
-    }
-
-    /// <summary>Si el micrófono no entrega nada de sonido, se dice en lugar de quedarse callado.</summary>
-    void CheckSilence()
-    {
-        if (!_listening || _settingsOpen) return;
-        var now = DateTime.Now;
-        var quietFor = (now - (_lastSound > _listenSince ? _lastSound : _listenSince)).TotalSeconds;
-        if (quietFor < 12 || (now - _lastSilenceWarning).TotalSeconds < 45) return;
-        _lastSilenceWarning = now;
-        Log.Write($"audio: {quietFor:0} s sin sonido de «{_mic.DeviceName}»");
-        Say($"No me llega sonido de «{_mic.DeviceName}». Revisa el micrófono en Ajustes › Voz.", Theme.Danger, 7000);
     }
 
     void Kick(double power)
@@ -867,24 +989,14 @@ sealed class Widget : LayeredWindow
 
     // ───────────────────────── atajos
 
-    const int HotToggle = 1, HotStop = 2, HotWake = 3;
+    const int HotToggle = 1, HotStop = 2;
 
     void RegisterHotkeys()
     {
-        Native.UnregisterHotKey(Handle, HotWake);
-        if (Colo.Core.Keys.Hotkey(_s.WakeHotkey, out var mods, out var vk)
-            && !Native.RegisterHotKey(Handle, HotWake, mods | Native.MOD_NOREPEAT, vk))
-            Log.Write($"atajo: «{_s.WakeHotkey}» ya lo usa otro programa");
+        Native.UnregisterHotKey(Handle, HotToggle);
+        Native.UnregisterHotKey(Handle, HotStop);
         Native.RegisterHotKey(Handle, HotToggle, Native.MOD_CONTROL | Native.MOD_ALT | Native.MOD_NOREPEAT, 0x20);
         Native.RegisterHotKey(Handle, HotStop, Native.MOD_CONTROL | Native.MOD_ALT | Native.MOD_NOREPEAT, 0x58);
-    }
-
-    /// <summary>El atajo: despierta y escucha sin decir «Luna» (si estaba en pausa, también vuelve a escuchar).</summary>
-    void WakeByKey()
-    {
-        if (!_listening) _ = StartListeningAsync();
-        Wake("atajo " + _s.WakeHotkey);
-        Say("Te escucho", Theme.Muted, 1400);
     }
 
     protected override void WndProc(ref Message m)
@@ -893,7 +1005,6 @@ sealed class Widget : LayeredWindow
         {
             if (m.WParam == HotToggle) ToggleListening();
             else if (m.WParam == HotStop) _agent.Stop();
-            else if (m.WParam == HotWake) WakeByKey();
         }
         base.WndProc(ref m);
     }
@@ -902,7 +1013,9 @@ sealed class Widget : LayeredWindow
     {
         Native.UnregisterHotKey(Handle, HotToggle);
         Native.UnregisterHotKey(Handle, HotStop);
-        Native.UnregisterHotKey(Handle, HotWake);
+        _keys?.Dispose();
+        EndLive("salir");
+        _livePlayer?.Dispose();
         _frame.Stop();
         _agent.Stop();
         _mic.Dispose();

@@ -1,22 +1,28 @@
 # Colo
 
-Controla el PC con Windows hablando, sin manos. Una onda blanca flotante, siempre encima,
-escucha todo el tiempo; cada frase se ejecuta al terminar de decirla. Un cursor azul muestra
-dónde va a hacer clic y qué está haciendo.
+Controla el PC con Windows hablando. Mantienes un atajo (por defecto `Ctrl+Win`), hablas y sueltas: transcribe
+y lo hace. Una onda blanca aparece mientras hablas o trabaja y se va sola. Un cursor azul muestra dónde va a
+hacer clic y qué está haciendo.
 
 - **Movimiento**: el ratón real y el cursor azul se deslizan juntos al ritmo del monitor (DwmFlush), con curva de
   jerk mínimo y un arco leve (`Motion`). Todo lo que aparece entra con muelle (`Spring`): la flecha rebota al
   aparecer, la etiqueta se estira al texto nuevo, el clic hunde la flecha y suelta ondas y chispas; la onda es una
   gota de vidrio que se aplasta y estira al cambiar de estado, y la frase sube con rebote.
-- **Escucha con calma**: si la orden quedó a medias («escribe algo como…» y una pausa), el modelo llama a `listen`
-  y espera la frase siguiente (7 s) para juntarlas en vez de actuar o ignorar.
+- **Atajos que se mantienen**: dos teclas cualesquiera, también dos letras cercanas (se aprieta una y luego la otra);
+  una letra del atajo se retiene al bajar y, si no llega la otra, se reenvía tal cual. Con otra tecla encima
+  (Ctrl+Win+D) era otro atajo y no transcribe. Opcional: un atajo de **dictar** que escribe la transcripción tal
+  cual donde está el cursor, sin el modelo. Sin él, el modelo usa `dictate` y escribe lo dictado corregido y con tu tono.
+- **Parar**: si hablas a mitad de una tarea, el paso en curso se corta y el modelo lee lo nuevo antes de seguir;
+  «para», «déjalo» → `stop`, sin tocar nada más.
+- **GPT-Live** (opcional): conversación en vivo por WebSocket (`/openai/v1/live/sessions`). Mantener el atajo
+  abre el micrófono (y la llamada si no hay); soltarlo lo silencia pero la llamada sigue. Lo que haya que hacer en
+  el PC, GPT-Live lo delega en Colo (delegación al cliente) y dice el resultado con su voz; cuelga sola cuando la
+  tarea terminó y lleva 8 s callada.
 
-- **Voz**: detector por volumen + una de tres transcripciones: Whisper en el propio PC (base o small, sin tokens,
-  con glosario y los programas abiertos como pista), el modelo de transcripción de OpenAI/Foundry, o ElevenLabs Scribe.
-- **«Luna»**: dormida no se ve nada (ni la onda ni el icono de la bandeja) y solo un detector local oye su nombre (el de la Luna del celular:
-  openWakeWord + clasificador entrenado con «luna» de personas reales; ONNX Runtime, ~3 MB). Al oír «Luna» o
-  el atajo (Ctrl+Alt+L, se cambia en Ajustes) aparece y atiende; vuelve a dormir tras 45 s sin hablarle.
-  Dormida no transcribe ni manda nada al modelo. Se puede volver a «Siempre escuchando» en Ajustes › Voz.
+- **Voz**: lo dicho con el atajo apretado (más 300 ms de antes) va a una de tres transcripciones: Whisper en el
+  propio PC (base o small, sin tokens), el modelo de transcripción de OpenAI/Foundry (p. ej. gpt-4o-mini-transcribe)
+  o ElevenLabs Scribe. Todas con el idioma fijo; Whisper y la API, además, con un glosario y los programas abiertos.
+  La API y GPT-Live pueden usar otra conexión (endpoint y llave) que la del modelo.
 - **Respuestas habladas** (opcional): ElevenLabs v4 con etiquetas de emoción ([laughs], [warmly]…) que la voz
   interpreta y no se ven en pantalla, o la voz de Windows. El micrófono se pausa mientras habla.
 - **Contexto**: recuerda los últimos pedidos y lo que hizo en cada uno («ahí no, en la barra»); se olvida solo
@@ -24,6 +30,8 @@ dónde va a hacer clic y qué está haciendo.
 - **Memoria**: con remember/forget el modelo guarda lo que aprende de ti (cómo llamas a tus cosas, qué app usas)
   y lo usa otros días (`%APPDATA%\Colo\memory.json`; se ve y se borra en Ajustes › General).
 - **Cada turno** lleva las demás ventanas abiertas y qué campo tiene el foco y qué pestaña está activa.
+- **Caché**: instrucciones y tools van primero e iguales en cada paso, luego memoria y pedidos anteriores, y al
+  final la pantalla; con `prompt_cache_key` fijo el proveedor reutiliza el prefijo.
 - **Económico**: las acciones traen un campo `done` opcional; si con la última acción el pedido queda hecho,
   termina sin otra llamada al modelo (una orden simple = una llamada). Tope de 25 pasos por orden.
 - **Tokens**: el menú de la onda muestra los de hoy y el total (`%APPDATA%\Colo\usage.json`); el registro, los de cada orden.
@@ -46,8 +54,9 @@ dónde va a hacer clic y qué está haciendo.
 `Colo.exe` en Releases: un solo archivo, trae .NET dentro, no instala nada ni pide admin.
 
 Uso: clic en la onda = pausar/seguir · arrastrar = mover · clic derecho = menú y Ajustes.
-Atajos: `Ctrl+Alt+L` hablarle sin decir «Luna», `Ctrl+Alt+Espacio` pausar/escuchar, `Ctrl+Alt+X` detener la tarea.
-Ajustes en `%APPDATA%\Colo\settings.json` (la API key va cifrada con DPAPI).
+Atajos: mantener `Ctrl+Win` para hablarle (se cambia en Ajustes › Voz), `Ctrl+Alt+Espacio` pausar/seguir,
+`Ctrl+Alt+X` detener la tarea.
+Ajustes en `%APPDATA%\Colo\settings.json` (las API keys van cifradas con DPAPI).
 
 ## Compilar (desde Linux o Windows)
 

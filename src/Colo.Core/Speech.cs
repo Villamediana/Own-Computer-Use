@@ -71,8 +71,9 @@ public sealed class SpeechModels(string dir, string? bundledDir = null)
 }
 
 /// <summary>
-/// Micrófono siempre abierto: recibe PCM 16 kHz y entrega cada frase al terminar (detector por volumen
-/// con piso de ruido adaptativo; con un headset la voz está muy por encima del ruido).
+/// Recibe el PCM 16 kHz del micrófono. Con el atajo, guarda lo que se dice mientras está apretado
+/// (<see cref="BeginTake"/> / <see cref="EndTake"/>, con 300 ms de antes para no comerse la primera sílaba).
+/// El detector por volumen (piso de ruido adaptativo) corta frases solas para la prueba del micrófono.
 /// </summary>
 public sealed class Listener : IDisposable
 {
@@ -84,6 +85,11 @@ public sealed class Listener : IDisposable
     bool _speaking, _disposed;
 
     public bool Muted { get; set; }
+    /// <summary>false = sin detector por volumen: las frases solo salen del atajo.</summary>
+    public bool Detect { get; set; } = true;
+    const int Preroll = Rate * 3 / 10;
+    readonly Queue<short> _recent = new();
+    List<short>? _take;
     public event Action<float[]>? Utterance;
     public event Action<bool>? SpeakingChanged;
     public event Action<double>? Level;
@@ -103,7 +109,17 @@ public sealed class Listener : IDisposable
         lock (_lock)
         {
             if (_disposed) return;
-            if (Muted)
+            if (_take is not null)
+            {
+                foreach (var s in pcm) _take.Add(s);
+                return;
+            }
+            foreach (var s in pcm)
+            {
+                _recent.Enqueue(s);
+                if (_recent.Count > Preroll) _recent.Dequeue();
+            }
+            if (Muted || !Detect)
             {
                 ResetLocked();
                 return;
@@ -118,6 +134,30 @@ public sealed class Listener : IDisposable
                 }
                 if (phrase is not null) Utterance?.Invoke(phrase.Samples);
             }
+        }
+    }
+
+    /// <summary>Empieza a guardar todo lo que llega (aunque esté en silencio), con lo de los últimos 300 ms.</summary>
+    public void BeginTake()
+    {
+        lock (_lock)
+        {
+            _take = [.. _recent];
+            _recent.Clear();
+            ResetLocked();
+        }
+    }
+
+    public bool Taking { get { lock (_lock) return _take is not null; } }
+
+    /// <summary>Lo guardado desde <see cref="BeginTake"/>; vacío si no se estaba guardando.</summary>
+    public float[] EndTake()
+    {
+        lock (_lock)
+        {
+            var take = _take;
+            _take = null;
+            return take is null ? [] : take.Select(v => v / 32768f).ToArray();
         }
     }
 
@@ -161,7 +201,7 @@ public sealed class LocalStt : IDisposable
     {
         var names = apps.Where(a => a.Length > 1).Select(a => char.ToUpperInvariant(a[0]) + a[1..])
             .Distinct(StringComparer.OrdinalIgnoreCase).Take(12);
-        return "Glosario: Luna, pestaña, aba, guía, navegador, barra de direcciones, endereço, URL, escribe, escreve, clic, clica, "
+        return "Glosario: pestaña, aba, guía, navegador, barra de direcciones, endereço, URL, escribe, escreve, clic, clica, "
             + string.Join(", ", names) + ".";
     }
 

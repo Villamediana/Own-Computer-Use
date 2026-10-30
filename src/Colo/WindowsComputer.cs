@@ -307,6 +307,10 @@ sealed class WindowsComputer : IComputer
                 if (c.Bool("submit")) { await Task.Delay(30, ct); Input.Combo(Colo.Core.Keys.Parse("enter")); }
                 return "ok";
             }
+            case "dictate":
+                Cursor?.Say("Escribiendo…");
+                Input.Type(c.Str("text"));
+                return "ok";
             case "drag":
             {
                 if (!Target(c, out var from, out var err, "from_")) return err;

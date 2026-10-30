@@ -15,6 +15,7 @@ public static class Keys
         ["tab"] = new(0x09, false),
         ["esc"] = new(0x1B, false), ["escape"] = new(0x1B, false),
         ["space"] = new(0x20, false), ["espacio"] = new(0x20, false),
+        ["mayús"] = new(0x10, false), ["mayus"] = new(0x10, false),
         ["backspace"] = new(0x08, false),
         ["delete"] = new(0x2E, true), ["del"] = new(0x2E, true), ["supr"] = new(0x2E, true),
         ["insert"] = new(0x2D, true),
@@ -51,6 +52,31 @@ public static class Keys
         catch (ArgumentException) { return false; }
         return vk != 0 && mods != 0;
     }
+
+    static readonly HashSet<ushort> Modifiers = [0x11, 0x10, 0x12, 0x5B];
+
+    /// <summary>
+    /// Atajo que se mantiene apretado: dos teclas distintas o más, cualesquiera («Ctrl+Win», «J+K», «Alt+Espacio»).
+    /// </summary>
+    public static bool Hold(string combo, out HashSet<ushort> vks)
+    {
+        vks = [];
+        try { foreach (var k in Parse(combo)) vks.Add(k.Vk); }
+        catch (ArgumentException) { return false; }
+        return vks.Count >= 2;
+    }
+
+    /// <summary>Izquierda/derecha de los modificadores (LCtrl, RAlt, RWin…) → la tecla genérica.</summary>
+    public static ushort Generic(ushort vk) => vk switch
+    {
+        0xA2 or 0xA3 => 0x11,
+        0xA0 or 0xA1 => 0x10,
+        0xA4 or 0xA5 => 0x12,
+        0x5C => 0x5B,
+        _ => vk,
+    };
+
+    public static bool IsModifier(ushort vk) => Modifiers.Contains(Generic(vk));
 
     public static List<KeyStroke> Parse(string combo)
     {

@@ -26,6 +26,18 @@ public sealed class Settings
     /// <summary>Idioma en que hablas: «es», «pt», «en» o «auto».</summary>
     public string Language { get; set; } = "es";
     public string TranscribeModel { get; set; } = "";
+    /// <summary>
+    /// Conexión propia para la voz (transcripción por API y GPT-Live). false = la misma del modelo.
+    /// </summary>
+    public bool VoiceOwn { get; set; }
+    public Provider VoiceProvider { get; set; } = Provider.Azure;
+    public string VoiceEndpoint { get; set; } = "";
+    public string VoiceKey { get; set; } = "";
+    /// <summary>Conversación en vivo con GPT-Live: habla, delega las tareas en Colo y responde con su voz.</summary>
+    public bool Live { get; set; }
+    /// <summary>Deployment (Foundry) o modelo (OpenAI) de GPT-Live.</summary>
+    public string LiveModel { get; set; } = "gpt-live-1";
+    public string LiveVoice { get; set; } = "marin";
     public string ElevenLabsKey { get; set; } = "";
     public string ElevenLabsModel { get; set; } = "scribe_v2";
     /// <summary>"" = no se envía (modelos sin razonamiento).</summary>
@@ -33,10 +45,10 @@ public sealed class Settings
     public int Sensitivity { get; set; } = 6;
     /// <summary>ID del micrófono en Windows (WASAPI); vacío = el predeterminado.</summary>
     public string MicId { get; set; } = "";
-    /// <summary>Solo atiende tras oír «Luna» (o el atajo) y vuelve a dormir tras 45 s sin hablarle.</summary>
-    public bool WakeWord { get; set; } = true;
-    /// <summary>Atajo para despertarla sin decir «Luna».</summary>
-    public string WakeHotkey { get; set; } = "Ctrl+Alt+L";
+    /// <summary>Teclas que se mantienen apretadas para hablarle (al soltar, transcribe y actúa).</summary>
+    public string TalkHotkey { get; set; } = "Ctrl+Win";
+    /// <summary>Atajo para dictar: transcribe y escribe tal cual donde está el cursor, sin el modelo. Vacío = apagado.</summary>
+    public string DictateHotkey { get; set; } = "";
     public bool SpeakReplies { get; set; }
     public ReplyVoice ReplyVoice { get; set; } = ReplyVoice.ElevenLabs;
     public string ElevenVoiceId { get; set; } = "";

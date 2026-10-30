@@ -29,6 +29,7 @@ static class Store
         public Settings Settings { get; set; } = new();
         public string? Key { get; set; }
         public string? ElevenKey { get; set; }
+        public string? VoiceKey { get; set; }
     }
 
     static readonly JsonSerializerOptions Pretty = new() { WriteIndented = true };
@@ -54,9 +55,16 @@ static class Store
         s.TranscribeModel ??= "";
         s.ReasoningEffort ??= "low";
         s.ElevenLabsModel ??= "scribe_v2";
+        s.VoiceEndpoint ??= "";
+        s.LiveModel ??= "gpt-live-1";
+        s.LiveVoice ??= "marin";
+        if (!Colo.Core.Keys.Hold(s.TalkHotkey ?? "", out _)) s.TalkHotkey = "Ctrl+Win";
+        if (!string.IsNullOrEmpty(s.DictateHotkey) && !Colo.Core.Keys.Hold(s.DictateHotkey, out _)) s.DictateHotkey = "";
+        s.DictateHotkey ??= "";
         // Si una key no se puede descifrar (otro usuario de Windows), se pierde solo esa key, no los ajustes.
         s.ApiKey = Unprotect(saved?.Key);
         s.ElevenLabsKey = Unprotect(saved?.ElevenKey);
+        s.VoiceKey = Unprotect(saved?.VoiceKey);
         return s;
     }
 
@@ -80,9 +88,10 @@ static class Store
         {
             Directory.CreateDirectory(Dir);
             var copy = JsonSerializer.Deserialize<Settings>(JsonSerializer.Serialize(s))!;
-            var saved = new Saved { Settings = copy, Key = Protect(copy.ApiKey), ElevenKey = Protect(copy.ElevenLabsKey) };
+            var saved = new Saved { Settings = copy, Key = Protect(copy.ApiKey), ElevenKey = Protect(copy.ElevenLabsKey), VoiceKey = Protect(copy.VoiceKey) };
             copy.ApiKey = "";
             copy.ElevenLabsKey = "";
+            copy.VoiceKey = "";
             var tmp = FilePath + ".tmp";
             File.WriteAllText(tmp, JsonSerializer.Serialize(saved, Pretty));
             File.Move(tmp, FilePath, overwrite: true);
@@ -356,22 +365,64 @@ sealed class Speaker : IDisposable
         Stop();
         _tts.Dispose();
     }
+}
 
-    /// <summary>Mono repetido en cada canal del altavoz.</summary>
-    sealed class Fan(ISampleProvider mono, int channels) : ISampleProvider
+/// <summary>Mono repetido en cada canal del altavoz.</summary>
+sealed class Fan(ISampleProvider mono, int channels) : ISampleProvider
+{
+    float[] _buf = [];
+    public WaveFormat WaveFormat { get; } = WaveFormat.CreateIeeeFloatWaveFormat(mono.WaveFormat.SampleRate, channels);
+
+    public int Read(float[] buffer, int offset, int count)
     {
-        float[] _buf = [];
-        public WaveFormat WaveFormat { get; } = WaveFormat.CreateIeeeFloatWaveFormat(mono.WaveFormat.SampleRate, channels);
+        var frames = count / channels;
+        if (_buf.Length < frames) _buf = new float[frames];
+        var n = mono.Read(_buf, 0, frames);
+        for (var i = 0; i < n; i++)
+            for (var c = 0; c < channels; c++)
+                buffer[offset + i * channels + c] = _buf[i];
+        return n * channels;
+    }
+}
 
-        public int Read(float[] buffer, int offset, int count)
-        {
-            var frames = count / channels;
-            if (_buf.Length < frames) _buf = new float[frames];
-            var n = mono.Read(_buf, 0, frames);
-            for (var i = 0; i < n; i++)
-                for (var c = 0; c < channels; c++)
-                    buffer[offset + i * channels + c] = _buf[i];
-            return n * channels;
-        }
+/// <summary>Voz de GPT-Live: va sonando lo que llega (PCM16 mono 24 kHz) y se corta al momento si le hablas.</summary>
+sealed class LivePlayer : IDisposable
+{
+    readonly BufferedWaveProvider _buffer = new(new WaveFormat(LiveCall.Rate, 16, 1))
+    {
+        BufferDuration = TimeSpan.FromMinutes(3),
+        DiscardOnBufferOverflow = true,
+        ReadFully = true,
+    };
+    readonly WasapiOut _out;
+
+    public LivePlayer()
+    {
+        using var devices = new MMDeviceEnumerator();
+        var device = devices.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+        var mix = device.AudioClient.MixFormat;
+        ISampleProvider samples = _buffer.ToSampleProvider();
+        if (mix.SampleRate != LiveCall.Rate) samples = new WdlResamplingSampleProvider(samples, mix.SampleRate);
+        _out = new WasapiOut(device, AudioClientShareMode.Shared, true, 80);
+        _out.Init(new SampleToWaveProvider(new Fan(samples, mix.Channels)));
+        _out.Play();
+    }
+
+    public void Add(byte[] pcm)
+    {
+        _buffer.AddSamples(pcm, 0, pcm.Length & ~1);
+        LastAudio = DateTime.Now;
+    }
+
+    /// <summary>Lo que falta por sonar.</summary>
+    public bool Playing => _buffer.BufferedBytes > 0;
+    public DateTime LastAudio { get; private set; } = DateTime.Now;
+
+    public void Flush() => _buffer.ClearBuffer();
+
+    public void Dispose()
+    {
+        try { _out.Stop(); } catch { }
+        _out.Dispose();
     }
 }
