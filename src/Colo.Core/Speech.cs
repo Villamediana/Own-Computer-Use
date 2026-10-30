@@ -90,6 +90,18 @@ public sealed class Listener : IDisposable
     const int Preroll = Rate * 3 / 10;
     readonly Queue<short> _recent = new();
     List<short>? _take;
+    // Trozos mientras se mantiene el atajo: en cada pausa (≥ 0,5 s tras ≥ 4 s) sale lo dicho hasta ahí, para
+    // ir transcribiéndolo; al soltar solo queda el último trozo y la espera no crece con lo largo que hablaste.
+    const int TakeFrame = Rate / 50, MinChunk = Rate * 4, PauseFrames = 25;
+    int _cut, _frameN, _silentRun, _voicedRun;
+    double _frameSum, _peakRms;
+    float _takePeak;
+
+    /// <summary>Un trozo de lo dicho con el atajo apretado, cortado en una pausa.</summary>
+    public event Action<float[]>? TakeChunk;
+    /// <summary>De la última toma entera (no solo el último trozo): duración y pico.</summary>
+    public double LastTakeSeconds { get; private set; }
+    public float LastTakePeak { get; private set; }
     public event Action<float[]>? Utterance;
     public event Action<bool>? SpeakingChanged;
     public event Action<double>? Level;
@@ -111,7 +123,7 @@ public sealed class Listener : IDisposable
             if (_disposed) return;
             if (_take is not null)
             {
-                foreach (var s in pcm) _take.Add(s);
+                foreach (var s in pcm) TakeSample(s);
                 return;
             }
             foreach (var s in pcm)
@@ -137,6 +149,28 @@ public sealed class Listener : IDisposable
         }
     }
 
+    void TakeSample(short s)
+    {
+        _take!.Add(s);
+        _takePeak = Math.Max(_takePeak, Math.Abs(s / 32768f));
+        _frameSum += (double)s * s;
+        if (++_frameN < TakeFrame) return;
+        var rms = Math.Sqrt(_frameSum / TakeFrame) / 32768.0;
+        _frameN = 0;
+        _frameSum = 0;
+        _peakRms = Math.Max(_peakRms, rms);
+        // Silencio relativo a lo fuerte que hablas en esta toma (el micrófono de cada uno es distinto).
+        if (rms < Math.Max(0.003, _peakRms * 0.12)) _silentRun++;
+        else { _silentRun = 0; _voicedRun++; }
+        if (_take.Count - _cut < MinChunk || _silentRun < PauseFrames || _voicedRun < PauseFrames) return;
+        var end = _take.Count - _silentRun * TakeFrame / 2;
+        var chunk = new float[end - _cut];
+        for (var i = 0; i < chunk.Length; i++) chunk[i] = _take[_cut + i] / 32768f;
+        _cut = end;
+        _voicedRun = 0;
+        TakeChunk?.Invoke(chunk);
+    }
+
     /// <summary>Empieza a guardar todo lo que llega (aunque esté en silencio), con lo de los últimos 300 ms.</summary>
     public void BeginTake()
     {
@@ -144,20 +178,27 @@ public sealed class Listener : IDisposable
         {
             _take = [.. _recent];
             _recent.Clear();
+            _cut = _frameN = _silentRun = _voicedRun = 0;
+            _frameSum = _peakRms = 0;
+            _takePeak = 0;
+            foreach (var v in _take) _takePeak = Math.Max(_takePeak, Math.Abs(v / 32768f));
             ResetLocked();
         }
     }
 
     public bool Taking { get { lock (_lock) return _take is not null; } }
 
-    /// <summary>Lo guardado desde <see cref="BeginTake"/>; vacío si no se estaba guardando.</summary>
+    /// <summary>Lo guardado desde el último trozo entregado (o desde <see cref="BeginTake"/>); vacío si no se estaba guardando.</summary>
     public float[] EndTake()
     {
         lock (_lock)
         {
             var take = _take;
             _take = null;
-            return take is null ? [] : take.Select(v => v / 32768f).ToArray();
+            if (take is null) return [];
+            LastTakeSeconds = take.Count / (double)Rate;
+            LastTakePeak = _takePeak;
+            return take.Skip(_cut).Select(v => v / 32768f).ToArray();
         }
     }
 

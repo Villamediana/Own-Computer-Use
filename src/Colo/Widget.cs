@@ -31,7 +31,11 @@ sealed class Widget : LayeredWindow
     readonly AiCursor _cursor = AiCursor.Create();
     readonly Mic _mic = new();
     readonly SpeechModels _models = new(Store.ModelsDir, System.IO.Path.Combine(AppContext.BaseDirectory, "models"));
-    readonly Channel<(float[] Samples, bool Dictate)> _phrases = Channel.CreateUnbounded<(float[], bool)>(new UnboundedChannelOptions { SingleReader = true });
+    // La toma en curso: los trozos ya mandados a transcribir, en orden (se van mandando en cada pausa).
+    readonly object _partsGate = new();
+    List<Task<string>>? _parts;
+    // Transcribiendo o escribiendo un dictado: la onda se queda con el spinner.
+    int _thinking;
     Speaker? _speaker;
     Listener? _listener;
     LocalStt? _stt;
@@ -101,7 +105,6 @@ sealed class Widget : LayeredWindow
         _mic.Failed += reason => Post(() => OnMicFailed(reason));
         _agent.Event += ev => Post(() => OnAgent(ev));
         BuildMenu();
-        _ = Task.Run(PhraseLoopAsync);
     }
 
     protected override bool ClickThrough => false;
@@ -342,6 +345,8 @@ sealed class Widget : LayeredWindow
         var l = _listener!;
         l.Level -= OnLevel;
         l.Level += OnLevel;
+        l.TakeChunk -= OnTakeChunk;
+        l.TakeChunk += OnTakeChunk;
         l.Raw -= OnRaw;
         l.Raw += OnRaw;
         _speaker ??= TryCreateSpeaker();
@@ -439,6 +444,7 @@ sealed class Widget : LayeredWindow
             StartLive();
             return;
         }
+        lock (_partsGate) _parts = [];
         _listener.BeginTake();
         Log.Write($"atajo: {(id == Talk ? "hablar" : "dictar")} apretado");
     }
@@ -469,6 +475,7 @@ sealed class Widget : LayeredWindow
         MicRelease();
         if (_live is not null && _listener?.Taking != true) { _live.Mute(); return; }
         _listener?.EndTake();
+        lock (_partsGate) _parts = null;
         Log.Write("atajo: cancelado (era otro atajo)");
     }
 
@@ -477,13 +484,77 @@ sealed class Widget : LayeredWindow
         MicRelease();
         // Ya volvió a apretar: lo de antes se junta con lo nuevo.
         if (_holding is not null || _listener is null) return;
-        var samples = _listener.EndTake();
-        var seconds = samples.Length / (double)Listener.Rate;
-        var peak = samples.Length == 0 ? 0 : samples.Max(Math.Abs);
-        Log.Write($"atajo: soltado · {seconds:0.0} s · pico {peak:0.000}");
+        var rest = _listener.EndTake();
+        List<Task<string>> parts;
+        lock (_partsGate)
+        {
+            parts = _parts ?? [];
+            _parts = null;
+        }
+        var seconds = _listener.LastTakeSeconds;
+        var peak = _listener.LastTakePeak;
+        Log.Write($"atajo: soltado · {seconds:0.0} s · pico {peak:0.000} · {parts.Count} trozos ya enviados");
         if (seconds < 0.5) { Say("Mantén las teclas mientras hablas", Theme.Muted, 2200); return; }
         if (peak < 0.003) { Say($"No me llega sonido de «{_mic.DeviceName}». Revisa el micrófono en Ajustes › Voz.", Theme.Danger, 6000); return; }
-        _phrases.Writer.TryWrite((samples, dictate));
+        if (rest.Length >= Listener.Rate / 5) parts.Add(TranscribeAsync(rest));
+        _ = CompleteTakeAsync(parts, dictate);
+    }
+
+    // Hilo de audio: una pausa mientras mantienes el atajo; ese trozo ya se transcribe.
+    void OnTakeChunk(float[] chunk)
+    {
+        lock (_partsGate)
+        {
+            if (_parts is null) return;
+            _parts.Add(TranscribeAsync(chunk));
+            Log.Write($"voz: trozo {_parts.Count} de {chunk.Length / 16000.0:0.0} s enviado mientras hablas");
+        }
+    }
+
+    Task<string> TranscribeAsync(float[] samples) => Task.Run(async () =>
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        string text;
+        if (_s.SpeechEngine == SpeechEngine.Local)
+        {
+            var stt = _stt ?? throw new InvalidOperationException("Whisper no está cargado");
+            stt.Prompt = Glossary();
+            text = stt.Transcribe(samples);
+        }
+        else if (_s.SpeechEngine == SpeechEngine.ElevenLabs)
+            text = await _eleven.TranscribeAsync(Wav.Encode(samples), CancellationToken.None);
+        else
+            text = await _ai.TranscribeAsync(Wav.Encode(samples), Glossary(), CancellationToken.None);
+        Log.Write($"voz: {samples.Length / 16000.0:0.0} s → «{text}» ({sw.ElapsedMilliseconds} ms)");
+        return text;
+    });
+
+    /// <summary>Junta los trozos en orden y hace lo que toca. Corre en el hilo de la interfaz.</summary>
+    async Task CompleteTakeAsync(List<Task<string>> parts, bool dictate)
+    {
+        if (parts.Count == 0) return;
+        _thinking++;
+        Say("Transcribiendo…", Theme.Muted, 30_000);
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            var text = string.Join(" ", (await Task.WhenAll(parts)).Select(t => t.Trim()).Where(t => t.Length > 0));
+            var ms = sw.ElapsedMilliseconds;
+            Log.Write($"voz: {parts.Count} trozo(s) → «{text}» · espera al soltar {ms} ms");
+            if (_caption == "Transcribiendo…") Say("", Theme.Muted, 0);
+            // Con Ajustes abierto es la prueba del micrófono: se muestra, no se ejecuta.
+            if (_settingsWindow is not null) { _settingsWindow.VoiceHeard(text, ms); return; }
+            // Una letra suelta («¡Y!», «Eh.») es ruido: ni se manda al modelo. «Sí» o «no» sí pasan.
+            if (text.Count(char.IsLetter) < 2) { if (text.Length > 0) Log.Write($"voz: descartado «{text}» (sin palabras)"); return; }
+            if (dictate) { await DictateNow(text, ms); return; }
+            Command(text);
+        }
+        catch (Exception ex)
+        {
+            Log.Write("voz: transcripción falló · " + ex);
+            Say(ex.Message, Theme.Danger, 5000);
+        }
+        finally { _thinking--; }
     }
 
     // ───────────────────────── GPT-Live
@@ -629,48 +700,6 @@ sealed class Widget : LayeredWindow
 
     void VoiceStatus(string text) => _settingsWindow?.VoiceStatus(text);
 
-    async Task PhraseLoopAsync()
-    {
-        await foreach (var (samples, dictate) in _phrases.Reader.ReadAllAsync())
-        {
-            try
-            {
-                var sw = System.Diagnostics.Stopwatch.StartNew();
-                string text;
-                if (_s.SpeechEngine == SpeechEngine.Local)
-                {
-                    if (_stt is null) { Log.Write("voz: frase descartada, Whisper no está cargado"); continue; }
-                    _stt.Prompt = Glossary();
-                    text = _stt.Transcribe(samples);
-                }
-                else if (_s.SpeechEngine == SpeechEngine.ElevenLabs)
-                {
-                    text = await _eleven.TranscribeAsync(Wav.Encode(samples), CancellationToken.None);
-                }
-                else
-                {
-                    text = await _ai.TranscribeAsync(Wav.Encode(samples), Glossary(), CancellationToken.None);
-                }
-                var ms = sw.ElapsedMilliseconds;
-                Log.Write($"voz: {samples.Length / 16000.0:0.0} s → «{text}» ({ms} ms)");
-                Post(() =>
-                {
-                    // Con Ajustes abierto es la prueba del micrófono: se muestra, no se ejecuta.
-                    if (_settingsWindow is not null) { _settingsWindow.VoiceHeard(text, ms); return; }
-                    // Una letra suelta («¡Y!», «Eh.») es ruido: ni se manda al modelo. «Sí» o «no» sí pasan.
-                    if (text.Count(char.IsLetter) < 2) { if (text.Length > 0) Log.Write($"voz: descartado «{text}» (sin palabras)"); return; }
-                    if (dictate) { DictateNow(text, ms); return; }
-                    Command(text);
-                });
-            }
-            catch (Exception ex)
-            {
-                Log.Write("voz: transcripción falló · " + ex);
-                Post(() => Say(ex.Message, Theme.Danger, 5000));
-            }
-        }
-    }
-
     /// <summary>Glosario para la transcripción: palabras de las órdenes y los programas abiertos.</summary>
     static string Glossary() => LocalStt.PromptFor(Native.AppWindows().Select(Native.ProcessName));
 
@@ -678,7 +707,7 @@ sealed class Widget : LayeredWindow
     /// Atajo de dictar: el modelo lo deja escrito con tu tono y va donde está el cursor. Se escribe a medida que
     /// llega (no espera la respuesta entera) y, mientras tanto, se busca dónde escribir.
     /// </summary>
-    async void DictateNow(string heard, long sttMs)
+    async Task DictateNow(string heard, long sttMs)
     {
         Say("Escribiendo…", Theme.Muted, 8000);
         var window = Native.WindowLabel(Native.GetForegroundWindow());
@@ -1029,7 +1058,7 @@ sealed class Widget : LayeredWindow
         _frame.Interval = still ? 120 : FrameMs;
         MaybeEndLive();
         // Sin nada que hacer ni contar, la onda se desvanece; con el atajo vuelve subiendo un poco.
-        var shown = _holding is not null || _agent.Busy || _live is not null || !_listening || _settingsOpen
+        var shown = _holding is not null || _thinking > 0 || _agent.Busy || _live is not null || !_listening || _settingsOpen
             || _mode == Mode.Problem || _caption.Length > 0;
         _presence += ((shown ? 1 : 0) - _presence) * Ease(shown ? 0.22 : 0.12);
         if (!shown && _presence < 0.02)
@@ -1055,6 +1084,7 @@ sealed class Widget : LayeredWindow
         _painter.Level = _level;
         _painter.T = _t;
         _painter.Energy = _energy;
+        _painter.Spinning = _thinking > 0 && _holding is null;
         var left = (_captionUntil - DateTime.Now).TotalMilliseconds;
         if (_caption.Length > 0 && left <= 0) _caption = "";
         _painter.Caption = _caption;

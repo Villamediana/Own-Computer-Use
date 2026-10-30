@@ -1051,4 +1051,24 @@ public class CoreTests(ITestOutputHelper output)
         Assert.Equal("[Teams]\neh felipeee vienes mañana", body["input"]![0]!["content"]![0]!["text"]!.GetValue<string>());
         Assert.Equal("none", body["reasoning"]!["effort"]!.GetValue<string>());
     }
+
+    [Fact]
+    public void Long_take_is_cut_at_pauses_so_it_transcribes_while_you_talk()
+    {
+        using var l = new Listener(6) { Detect = false };
+        var chunks = new List<float[]>();
+        l.TakeChunk += chunks.Add;
+        short[] Voice(double sec) => Enumerable.Range(0, (int)(sec * 16000)).Select(i => (short)(9000 * Math.Sin(i * 0.3))).ToArray();
+        short[] Quiet(double sec) => new short[(int)(sec * 16000)];
+        l.BeginTake();
+        foreach (var part in new[] { Voice(2), Quiet(0.3), Voice(2.5), Quiet(0.7), Voice(3), Quiet(0.3), Voice(1) })
+            for (var i = 0; i < part.Length; i += 640) l.Feed(part.AsSpan(i, Math.Min(640, part.Length - i)));
+        var rest = l.EndTake();
+        // Una pausa corta (0,3 s) no corta; la de 0,7 s tras 4,8 s sí. Lo que sigue queda para el final.
+        Assert.Single(chunks);
+        Assert.InRange(chunks[0].Length / 16000.0, 4.8, 5.3);
+        Assert.InRange(rest.Length / 16000.0, 4.4, 5.0);
+        Assert.InRange(l.LastTakeSeconds, 9.7, 9.9);
+        Assert.True(l.LastTakePeak > 0.2f);
+    }
 }

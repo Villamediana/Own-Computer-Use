@@ -23,6 +23,8 @@ sealed class WavePainter
     public float CaptionRise, CaptionScale = 1;
     /// <summary>Gota que se aplasta y estira: &gt;0 más ancha y baja, &lt;0 más alta y estrecha.</summary>
     public float Squash;
+    /// <summary>Transcribiendo o escribiendo: la onda queda baja y un arco da vueltas encima.</summary>
+    public bool Spinning;
 
     public static RectangleF PillRect(float s) =>
         new((CanvasW - PillW) / 2f * s, (CanvasH - PillH - 14) * s, PillW * s, PillH * s);
@@ -52,6 +54,7 @@ sealed class WavePainter
             DrawGlass(g, pill, body, s);
         }
         DrawWave(g, pill, s);
+        if (Spinning) DrawSpinner(g, pill, s);
         g.Restore(state);
         DrawCaption(g, pill, s);
         return bmp;
@@ -182,6 +185,23 @@ sealed class WavePainter
             using var pen = new Pen(Color.FromArgb((int)(255 * alpha), c), pw * s) { LineJoin = LineJoin.Round, StartCap = LineCap.Round, EndCap = LineCap.Round };
             g.DrawCurve(pen, pts, 0.4f);
         }
+    }
+
+    /// <summary>Arco azul que da vueltas en el centro, con un disco de vidrio detrás para que la onda no lo tape.</summary>
+    void DrawSpinner(Graphics g, RectangleF pill, float s)
+    {
+        var cx = pill.X + pill.Width / 2;
+        var cy = pill.Y + pill.Height / 2;
+        var r = 8.5f * s;
+        using (var back = new SolidBrush(Color.FromArgb(235, 255, 255, 255)))
+            g.FillEllipse(back, cx - r - 4 * s, cy - r - 4 * s, (r + 4 * s) * 2, (r + 4 * s) * 2);
+        using (var track = new Pen(Color.FromArgb(40, 37, 99, 235), 2.2f * s))
+            g.DrawEllipse(track, cx - r, cy - r, r * 2, r * 2);
+        // Gira a ritmo constante y el arco se estira y encoge, como los de Windows.
+        var start = (float)(T * 300 % 360);
+        var sweep = (float)(70 + 160 * (0.5 + 0.5 * Math.Sin(T * 3.1)));
+        using var arc = new Pen(Color.FromArgb(37, 99, 235), 2.4f * s) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+        g.DrawArc(arc, cx - r, cy - r, r * 2, r * 2, start, sweep);
     }
 
     /// <summary>Texto discreto sobre la onda: pequeño, en cursiva, gris y casi transparente, sin caja.</summary>
