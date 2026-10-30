@@ -1034,4 +1034,21 @@ public class CoreTests(ITestOutputHelper output)
         Assert.Equal(a["instructions"]!.ToJsonString(), b["instructions"]!.ToJsonString());
         Assert.Equal(a["tools"]!.ToJsonString(), b["tools"]!.ToJsonString());
     }
+
+    [Fact]
+    public async Task Dictation_hotkey_polishes_with_the_model_before_typing()
+    {
+        var item = """{"type":"message","content":[{"type":"output_text","text":" Felipeee, ¿vienes mañana? "}]}""";
+        var sse = $"data: {{\"type\":\"response.output_item.done\",\"item\":{item}}}\n\ndata: {{\"type\":\"response.completed\",\"response\":{{}}}}\n\n";
+        var h = new FakeHandler((_, _) => (HttpStatusCode.OK, sse));
+        var s = Azure();
+        var text = await Dictation.PolishAsync(new AiClient(s, new HttpClient(h)), s, "eh felipeee vienes mañana", "Teams", default);
+        Assert.Equal("Felipeee, ¿vienes mañana?", text);
+        var body = JsonNode.Parse(h.Seen[0].Body)!;
+        Assert.Equal("colo-dictado", body["prompt_cache_key"]!.GetValue<string>());
+        Assert.Equal(Dictation.Instructions, body["instructions"]!.GetValue<string>());
+        Assert.Null(body["tools"]);
+        Assert.Equal("[Teams]\neh felipeee vienes mañana", body["input"]![0]!["content"]![0]!["text"]!.GetValue<string>());
+        Assert.Equal("none", body["reasoning"]!["effort"]!.GetValue<string>());
+    }
 }

@@ -47,7 +47,7 @@ public sealed class Settings
     public string MicId { get; set; } = "";
     /// <summary>Teclas que se mantienen apretadas para hablarle (al soltar, transcribe y actúa).</summary>
     public string TalkHotkey { get; set; } = "Ctrl+Win";
-    /// <summary>Atajo para dictar: transcribe y escribe tal cual donde está el cursor, sin el modelo. Vacío = apagado.</summary>
+    /// <summary>Atajo para dictar: transcribe, el modelo lo pule con tu tono y lo escribe donde está el cursor. Vacío = apagado.</summary>
     public string DictateHotkey { get; set; } = "";
     public bool SpeakReplies { get; set; }
     public ReplyVoice ReplyVoice { get; set; } = ReplyVoice.ElevenLabs;

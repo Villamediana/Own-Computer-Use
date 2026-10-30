@@ -10,8 +10,9 @@ hacer clic y qué está haciendo.
   gota de vidrio que se aplasta y estira al cambiar de estado, y la frase sube con rebote.
 - **Atajos que se mantienen**: dos teclas cualesquiera, también dos letras cercanas (se aprieta una y luego la otra);
   una letra del atajo se retiene al bajar y, si no llega la otra, se reenvía tal cual. Con otra tecla encima
-  (Ctrl+Win+D) era otro atajo y no transcribe. Opcional: un atajo de **dictar** que escribe la transcripción tal
-  cual donde está el cursor, sin el modelo. Sin él, el modelo usa `dictate` y escribe lo dictado corregido y con tu tono.
+  (Ctrl+Win+D) era otro atajo y no transcribe. Opcional: un atajo de **dictar**: transcribe, una llamada corta al
+  modelo (sin herramientas ni pantalla) lo corrige con tu tono y se escribe donde está el cursor. Sin él, el
+  modelo decide cuándo es un dictado y usa `dictate`.
 - **Parar**: si hablas a mitad de una tarea, el paso en curso se corta y el modelo lee lo nuevo antes de seguir;
   «para», «déjalo» → `stop`, sin tocar nada más.
 - **GPT-Live** (opcional): conversación en vivo por WebSocket (`/openai/v1/live/sessions`). Mantener el atajo

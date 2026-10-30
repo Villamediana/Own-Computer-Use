@@ -674,13 +674,25 @@ sealed class Widget : LayeredWindow
     /// <summary>Glosario para la transcripción: palabras de las órdenes y los programas abiertos.</summary>
     static string Glossary() => LocalStt.PromptFor(Native.AppWindows().Select(Native.ProcessName));
 
-    /// <summary>Atajo de dictar: lo transcrito, tal cual, donde está el cursor (sin el modelo).</summary>
-    void DictateNow(string text)
+    /// <summary>Atajo de dictar: el modelo lo deja escrito con tu tono y va donde está el cursor.</summary>
+    async void DictateNow(string heard)
     {
-        Log.Write($"dicta: «{text}»");
-        Say("«" + text + "»", Theme.Muted, 1500 + text.Length * 30);
-        try { Input.Type(text); }
-        catch (Exception ex) { Say(ex.Message, Theme.Danger, 5000); }
+        Say("Escribiendo…", Theme.Muted, 8000);
+        var window = Native.WindowLabel(Native.GetForegroundWindow());
+        try
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var text = await Task.Run(() => Dictation.PolishAsync(_ai, _s, heard, window, CancellationToken.None));
+            Log.Write($"dicta: «{heard}» → «{text}» ({sw.ElapsedMilliseconds} ms) en «{window}»");
+            if (text.Length == 0) { Say("", Theme.Muted, 0); return; }
+            Say("«" + text + "»", Theme.Muted, 1500 + text.Length * 30);
+            Input.Type(text);
+        }
+        catch (Exception ex)
+        {
+            Log.Write("dicta: falló · " + ex.Message);
+            Say("No pude escribir el dictado: " + ex.Message, Theme.Danger, 6000);
+        }
     }
 
     /// <summary>Lo que se ejecuta al oír una frase (también lo usa la prueba de punta a punta).</summary>
