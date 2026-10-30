@@ -194,6 +194,33 @@ static class Desktop
         return $"«{name}» (el campo más cercano)";
     }
 
+    /// <summary>
+    /// Abre un programa instalado por su nombre como sale en Inicio (también los de la Store, como WhatsApp, que
+    /// no tienen un .exe que se pueda llamar por nombre). null = no hay ninguno con ese nombre.
+    /// </summary>
+    public static string? OpenStartApp(string name)
+    {
+        var want = WindowsComputer.Fold(name.Trim());
+        if (want.Length == 0) return null;
+        var found = Sta(() =>
+        {
+            var shell = Activator.CreateInstance(Type.GetTypeFromProgID("Shell.Application")!)!;
+            dynamic folder = shell.GetType().InvokeMember("NameSpace", System.Reflection.BindingFlags.InvokeMethod, null, shell, ["shell:AppsFolder"])!;
+            (string Name, string Id)? exact = null, partial = null;
+            foreach (var item in folder.Items())
+            {
+                string n = item.Name, id = item.Path;
+                var f = WindowsComputer.Fold(n);
+                if (f == want) { exact = (n, id); break; }
+                if (partial is null && f.Contains(want)) partial = (n, id);
+            }
+            return exact ?? partial;
+        });
+        if (found is not { } app) return null;
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe", "shell:AppsFolder\\" + app.Id) { UseShellExecute = true })?.Dispose();
+        return app.Name;
+    }
+
     [System.Runtime.InteropServices.DllImport("user32.dll")] static extern uint GetClipboardSequenceNumber();
 
     /// <summary>Copia lo seleccionado con ctrl+c y deja el texto que había en el portapapeles.</summary>

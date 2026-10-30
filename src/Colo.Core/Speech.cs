@@ -242,7 +242,8 @@ public sealed class LocalStt : IDisposable
     {
         var names = apps.Where(a => a.Length > 1).Select(a => char.ToUpperInvariant(a[0]) + a[1..])
             .Distinct(StringComparer.OrdinalIgnoreCase).Take(12);
-        return "Glosario: pestaña, aba, guía, navegador, barra de direcciones, endereço, URL, escribe, escreve, clic, clica, "
+        // El idioma no va fijo; esto lo orienta (en frases cortas, sin pista, a veces sale inglés).
+        return "Habla español o português. Glosario: pestaña, aba, guía, navegador, barra de direcciones, endereço, URL, escribe, escreve, clic, clica, "
             + string.Join(", ", names) + ".";
     }
 
@@ -286,7 +287,7 @@ public sealed class LocalStt : IDisposable
             }
             var result = Clean(text.ToString());
             // Con ruido Whisper puede repetir el glosario que se le dio: eso no lo dijo nadie.
-            return result.StartsWith("Glosario", StringComparison.OrdinalIgnoreCase) ? "" : result;
+            return result.StartsWith("Glosario", StringComparison.OrdinalIgnoreCase) || result.StartsWith("Habla español", StringComparison.OrdinalIgnoreCase) ? "" : result;
         }
     }
 

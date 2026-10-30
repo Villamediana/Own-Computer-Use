@@ -152,7 +152,14 @@ public sealed class AiClient
         {
             var req = Req(HttpMethod.Post, V1 + "/responses");
             req.Content = new StringContent(json, Encoding.UTF8, "application/json");
-            resp = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+            try { resp = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct); }
+            catch (HttpRequestException) when (attempt == 1 && !ct.IsCancellationRequested)
+            {
+                // Un fallo suelto de red (DNS, Wi-Fi que vuelve): un reintento antes de dar error.
+                req.Dispose();
+                await Task.Delay(400, ct);
+                continue;
+            }
             if (resp.IsSuccessStatusCode) break;
             var error = $"HTTP {(int)resp.StatusCode}: {ErrorText(await resp.Content.ReadAsStringAsync(ct))}";
             var asked = resp.Headers.RetryAfter?.Delta;
@@ -209,6 +216,17 @@ public sealed class AiClient
 
     /// <param name="prompt">Glosario que orienta al modelo (nombres de programas, palabras de las órdenes).</param>
     public async Task<string> TranscribeAsync(byte[] wav, string prompt, CancellationToken ct)
+    {
+        try { return await TranscribeOnceAsync(wav, prompt, ct); }
+        catch (HttpRequestException) when (!ct.IsCancellationRequested)
+        {
+            // Un fallo suelto de red (DNS, Wi-Fi que vuelve): un reintento antes de dar error.
+            await Task.Delay(400, ct);
+            return await TranscribeOnceAsync(wav, prompt, ct);
+        }
+    }
+
+    async Task<string> TranscribeOnceAsync(byte[] wav, string prompt, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(_s.TranscribeModel)) throw new AiException("Elige el modelo de voz.");
         var c = VoiceConnection(_s);

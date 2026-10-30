@@ -365,7 +365,15 @@ sealed class WindowsComputer : IComputer
                 var target = c.Str("target").Trim();
                 if (target.Length == 0) return "error: target vacío";
                 Cursor?.Say("Abriendo " + (target.Length > 30 ? target[..30] + "…" : target));
-                Process.Start(new ProcessStartInfo(target) { UseShellExecute = true })?.Dispose();
+                try { Process.Start(new ProcessStartInfo(target) { UseShellExecute = true })?.Dispose(); }
+                catch (System.ComponentModel.Win32Exception)
+                {
+                    // No es un archivo ni un .exe: un programa de Inicio por su nombre (los de la Store, como WhatsApp).
+                    var app = await Task.Run(() => Desktop.OpenStartApp(target), ct);
+                    if (app is null) return $"error: no encontré «{target}» ni como archivo ni entre los programas instalados";
+                    await Task.Delay(1200, ct);
+                    return $"ok: abrí «{app}»";
+                }
                 await Task.Delay(900, ct);
                 return "ok";
             }

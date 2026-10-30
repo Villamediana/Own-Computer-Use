@@ -60,6 +60,9 @@ public sealed class Agent
             {
                 _incoming.Enqueue(text);
                 try { _step?.Cancel(); } catch (ObjectDisposedException) { }
+                // El paso siguiente puede tardar (pantalla, captura): una pregunta corta aparte decide si pide parar.
+                var task = _cts;
+                _ = StopCheckAsync(text, task);
                 return Task.CompletedTask;
             }
             _running = true;
@@ -73,6 +76,46 @@ public sealed class Agent
     public void Stop()
     {
         lock (_lock) _cts?.Cancel();
+    }
+
+    /// <summary>Fijas y cortas: la respuesta tiene que llegar en un segundo.</summary>
+    public const string StopQuestion = """
+Alguien habla con su asistente mientras este hace una tarea en su PC. ¿Lo que dijo pide parar, cancelar o
+dejar lo que está haciendo? Responde solo «sí» o «no».
+""";
+
+    public JsonObject StopRequest(string said)
+    {
+        var body = new JsonObject
+        {
+            ["model"] = _s.Model,
+            ["instructions"] = StopQuestion,
+            ["store"] = false,
+            ["prompt_cache_key"] = "colo-parar",
+            ["max_output_tokens"] = 16,
+            ["input"] = new JsonArray(new JsonObject
+            {
+                ["role"] = "user",
+                ["content"] = new JsonArray(new JsonObject { ["type"] = "input_text", ["text"] = said }),
+            }),
+        };
+        if (!string.IsNullOrEmpty(_s.ReasoningEffort)) body["reasoning"] = new JsonObject { ["effort"] = "none" };
+        return body;
+    }
+
+    async Task StopCheckAsync(string said, CancellationTokenSource? task)
+    {
+        if (task is null) return;
+        try
+        {
+            var answer = new StringBuilder();
+            await foreach (var item in _ai.StreamAsync(StopRequest(said), task.Token))
+                foreach (var c in item["content"]?.AsArray() ?? [])
+                    if (c?["type"]?.GetValue<string>() == "output_text") answer.Append(c["text"]?.GetValue<string>());
+            if (!answer.ToString().TrimStart().StartsWith("s", StringComparison.OrdinalIgnoreCase)) return;
+            lock (_lock) if (_cts == task) task.Cancel();
+        }
+        catch { }
     }
 
     async Task RunAsync(string first, CancellationToken ct)

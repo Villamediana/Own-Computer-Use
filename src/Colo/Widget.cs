@@ -1034,13 +1034,15 @@ sealed class Widget : LayeredWindow
         var goal = _mode switch
         {
             // La onda sigue el volumen del micrófono aunque todavía no haya una frase: así se ve que oye.
+            // Transcribiendo: ondas bajas y vivas, como cuando trabaja, con el arco girando encima.
+            Mode.Listening when _thinking > 0 && !speaking => 0.26,
             Mode.Listening => speaking ? 0.3 + _target * 0.7 : 0.10 + _target * 0.7,
             Mode.Busy => speaking ? 0.3 + _target * 0.7 : 0.38,
             Mode.Starting => 0.16,
             _ => 0,
         };
         _level += (goal - _level) * Ease(goal > _level ? 0.35 : 0.12);
-        _energy += ((_mode == Mode.Busy ? 1 : 0) - _energy) * Ease(0.06);
+        _energy += ((_mode == Mode.Busy || _thinking > 0 ? 1 : 0) - _energy) * Ease(0.06);
         // En pausa y sin nada que mostrar, la onda queda quieta: se redibuja poco.
         // Cada cambio de estado sacude la gota: al ponerse a trabajar se aplasta fuerte, al oírte un poco.
         if (_mode != _lastMode)

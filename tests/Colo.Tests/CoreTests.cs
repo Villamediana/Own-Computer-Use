@@ -194,6 +194,8 @@ public class CoreTests(ITestOutputHelper output)
         var step = 0;
         var h = new FakeHandler((_, body) =>
         {
+            // La pregunta corta de «¿pide parar?» no es un paso de la tarea.
+            if (body.Contains("colo-parar")) return (HttpStatusCode.OK, Said("no"));
             var n = Interlocked.Increment(ref step);
             if (n == 1) return (HttpStatusCode.OK, Calls(("open", """{"target":"chrome"}""")));
             if (UserText(body).Contains("el usuario añadió")) return (HttpStatusCode.OK, Calls(("done", """{"message":"hecho"}""")));
@@ -1001,7 +1003,12 @@ public class CoreTests(ITestOutputHelper output)
     public async Task Speaking_mid_step_interrupts_and_the_new_words_rule()
     {
         var bodies = new List<string>();
-        var h = new FakeHandler((_, body) => { lock (bodies) bodies.Add(body); return (HttpStatusCode.OK, Calls(("stop", "{}"))); });
+        var h = new FakeHandler((_, body) =>
+        {
+            if (body.Contains("colo-parar")) return (HttpStatusCode.OK, Said("no"));
+            lock (bodies) bodies.Add(body);
+            return (HttpStatusCode.OK, Calls(("stop", "{}")));
+        });
         var started = new TaskCompletionSource();
         var pc = new FakeComputer();
         var agent = new Agent(new AiClient(Azure(), new HttpClient(new SlowFirst(h, started))), Azure(), pc) { SettleMs = 0 };
@@ -1070,5 +1077,30 @@ public class CoreTests(ITestOutputHelper output)
         Assert.InRange(rest.Length / 16000.0, 4.4, 5.0);
         Assert.InRange(l.LastTakeSeconds, 9.7, 9.9);
         Assert.True(l.LastTakePeak > 0.2f);
+    }
+
+    static string Said(string text) =>
+        $"data: {{\"type\":\"response.output_item.done\",\"item\":{{\"type\":\"message\",\"content\":[{{\"type\":\"output_text\",\"text\":\"{text}\"}}]}}}}\n\ndata: {{\"type\":\"response.completed\",\"response\":{{}}}}\n\n";
+
+    [Fact]
+    public async Task Stop_question_cancels_at_once_even_if_the_step_is_slow()
+    {
+        var started = new TaskCompletionSource();
+        // El paso de la tarea tarda 10 s; la pregunta corta («¿pide parar?») contesta al momento.
+        var h = new FakeHandler((_, body) => (HttpStatusCode.OK, body.Contains("colo-parar") ? Said("sí") : Calls(("done", """{"message":"x"}"""))));
+        var agent = new Agent(new AiClient(Azure(), new HttpClient(new SlowFirst(h, started))), Azure(), new FakeComputer()) { SettleMs = 0 };
+        var events = new List<AgentEvent>();
+        agent.Event += e => { lock (events) events.Add(e); };
+        var run = agent.Hear("escribe un correo largo a Thaís");
+        await started.Task;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        await agent.Hear("para, para");
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(sw.ElapsedMilliseconds < 3000, $"tardó {sw.ElapsedMilliseconds} ms");
+        Assert.Equal(AgentEventKind.Stopped, events.Last().Kind);
+        var q = new Agent(new AiClient(Azure()), Azure(), new FakeComputer()).StopRequest("para");
+        Assert.Equal(Agent.StopQuestion, q["instructions"]!.GetValue<string>());
+        Assert.Null(q["tools"]);
+        Assert.Equal("none", q["reasoning"]!["effort"]!.GetValue<string>());
     }
 }

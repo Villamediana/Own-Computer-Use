@@ -187,20 +187,18 @@ sealed class WavePainter
         }
     }
 
-    /// <summary>Arco azul que da vueltas en el centro, con un disco de vidrio detrás para que la onda no lo tape.</summary>
+    /// <summary>Arco que da vueltas sobre las ondas, sin fondo: las ondas siguen moviéndose debajo.</summary>
     void DrawSpinner(Graphics g, RectangleF pill, float s)
     {
         var cx = pill.X + pill.Width / 2;
         var cy = pill.Y + pill.Height / 2;
-        var r = 8.5f * s;
-        using (var back = new SolidBrush(Color.FromArgb(235, 255, 255, 255)))
-            g.FillEllipse(back, cx - r - 4 * s, cy - r - 4 * s, (r + 4 * s) * 2, (r + 4 * s) * 2);
-        using (var track = new Pen(Color.FromArgb(40, 37, 99, 235), 2.2f * s))
-            g.DrawEllipse(track, cx - r, cy - r, r * 2, r * 2);
+        var r = 7.5f * s;
         // Gira a ritmo constante y el arco se estira y encoge, como los de Windows.
-        var start = (float)(T * 300 % 360);
-        var sweep = (float)(70 + 160 * (0.5 + 0.5 * Math.Sin(T * 3.1)));
-        using var arc = new Pen(Color.FromArgb(37, 99, 235), 2.4f * s) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+        var start = (float)(T * 320 % 360);
+        var sweep = (float)(60 + 170 * (0.5 + 0.5 * Math.Sin(T * 3.1)));
+        using var halo = new Pen(Color.FromArgb(160, 255, 255, 255), 5f * s) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+        g.DrawArc(halo, cx - r, cy - r, r * 2, r * 2, start, sweep);
+        using var arc = new Pen(Color.FromArgb(124, 58, 237), 2.2f * s) { StartCap = LineCap.Round, EndCap = LineCap.Round };
         g.DrawArc(arc, cx - r, cy - r, r * 2, r * 2, start, sweep);
     }
 
