@@ -65,13 +65,13 @@ Por quê:
 ## Passos
 1. Instalar .NET 10 SDK + workload android em `~/.dotnet` (o 8.0.427 atual não tem workload Android suportada);
    Colo.Core segue `net8.0` (referenciável por `net10.0-android`), Windows não muda.
-2. Core: prompt/tools por plataforma + Mcp só URL no Android; `dotnet test tests/Colo.Tests` + CI windows.yml verde.
+2. Core: prompt/tools por plataforma + Mcp só URL no Android; `dotnet test tests/Colo.Tests` (testes locais, sem CI no GitHub).
 3. `Colo.Android`: AccessibilityService/AndroidComputer, overlay da onda e cursor, serviço de microfone, Ajustes.
 4. Testes do mapeamento tool → ação Android (lógica pura, no Core/tests).
 5. `dotnet publish src/Colo.Android -f net10.0-android -c Release` assinado com keystore de `~/keystores`;
    release `Colo.apk` em Villamediana/Own-Computer-Use junto do `Colo.exe`.
 
 ## Verificação
-- `dotnet test` no Core; CI Windows continua passando (Colo.exe idêntico).
+- `dotnet test` no Core; Colo.exe idêntico (testes locais, sem CI no GitHub).
 - APK instalado no celular do Miguel: ativar acessibilidade, «Luna, abre o Chrome e busca X», ditado em
   WhatsApp, correção «ahí no», memória. Sem emulador.
