@@ -35,7 +35,7 @@ hacer clic y qué está haciendo.
 - **Caché**: instrucciones y tools van primero e iguales en cada paso, luego memoria y pedidos anteriores, y al
   final la pantalla; con `prompt_cache_key` fijo el proveedor reutiliza el prefijo.
 - **Económico**: las acciones traen un campo `done` opcional; si con la última acción el pedido queda hecho,
-  termina sin otra llamada al modelo (una orden simple = una llamada). Tope de 25 pasos por orden.
+  termina sin otra llamada al modelo (una orden simple = una llamada). Tope de 40 pasos por orden; un pedido con varias partes empieza con un plan corto que se sigue en orden.
 - **Tokens**: el menú de la onda muestra los de hoy y el total (`%APPDATA%\Colo\usage.json`); el registro, los de cada orden.
 - **Ajustes**: página web (`src/Colo/settings.html`) dentro de WebView2, sin botón de guardar: cada cambio se guarda
   solo (~0,4 s) y lo pesado (micrófono, MCP, atajos) se aplica al cerrar; prueba del micrófono en vivo en Voz.

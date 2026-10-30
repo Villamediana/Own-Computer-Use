@@ -26,7 +26,7 @@ public sealed class Agent
     CancellationTokenSource? _step;
 
     /// <summary>Tope de pasos por orden: corta una tarea que se enreda antes de gastar demasiado.</summary>
-    public int MaxSteps { get; init; } = 25;
+    public int MaxSteps { get; init; } = 40;
     public int SettleMs { get; init; } = 250;
     /// <summary>La misma acción idéntica seguida: a la tercera se avisa al modelo, a la cuarta se para.</summary>
     public int MaxRepeats { get; init; } = 3;
@@ -306,7 +306,14 @@ dejar lo que está haciendo? Responde solo «sí» o «no».
 
                 // Solo se espera a que la pantalla se asiente si algo cambió en este paso.
                 if (SettleMs > 0 && acted) await Task.Delay(SettleMs, ct);
-                if (log.Count > 40) log.RemoveRange(0, log.Count - 40);
+                if (log.Count > 40)
+                {
+                    // El plan del primer paso se queda: es lo que ordena un pedido largo.
+                    var plan = log.FindIndex(l => l.StartsWith("Tú:", StringComparison.Ordinal));
+                    var keep = plan >= 0 && plan < log.Count - 40 ? log[plan] : null;
+                    log.RemoveRange(0, log.Count - 40);
+                    if (keep is not null) log.Insert(0, keep);
+                }
             }
             Remember(heard, did, "se cortó por demasiados pasos");
             Emit(AgentEventKind.Error, "Me detuve: demasiados pasos.");
