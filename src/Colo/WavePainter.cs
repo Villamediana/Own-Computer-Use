@@ -53,8 +53,9 @@ sealed class WavePainter
             DrawShadow(g, pill, body, s);
             DrawGlass(g, pill, body, s);
         }
-        DrawWave(g, pill, s);
+        // Transcribiendo o escribiendo: las ondas se van y queda el spinner sobre el blanco de la pastilla.
         if (Spinning) DrawSpinner(g, pill, s);
+        else DrawWave(g, pill, s);
         g.Restore(state);
         DrawCaption(g, pill, s);
         return bmp;
@@ -187,18 +188,18 @@ sealed class WavePainter
         }
     }
 
-    /// <summary>Arco que da vueltas sobre las ondas, sin fondo: las ondas siguen moviéndose debajo.</summary>
+    /// <summary>Spinner en el centro de la pastilla: aro azul tenue y un arco que gira y se estira.</summary>
     void DrawSpinner(Graphics g, RectangleF pill, float s)
     {
         var cx = pill.X + pill.Width / 2;
         var cy = pill.Y + pill.Height / 2;
-        var r = 7.5f * s;
+        var r = 8.5f * s;
+        using (var track = new Pen(Color.FromArgb(40, 37, 99, 235), 2.4f * s))
+            g.DrawEllipse(track, cx - r, cy - r, r * 2, r * 2);
         // Gira a ritmo constante y el arco se estira y encoge, como los de Windows.
         var start = (float)(T * 320 % 360);
         var sweep = (float)(60 + 170 * (0.5 + 0.5 * Math.Sin(T * 3.1)));
-        using var halo = new Pen(Color.FromArgb(160, 255, 255, 255), 5f * s) { StartCap = LineCap.Round, EndCap = LineCap.Round };
-        g.DrawArc(halo, cx - r, cy - r, r * 2, r * 2, start, sweep);
-        using var arc = new Pen(Color.FromArgb(124, 58, 237), 2.2f * s) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+        using var arc = new Pen(Color.FromArgb(37, 99, 235), 2.4f * s) { StartCap = LineCap.Round, EndCap = LineCap.Round };
         g.DrawArc(arc, cx - r, cy - r, r * 2, r * 2, start, sweep);
     }
 
