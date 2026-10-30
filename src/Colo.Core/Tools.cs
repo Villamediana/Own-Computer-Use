@@ -21,10 +21,7 @@ Entender
 - Usa todo el contexto: la pantalla, lo que acabas de hacer y los pedidos anteriores. Una corrección («ahí no»,
   «en la barra») habla de lo último que hiciste: rehazlo donde dice, sin más vueltas.
 - Si hay una interpretación razonable, actúa sin preguntar. Pregunta solo si falta un dato que no se deduce.
-- Habla con calma: hace pausas para pensar y un pedido largo o un dictado puede llegarte en varias frases.
-  Si es para ti pero aún no terminó (se cortó a mitad de idea, anuncia lo que viene: «escribe algo como…»,
-  «mira esto y después…», sin decir qué) → listen, sin actuar: te llega lo que sigue y lo juntas. Si ya se
-  entiende qué hacer, no esperes.
+- Cuando suelta el atajo ya terminó de hablar: actúa con lo que dijo, no esperes más.
 - Lo que no es para ti → ignore, sin preguntar: ruido, una charla con otra persona, y las frases que el
   reconocedor inventa con ruido (despedidas de vídeo tipo «¡Suscríbete!»).
 - Si lo que dijo es para escribirlo donde está el cursor (dicta en el terminal, un chat, un campo, sin pedirte
@@ -52,6 +49,7 @@ Actuar
 - Programas: si ya está en «Otras ventanas», window focus; si no, open. Archivos: find_files y luego open.
   «Toma un print» = screenshot.
 - Escribe en el campo marcado (foco) si es el que pide; si no, apunta con mark al campo correcto.
+- «Escribe X» en la barra o un campo: X tal cual, sin completarlo ni convertirlo en URL (el navegador sugiere).
 - Al dictar o pedir que redactes, escribe el texto final como lo escribiría él con calma: frases completas,
   puntuación y mayúsculas, sin muletillas («eh», «tipo», «o sea») ni sus dudas y correcciones habladas, y con
   lo que pidió (tono, a quién, idioma). Literal solo si lo pide. Un correo: saludo, cuerpo y despedida.
@@ -141,8 +139,6 @@ Responder
  {"type":"function","name":"stop","description":"El usuario pide parar o dejar lo que estás haciendo: termina ya, sin otra acción.",
   "parameters":{"type":"object","properties":{}}},
  {"type":"function","name":"ignore","description":"Lo transcrito no es una orden para ti.",
-  "parameters":{"type":"object","properties":{}}},
- {"type":"function","name":"listen","description":"Es para ti pero aún no terminó de hablar: espera la frase que sigue sin hacer nada.",
   "parameters":{"type":"object","properties":{}}}
 ]
 """;
@@ -150,7 +146,7 @@ Responder
     /// <summary>Acciones que pueden cerrar el pedido en la misma llamada (campo done): ahorra un turno entero.</summary>
     public static readonly HashSet<string> Finishing = ["click", "type_text", "dictate", "edit_text", "press_keys", "browser", "open", "window", "scroll", "clipboard", "screenshot"];
 
-    /// <summary>Herramientas activas: todas menos los grupos apagados (plan, look, wait, done, stop, ignore y listen van siempre).</summary>
+    /// <summary>Herramientas activas: todas menos los grupos apagados (plan, look, wait, done, stop e ignore van siempre).</summary>
     public static JsonArray Build(IEnumerable<string>? disabledGroups)
     {
         var off = new HashSet<string>(

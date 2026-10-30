@@ -521,10 +521,14 @@ sealed class Widget : LayeredWindow
             stt.Prompt = Glossary();
             text = stt.Transcribe(samples);
         }
-        else if (_s.SpeechEngine == SpeechEngine.ElevenLabs)
-            text = await _eleven.TranscribeAsync(Wav.Encode(samples), CancellationToken.None);
         else
-            text = await _ai.TranscribeAsync(Wav.Encode(samples), Glossary(), CancellationToken.None);
+        {
+            var wav = Wav.Encode(samples);
+            var glossary = Glossary();
+            text = await Hedged(ct => _s.SpeechEngine == SpeechEngine.ElevenLabs
+                ? _eleven.TranscribeAsync(wav, ct)
+                : _ai.TranscribeAsync(wav, glossary, ct));
+        }
         Log.Write($"voz: {samples.Length / 16000.0:0.0} s → «{text}» ({sw.ElapsedMilliseconds} ms)");
         _tokens.AddAudio(_s.SpeechEngine switch
         {
@@ -534,6 +538,28 @@ sealed class Widget : LayeredWindow
         }, samples.Length / (double)Listener.Rate);
         return text;
     });
+
+    /// <summary>
+    /// El servicio a veces tarda 7–12 s en contestar lo que suele hacer en 0,5 s (visto en el registro): si a los
+    /// 2,5 s no llegó, se manda otra vez y vale la primera respuesta (el audio cuesta centésimos de centavo).
+    /// </summary>
+    static async Task<string> Hedged(Func<CancellationToken, Task<string>> call)
+    {
+        using var cts = new CancellationTokenSource();
+        var first = call(cts.Token);
+        if (await Task.WhenAny(first, Task.Delay(2500)) == first) return await first;
+        Log.Write("voz: la transcripción tarda, la pido otra vez");
+        var second = call(cts.Token);
+        var winner = await Task.WhenAny(first, second);
+        var other = winner == first ? second : first;
+        try
+        {
+            var text = await winner;
+            cts.Cancel();
+            return text;
+        }
+        catch when (!other.IsCompleted || other.IsCompletedSuccessfully) { return await other; }
+    }
 
     /// <summary>Junta los trozos en orden y hace lo que toca. Corre en el hilo de la interfaz.</summary>
     async Task CompleteTakeAsync(List<Task<string>> parts, bool dictate)
@@ -796,10 +822,6 @@ sealed class Widget : LayeredWindow
             case AgentEventKind.Ignored:
                 LiveResult(c => c.Thinking(_liveTask!, "En el PC no había nada que hacer con eso."));
                 Idle();
-                break;
-            case AgentEventKind.Listening:
-                // Espera a que termine la idea: la onda vuelve a escuchar.
-                _mode = Mode.Listening;
                 break;
             case AgentEventKind.Stopped:
                 Say("Detenido", Theme.Muted, 1500);

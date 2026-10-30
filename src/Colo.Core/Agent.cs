@@ -3,7 +3,7 @@ using System.Text.Json.Nodes;
 
 namespace Colo.Core;
 
-public enum AgentEventKind { Thinking, Action, Message, Done, Ignored, Error, Stopped, Listening }
+public enum AgentEventKind { Thinking, Action, Message, Done, Ignored, Error, Stopped }
 
 public sealed record AgentEvent(AgentEventKind Kind, string Text);
 
@@ -45,8 +45,6 @@ public sealed class Agent
 
     /// <summary>Tras este tiempo sin pedidos, los anteriores dejan de contar: el contexto se limpia solo.</summary>
     public TimeSpan ContextTtl { get; init; } = TimeSpan.FromMinutes(10);
-    /// <summary>Cuánto espera a que siga hablando cuando el modelo ve la orden a medias (listen).</summary>
-    public TimeSpan ListenFor { get; init; } = TimeSpan.FromSeconds(7);
     DateTime _lastTask = DateTime.MinValue;
 
     public bool Busy { get { lock (_lock) return _running; } }
@@ -160,7 +158,6 @@ dejar lo que está haciendo? Responde solo «sí» o «no».
         string? lastCall = null;
         var waits = 0;
         var repeats = 0;
-        var quietListens = 0;
         try
         {
             for (var step = 0; step < MaxSteps; step++)
@@ -179,7 +176,6 @@ dejar lo que está haciendo? Responde solo «sí» o «no».
                 var acted = false;
                 var finished = false;
                 var ignored = false;
-                var listening = false;
                 var stopped = false;
                 var closed = false;
                 string? closing = null;
@@ -215,7 +211,6 @@ dejar lo que está haciendo? Responde solo «sí» o «no».
                         if (call.Name == "done") { final = call.Str("message"); finished = closed = true; continue; }
                         if (call.Name == "stop") { stopped = finished = closed = true; continue; }
                         if (call.Name == "ignore") { ignored = finished = closed = true; continue; }
-                        if (call.Name == "listen" && !acted) { listening = closed = true; continue; }
                         if (call.Name == "plan")
                         {
                             var r = PlanCall(plan, call);
@@ -287,20 +282,6 @@ dejar lo que está haciendo? Responde solo «sí» o «no».
                     continue;
                 }
                 waits = 0;
-                if (listening && !finished)
-                {
-                    // Habló a medias (pensando, «escribe algo como…»): se espera lo que sigue sin gastar pasos y
-                    // se junta todo. Si no dice nada más, el modelo decide con lo que hay; a la segunda, se deja.
-                    Emit(AgentEventKind.Listening, "");
-                    step--;
-                    if (await WaitForMoreAsync(ct)) continue;
-                    if (++quietListens >= 2) { ignored = finished = true; }
-                    else
-                    {
-                        log.Add($"listen → esperaste {ListenFor.TotalSeconds:0} s y no dijo nada más: actúa con lo que hay o pregunta con done");
-                        continue;
-                    }
-                }
                 if (closing is not null && !finished)
                 {
                     final = closing;
@@ -366,17 +347,6 @@ dejar lo que está haciendo? Responde solo «sí» o «no».
                     _incoming.Clear();
                 }
         }
-    }
-
-    async Task<bool> WaitForMoreAsync(CancellationToken ct)
-    {
-        var until = DateTime.UtcNow + ListenFor;
-        while (DateTime.UtcNow < until)
-        {
-            lock (_lock) if (_incoming.Count > 0) return true;
-            await Task.Delay(80, ct);
-        }
-        lock (_lock) return _incoming.Count > 0;
     }
 
     void DrainIncoming(List<string> heard, List<string> log)

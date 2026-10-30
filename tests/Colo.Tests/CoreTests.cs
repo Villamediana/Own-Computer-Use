@@ -806,40 +806,6 @@ public class CoreTests(ITestOutputHelper output)
         Assert.Equal(0, Motion.At(0, 0, 1000, 0, 0.5, curved: false).Y);
     }
 
-    [Fact]
-    public async Task Listen_waits_for_the_rest_of_the_idea_and_joins_it()
-    {
-        // Primera vuelta: el modelo ve la orden a medias y escucha; con la frase siguiente, termina.
-        var n = 0;
-        var h = new FakeHandler((_, _) => (HttpStatusCode.OK, Interlocked.Increment(ref n) == 1
-            ? Calls(("listen", "{}"))
-            : Calls(("done", """{"message":"Listo"}"""))));
-        var s = Azure();
-        var agent = new Agent(new AiClient(s, new HttpClient(h)), s, new FakeComputer()) { SettleMs = 0, ListenFor = TimeSpan.FromSeconds(3) };
-        var events = new List<AgentEvent>();
-        agent.Event += e => { lock (events) events.Add(e); };
-        var run = agent.Hear("Luna, escribe algo como");
-        await Task.Delay(300);
-        await agent.Hear("que mañana llego tarde");
-        await run;
-        Assert.Contains(events, e => e.Kind == AgentEventKind.Listening);
-        Assert.Equal(AgentEventKind.Done, events[^1].Kind);
-        var second = h.Seen[^1].Body;
-        Assert.Contains("escribe algo como", second);
-        Assert.Contains("llego tarde", second);   // el JSON escapa la ñ
-
-        // Si no sigue hablando: una vez se le dice al modelo que actúe con lo que hay; a la segunda se deja.
-        var quiet = new FakeHandler((_, _) => (HttpStatusCode.OK, Calls(("listen", "{}"))));
-        var a2 = new Agent(new AiClient(s, new HttpClient(quiet)), s, new FakeComputer()) { SettleMs = 0, ListenFor = TimeSpan.FromMilliseconds(150) };
-        var ev2 = new List<AgentEvent>();
-        a2.Event += e => { lock (ev2) ev2.Add(e); };
-        await a2.Hear("y después");
-        Assert.Equal(AgentEventKind.Ignored, ev2[^1].Kind);
-        Assert.Equal(2, quiet.Seen.Count);
-        Assert.Contains("y no dijo nada", quiet.Seen[1].Body);
-        Assert.False(a2.Busy);
-    }
-
     // ── atajos que se mantienen
 
     static (HoldKeys keys, List<string> log) Hold(string talk, string? dictate = null)

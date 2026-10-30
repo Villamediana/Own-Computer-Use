@@ -438,7 +438,8 @@ sealed class WindowsComputer : IComputer
 
     /// <summary>Navegador por teclado: funciona igual en Chrome, Edge y Firefox, y es más rápido que buscar botones.</summary>
     static readonly string[] Browsers =
-        ["chrome", "msedge", "firefox", "brave", "opera", "vivaldi", "chromium", "arc", "zen", "librewolf", "waterfox", "iexplore"];
+        ["chrome", "msedge", "firefox", "brave", "opera", "vivaldi", "chromium", "arc", "zen", "librewolf", "waterfox", "iexplore",
+         "comet", "dia", "thorium", "yandex", "floorp", "sidekick", "opera_gx", "duckduckgo"];
 
     async Task<string> Browser(ToolCall c, CancellationToken ct)
     {
