@@ -142,6 +142,18 @@ const assert = (c, m) => { if (!c) { console.log('FAIL:', m); process.exitCode =
   await page.click('#sClose');
   assert(!(await page.isVisible('.sheet')) && (await page.$$('.server')).length === 1, 'vacía se cierra sin añadir nada');
 
+  // costo: lo usado por modelo × precio; un precio propio cambia el total al momento
+  await page.evaluate(() => window.__deliver({ type: 'init', version: '1', printsDir: '', memory: ['Su navegador es Comet'], mics: [{ id: 'id-b', name: 'Mic B' }], groups: [{ id: 'browser', title: 'Navegador', summary: 's' }],
+    settings: { ...flushSave(), ...JSON.parse(JSON.stringify(S)) },
+    usage: { asOf: 'octubre de 2026', known: { 'gpt-6-luna': { Input: 0.1, Cached: 0.01, Output: 0.5, PerMinute: 0 } },
+      today: { 'gpt-6-luna': { Input: 1000000, Cached: 0, Output: 0, Seconds: 0, Calls: 3 } },
+      all: { 'gpt-6-luna': { Input: 2000000, Cached: 0, Output: 0, Seconds: 0, Calls: 9 }, 'otro-modelo': { Input: 1000000, Cached: 0, Output: 0, Seconds: 0, Calls: 1 } } } }));
+  await page.click('nav button[data-page=cost]');
+  assert((await page.textContent('#costAll')) === 'US$ 0,20' && (await page.textContent('#costToday')) === 'US$ 0,10', 'costo total y de hoy');
+  assert((await page.textContent('.cost-row[data-model="otro-modelo"]')).includes('sin precio'), 'avisa el modelo sin precio');
+  await page.fill('.cost-row[data-model="otro-modelo"] input[data-k=Input]', '1');
+  assert((await page.textContent('#costAll')) === 'US$ 1,20', 'un precio propio suma al total');
+
   // general
   await page.click('nav button[data-page=general]');
   await page.click('label.switch:has(#autostart)');
@@ -164,6 +176,7 @@ const assert = (c, m) => { if (!c) { console.log('FAIL:', m); process.exitCode =
     Whisper: sv?.LocalModel === 'small' && sv?.Language === 'pt',
     Mcp: sv?.McpServers?.length === 1 && JSON.stringify(sv.McpServers[0].Tools) === '["read_file"]' && sv.McpServers[0].Enabled === true,
     Keeps: sv?.WidgetX === 5,
+    Prices: sv?.Prices?.['otro-modelo']?.Input === 1,
     Keys: sv?.TalkHotkey === 'Ctrl+Shift+K' && sv?.DictateHotkey === 'J+K',
     Live: sv?.Live === false && sv?.LiveModel === 'gpt-live-1' && sv?.VoiceOwn === true && sv?.VoiceKey === 'k-voz',
   };

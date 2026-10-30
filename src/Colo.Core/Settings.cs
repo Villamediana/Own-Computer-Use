@@ -60,6 +60,8 @@ public sealed class Settings
     /// <summary>Grupos de herramientas propias apagados (ver <see cref="Tools.Groups"/>).</summary>
     public List<string> DisabledTools { get; set; } = [];
     public List<McpServerConfig> McpServers { get; set; } = [];
+    /// <summary>Precios propios por modelo (contrato distinto o modelo que no está en <see cref="Colo.Core.Prices.Known"/>).</summary>
+    public Dictionary<string, Price> Prices { get; set; } = [];
     /// <summary>Posición de la onda en pantalla (null = abajo al centro).</summary>
     public int? WidgetX { get; set; }
     public int? WidgetY { get; set; }

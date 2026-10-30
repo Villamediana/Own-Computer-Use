@@ -50,6 +50,7 @@ static class Store
         // Archivos de versiones anteriores o editados a mano pueden traer null.
         s.DisabledTools ??= [];
         s.McpServers ??= [];
+        s.Prices ??= [];
         s.Endpoint ??= "";
         s.Model ??= "";
         s.TranscribeModel ??= "";

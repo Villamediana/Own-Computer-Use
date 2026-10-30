@@ -526,6 +526,12 @@ sealed class Widget : LayeredWindow
         else
             text = await _ai.TranscribeAsync(Wav.Encode(samples), Glossary(), CancellationToken.None);
         Log.Write($"voz: {samples.Length / 16000.0:0.0} s → «{text}» ({sw.ElapsedMilliseconds} ms)");
+        _tokens.AddAudio(_s.SpeechEngine switch
+        {
+            SpeechEngine.Local => Prices.Local,
+            SpeechEngine.ElevenLabs => _s.ElevenLabsModel,
+            _ => _s.TranscribeModel,
+        }, samples.Length / (double)Listener.Rate);
         return text;
     });
 
@@ -573,6 +579,8 @@ sealed class Widget : LayeredWindow
         _liveTask = null;
         _liveQuietSince = DateTime.Now;
         call.Trace += t => Log.Write("live: " + t);
+        var liveModel = _s.LiveModel;
+        call.Billed += seconds => _tokens.AddAudio(liveModel, seconds);
         call.Audio += pcm => _livePlayer?.Add(pcm);
         call.Said += d => Post(() =>
         {
@@ -740,8 +748,7 @@ sealed class Widget : LayeredWindow
             chunks.Writer.TryComplete();
             var target = await typer;
             Log.Write($"dicta: transcribir {sttMs} ms · buscar campo {focusMs} ms · 1ª letra {first} ms · total {sw.ElapsedMilliseconds} ms · en {target} · «{heard}» → «{text}»");
-            if (text.Length == 0) { Say("", Theme.Muted, 0); return; }
-            Say("«" + text + "»", Theme.Muted, 1500 + text.Length * 30);
+            Say("", Theme.Muted, 0);
         }
         catch (Exception ex)
         {
@@ -756,7 +763,8 @@ sealed class Widget : LayeredWindow
     {
         if (!Configured()) { OpenSettings(); return; }
         Log.Write($"orden: «{text}»");
-        Say("«" + text + "»", Theme.Ink, 1800 + text.Length * 45);
+        // Lo que entendió no se muestra: no ayuda; se ve lo que hace y lo que responde.
+        Say("", Theme.Ink, 0);
         _mode = Mode.Busy;
         SetClickThroughIfBusy();
         _ = _agent.Hear(text);
@@ -766,7 +774,7 @@ sealed class Widget : LayeredWindow
     {
         if (ev.Kind != AgentEventKind.Thinking) Log.Write($"agente {ev.Kind}: {ev.Text}");
         if (ev.Kind is AgentEventKind.Done or AgentEventKind.Error or AgentEventKind.Ignored or AgentEventKind.Stopped)
-            Log.Write($"tokens: {Interlocked.Exchange(ref _orderTokens, 0):N0} esta orden · hoy {_tokens.TodayTokens:N0} · total {_tokens.AllTokens:N0}");
+            Log.Write($"tokens: {Interlocked.Exchange(ref _orderTokens, 0):N0} esta orden · hoy {_tokens.TodayTokens:N0} · total {_tokens.AllTokens:N0} · {TokenMeter.Usd(_tokens.Cost(_s.Prices).Today)} hoy");
         switch (ev.Kind)
         {
             case AgentEventKind.Thinking:
@@ -874,7 +882,7 @@ sealed class Widget : LayeredWindow
         bool saved;
         try
         {
-            using var f = new SettingsWindow(_s, _memory);
+            using var f = new SettingsWindow(_s, _memory, _tokens);
             _settingsWindow = f;
             f.RecordTest += StartProbe;
             f.SayTest += TrySpeaking;
@@ -964,7 +972,8 @@ sealed class Widget : LayeredWindow
     {
         var (title, dot) = _agent.Busy ? ("Trabajando…", Color.FromArgb(245, 158, 11))
             : _listening ? ("Listo", Theme.Blue) : ("En pausa", Color.FromArgb(161, 161, 170));
-        var detail = $"Tokens · hoy {TokenMeter.Short(_tokens.TodayTokens)} · total {TokenMeter.Short(_tokens.AllTokens)}";
+        var (today, all) = _tokens.Cost(_s.Prices);
+        var detail = $"Hoy {TokenMeter.Usd(today)} · total {TokenMeter.Usd(all)}";
         _menu.Open(Cursor.Position, title, detail, dot,
         [
             new(_listening ? "Pausar" : "Seguir", _listening ? PopMenu.Icon.Pause : PopMenu.Icon.Play, ToggleListening),

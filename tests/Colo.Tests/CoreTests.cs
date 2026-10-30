@@ -554,7 +554,7 @@ public class CoreTests(ITestOutputHelper output)
         var events = new List<AgentEvent>();
         agent.Event += e => { lock (events) events.Add(e); };
         await agent.Hear("abre una pestaña");
-        Assert.Equal(new Usage(1800, 1600, 30), Assert.Single(used));
+        Assert.Equal(new Usage(1800, 1600, 30, "gpt-5.6-luna"), Assert.Single(used));
 
         var path = Path.Combine(Path.GetTempPath(), $"colo-usage-{Guid.NewGuid():N}.json");
         var meter = new TokenMeter(path);
@@ -1102,5 +1102,52 @@ public class CoreTests(ITestOutputHelper output)
         Assert.Equal(Agent.StopQuestion, q["instructions"]!.GetValue<string>());
         Assert.Null(q["tools"]);
         Assert.Equal("none", q["reasoning"]!["effort"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task Plan_tool_keeps_the_parts_in_every_turn()
+    {
+        var bodies = new List<string>();
+        var step = 0;
+        var h = new FakeHandler((_, body) =>
+        {
+            lock (bodies) bodies.Add(body);
+            return (HttpStatusCode.OK, Interlocked.Increment(ref step) switch
+            {
+                1 => Calls(("plan", """{"steps":["Copiar la A al Claude Code","Mensaje a Robertinho"]}"""), ("open", """{"target":"claude"}""")),
+                2 => Calls(("plan", """{"done":1}"""), ("open", """{"target":"teams"}""")),
+                _ => Calls(("done", """{"message":"Hice las dos."}""")),
+            });
+        });
+        var agent = new Agent(new AiClient(Azure(), new HttpClient(h)), Azure(), new FakeComputer()) { SettleMs = 0 };
+        await agent.Hear("la A al Claude Code y después un mensaje a Robertinho");
+        string Text(int i) => JsonNode.Parse(bodies[i])!["input"]![0]!["content"]![0]!["text"]!.GetValue<string>();
+        Assert.DoesNotContain("Plan", Text(0));
+        Assert.Contains("→ 1. Copiar la A al Claude Code", Text(1));
+        Assert.Contains("✓ 1. Copiar la A al Claude Code", Text(2));
+        Assert.Contains("→ 2. Mensaje a Robertinho", Text(2));
+    }
+
+    [Fact]
+    public void Meter_counts_by_model_and_prices_give_dollars()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"colo-usage-{Guid.NewGuid():N}.json");
+        try
+        {
+            var m = new TokenMeter(path);
+            m.Add(new Usage(1_000_000, 800_000, 100_000, "gpt-6-luna"));
+            m.AddAudio("gpt-4o-mini-transcribe", 600);
+            m.AddAudio("gpt-live-1", 120);
+            m.Add(new Usage(1_000_000, 0, 0, "sin-precio"));
+            var (today, all) = m.Cost(null);
+            // 0,2 M × 0,10 + 0,8 M × 0,01 + 0,1 M × 0,50 = 0,078 · 10 min × 0,003 = 0,03 · 2 min × 0,05 = 0,10
+            Assert.Equal(0.208, all, 3);
+            Assert.Equal(all, today, 6);
+            var mine = new Dictionary<string, Price> { ["sin-precio"] = new(Input: 1) };
+            Assert.Equal(1.208, m.Cost(mine).All, 3);
+            // Se guarda y se vuelve a leer.
+            Assert.Equal(0.208, new TokenMeter(path).Cost(null).All, 3);
+        }
+        finally { File.Delete(path); }
     }
 }

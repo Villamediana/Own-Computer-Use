@@ -36,7 +36,11 @@ hacer clic y qué está haciendo.
   final la pantalla; con `prompt_cache_key` fijo el proveedor reutiliza el prefijo.
 - **Económico**: las acciones traen un campo `done` opcional; si con la última acción el pedido queda hecho,
   termina sin otra llamada al modelo (una orden simple = una llamada). Tope de 40 pasos por orden; un pedido con varias partes empieza con un plan corto que se sigue en orden.
-- **Tokens**: el menú de la onda muestra los de hoy y el total (`%APPDATA%\Colo\usage.json`); el registro, los de cada orden.
+- **Costo**: Ajustes › Costo muestra cuánto va gastando cada modelo (tokens o minutos de audio, hoy y total) y el total
+  en dólares, con los precios de lista de la documentación (oct. 2026) y un precio propio por modelo si tu contrato
+  es otro o el modelo no está. El menú de la onda muestra el de hoy y el total (`%APPDATA%\Colo\usage.json`).
+- **Plan**: un pedido con varias partes usa la tool `plan` (interna): fija las partes y marca las hechas; el plan
+  va en cada turno (✓ hecho, → ahora) y se sigue en orden.
 - **Ajustes**: página web (`src/Colo/settings.html`) dentro de WebView2, sin botón de guardar: cada cambio se guarda
   solo (~0,4 s) y lo pesado (micrófono, MCP, atajos) se aplica al cerrar; prueba del micrófono en vivo en Voz.
   Probar la página: `node tests/ui/settings.test.js <carpeta>` (playwright-core).

@@ -201,7 +201,8 @@ public sealed class AiClient
                         Used?.Invoke(new Usage(
                             u["input_tokens"]?.GetValue<long>() ?? 0,
                             u["input_tokens_details"]?["cached_tokens"]?.GetValue<long>() ?? 0,
-                            u["output_tokens"]?.GetValue<long>() ?? 0));
+                            u["output_tokens"]?.GetValue<long>() ?? 0,
+                            body["model"]?.GetValue<string>() ?? ""));
                     yield break;
                 case "error":
                     throw new AiException(ev["message"]?.GetValue<string>() ?? ev["error"]?["message"]?.GetValue<string>() ?? data);

@@ -44,6 +44,8 @@ Responde en el idioma en que te habló.
     public event Action<string, string>? Delegated;
     /// <summary>Para el registro.</summary>
     public event Action<string>? Trace;
+    /// <summary>Segundos de voz que cobra la llamada (al cerrarse).</summary>
+    public event Action<double>? Billed;
     /// <summary>Se cerró (razón o error).</summary>
     public event Action<string>? Closed;
 
@@ -182,6 +184,7 @@ Responde en el idioma en que te habló.
                         break;
                     case "session.closed":
                         reason = ev["reason"]?.GetValue<string>() ?? "closed";
+                        if (ev["usage"]?["seconds"] is JsonValue sec && sec.TryGetValue<double>(out var seconds)) Billed?.Invoke(seconds);
                         Trace?.Invoke($"live: cerrada ({reason}) · {ev["usage"]?["seconds"]} s de voz");
                         _cts.Cancel();
                         break;

@@ -37,9 +37,9 @@ Entender
   read_text (selection, y si está vacío window) y después escribe a partir de lo leído.
 
 Actuar
-- Pedido con varias partes («la A va a…, la B…, y después…»): en el primer paso escribe un plan corto
-  numerado (texto, junto a la primera acción) y síguelo en orden, una parte a la vez, sin juntar partes
-  distintas en un mismo texto. done solo cuando estén todas, diciendo qué hiciste de cada una.
+- Pedido con varias partes («la A va a…, la B…, y después…»): plan con los pasos en el primer turno (junto a
+  la primera acción) y síguelo en orden, una parte a la vez, sin juntar partes distintas en un mismo texto.
+  Al terminar cada parte, plan con done = su número. done solo cuando estén todas.
 - «Copia», «pega», «manda ese texto»: el texto exacto que leíste (read_text), no un resumen ni tu versión.
 - Rápido y económico: el mínimo de pasos y de herramientas; no leas ni mires de más si ya basta con la lista.
   Encadena en una respuesta lo que no necesite ver el resultado (p. ej. type_text con mark + submit).
@@ -130,6 +130,8 @@ Responder
   "parameters":{"type":"object","properties":{"fact":{"type":"string"}},"required":["fact"]}},
  {"type":"function","name":"forget","description":"Borra un recuerdo que ya no es cierto o que pidió olvidar (el texto o parte de él).",
   "parameters":{"type":"object","properties":{"fact":{"type":"string"}},"required":["fact"]}},
+ {"type":"function","name":"plan","description":"Plan de un pedido con varias partes: steps lo fija (una frase por parte); done marca hecha la parte n (1, 2…). Va en cada turno.",
+  "parameters":{"type":"object","properties":{"steps":{"type":"array","items":{"type":"string"}},"done":{"type":"integer"}}}},
  {"type":"function","name":"look","description":"Pide la captura de pantalla para el siguiente turno.",
   "parameters":{"type":"object","properties":{}}},
  {"type":"function","name":"wait","description":"Espera a que algo cargue.",
@@ -148,7 +150,7 @@ Responder
     /// <summary>Acciones que pueden cerrar el pedido en la misma llamada (campo done): ahorra un turno entero.</summary>
     public static readonly HashSet<string> Finishing = ["click", "type_text", "dictate", "edit_text", "press_keys", "browser", "open", "window", "scroll", "clipboard", "screenshot"];
 
-    /// <summary>Herramientas activas: todas menos los grupos apagados (look, wait, done, stop, ignore y listen van siempre).</summary>
+    /// <summary>Herramientas activas: todas menos los grupos apagados (plan, look, wait, done, stop, ignore y listen van siempre).</summary>
     public static JsonArray Build(IEnumerable<string>? disabledGroups)
     {
         var off = new HashSet<string>(

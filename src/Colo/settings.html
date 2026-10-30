@@ -121,6 +121,18 @@
   }
   .row .icon svg { width: 17px; height: 17px; stroke: var(--ink-2); }
   .hint { color: var(--muted); font-size: 12.5px; margin: 8px 2px 0; }
+  .cost-total { display: grid; grid-template-columns: 1fr 1fr; }
+  .cost-total > div { padding: 16px 18px; }
+  .cost-total > div + div { border-left: 1px solid var(--line); }
+  .cost-total small { display: block; color: var(--muted); font-size: 12.5px; }
+  .cost-total b { font: 600 26px/1.2 var(--font-display); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+  .cost-row .label small.none { color: var(--red); }
+  .cost-row .money { text-align: right; font-variant-numeric: tabular-nums; min-width: 96px; }
+  .cost-row .money b { display: block; font-weight: 600; }
+  .cost-row .money small { color: var(--muted); font-size: 12px; }
+  .prices { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .prices label { display: flex; flex-direction: column; gap: 3px; font-size: 11.5px; color: var(--muted); }
+  .prices .input { width: 92px; height: 32px; padding: 0 8px; font-size: 12.5px; font-variant-numeric: tabular-nums; }
   .problem { color: var(--red); font-size: 13px; margin: -14px 2px 18px; }
   .hint.err { color: var(--red); }
 
@@ -372,6 +384,7 @@
     <symbol id="i-trash" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 7h15M10 7V4.5h4V7M6.5 7l1 12.5h9l1-12.5"/></symbol>
     <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></symbol>
     <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+    <symbol id="i-coin" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M14.8 9.2c-.5-.9-1.5-1.4-2.8-1.4-1.6 0-2.8.8-2.8 2s1 1.7 2.8 2.1 2.8 1 2.8 2.2-1.2 2.1-2.8 2.1c-1.4 0-2.4-.6-2.9-1.5M12 6.3v1.5M12 16.2v1.5"/></symbol>
     <symbol id="i-link" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></symbol>
   </defs>
 </svg>
@@ -390,6 +403,7 @@
       <button data-page="voice"><svg><use href="#i-mic"/></svg>Voz</button>
       <button data-page="tools"><svg><use href="#i-tools"/></svg>Herramientas</button>
       <button data-page="mcp"><svg><use href="#i-plug"/></svg>MCP</button>
+      <button data-page="cost"><svg><use href="#i-coin"/></svg>Costo</button>
       <button data-page="general"><svg><use href="#i-gear"/></svg>General</button>
     </nav>
     <div class="side-foot" id="sideFoot"><span class="ver" id="version"></span><span class="saved"><svg><use href="#i-check"/></svg>Guardado</span></div>
@@ -629,6 +643,18 @@
       </section>
 
       <!-- GENERAL -->
+      <section class="page" id="p-cost">
+        <h1>Costo</h1>
+        <p class="lead" id="costAsOf"></p>
+        <div class="group cost-total">
+          <div><small>Hoy</small><b id="costToday">—</b></div>
+          <div><small>Total</small><b id="costAll">—</b></div>
+        </div>
+        <h2 style="margin-top:26px">Por modelo</h2>
+        <div class="group" id="costModels"></div>
+        <p class="hint">Precio en dólares: por millón de tokens o por minuto de audio. Cámbialo si tu contrato es otro.</p>
+      </section>
+
       <section class="page" id="p-general">
         <h1>General</h1>
         <p class="lead">&nbsp;</p>
@@ -725,6 +751,8 @@ function go(page) {
   $$("#nav button").forEach(b => b.setAttribute("aria-current", b.dataset.page === page ? "page" : "false"));
   $$(".page").forEach(p => p.classList.toggle("on", p.id === "p-" + page));
   $(".scroll").scrollTop = 0;
+  // Los modelos pueden haber cambiado en otra página.
+  if (page === "cost" && S) renderCost();
   const b = $(`#nav button[data-page="${page}"]`);
   if (b) { $("#navPill").style.height = b.offsetHeight + "px"; $("#navPill").style.transform = `translateY(${b.offsetTop}px)`; }
 }
@@ -981,6 +1009,8 @@ function init(msg) {
   $("#logFile").textContent = msg.logFile || "";
   facts = msg.memory || [];
   renderFacts();
+  usage = msg.usage || usage;
+  S.Prices ||= {};
 
   const syncProvider = () => {
     $("#endpoint").placeholder = S.Provider === "OpenAI" ? "https://api.openai.com/v1  (opcional)" : "https://mi-recurso.openai.azure.com";
@@ -1090,6 +1120,64 @@ function init(msg) {
   sw("autostart", "StartWithWindows");
   dirty = false;
   go("model");
+}
+
+// ── costo: lo usado viene de Colo; los dólares se calculan aquí con los precios (los propios ganan)
+let usage = { today: {}, all: {}, known: {}, asOf: "" };
+function priceOf(m) { return (S.Prices || {})[m] || usage.known[m] || null; }
+function costOf(u, p) {
+  if (!u || !p) return 0;
+  return (Math.max(0, (u.Input || 0) - (u.Cached || 0)) * (p.Input || 0) + (u.Cached || 0) * (p.Cached || 0) + (u.Output || 0) * (p.Output || 0)) / 1e6
+    + (u.Seconds || 0) / 60 * (p.PerMinute || 0);
+}
+function usd(v) { return "US$ " + (v > 0 && v < 0.01 ? v.toFixed(4) : v.toFixed(2)).replace(".", ","); }
+function usedText(u) {
+  if (!u) return "Sin uso todavía";
+  if (u.Seconds > 0) return `${(u.Seconds / 60).toFixed(1).replace(".", ",")} min de audio`;
+  const t = (u.Input || 0) + (u.Output || 0);
+  return `${t >= 1e6 ? (t / 1e6).toFixed(1).replace(".", ",") + " M" : t >= 1e3 ? (t / 1e3).toFixed(1).replace(".", ",") + " mil" : t} tokens · ${u.Calls || 0} llamadas`;
+}
+// Los modelos que usas ahora y los que ya gastaron algo.
+function costModels() {
+  const set = new Set([S.Model, S.SpeechEngine === "Api" && S.TranscribeModel, S.SpeechEngine === "ElevenLabs" && S.ElevenLabsModel,
+    S.Live && S.LiveModel, ...Object.keys(usage.all)].filter(Boolean));
+  return [...set];
+}
+function renderCost() {
+  $("#costAsOf").textContent = usage.asOf ? `Precios de la documentación, ${usage.asOf}.` : "";
+  const box = $("#costModels");
+  box.innerHTML = costModels().map(m => {
+    const p = priceOf(m), u = usage.all[m];
+    const audio = (p && p.PerMinute > 0) || (u && u.Seconds > 0) || /transcribe|whisper|scribe|live/i.test(m);
+    const fields = audio ? [["PerMinute", "por minuto"]] : [["Input", "entrada"], ["Cached", "caché"], ["Output", "salida"]];
+    return `<div class="row cost-row" data-model="${esc(m)}">
+      <div class="label"><b>${esc(m)}</b><small class="${p ? "" : "none"}">${esc(usedText(u))}${p ? "" : " · sin precio, ponlo abajo"}</small>
+        <div class="prices">${fields.map(([k, t]) => `<label>${t}<input class="input mono" data-k="${k}" inputmode="decimal" value="${p && p[k] != null ? String(p[k]).replace(".", ",") : ""}" placeholder="0"></label>`).join("")}</div>
+      </div>
+      <div class="money"><b data-cost="all"></b><small data-cost="today"></small></div>
+    </div>`;
+  }).join("") || '<div class="row"><div class="label"><small>Aún nada.</small></div></div>';
+  $$(".cost-row input", box).forEach(inp => inp.oninput = () => {
+    const row = inp.closest(".cost-row"), m = row.dataset.model;
+    const p = { ...(priceOf(m) || {}) };
+    $$("input", row).forEach(i => { p[i.dataset.k] = parseFloat(i.value.replace(",", ".")) || 0; });
+    S.Prices = { ...(S.Prices || {}), [m]: p };
+    touch();
+    paintCost();
+  });
+  paintCost();
+}
+function paintCost() {
+  let today = 0, all = 0;
+  $$("#costModels .cost-row").forEach(row => {
+    const m = row.dataset.model, p = priceOf(m);
+    const a = costOf(usage.all[m], p), t = costOf(usage.today[m], p);
+    all += a; today += t;
+    $("[data-cost=all]", row).textContent = usd(a);
+    $("[data-cost=today]", row).textContent = "hoy " + usd(t);
+  });
+  $("#costToday").textContent = usd(today);
+  $("#costAll").textContent = usd(all);
 }
 
 // ── conexión con el proveedor
@@ -1345,6 +1433,10 @@ function demoHost() {
         setTimeout(() => {
           handler({
             type: "init", version: "demo", printsDir: "C:\\Users\\miguel\\Pictures\\Colo",
+            usage: { asOf: "octubre de 2026",
+              known: { "gpt-6-luna": { Input: 0.1, Cached: 0.01, Output: 0.5, PerMinute: 0 }, "gpt-4o-mini-transcribe": { Input: 0, Cached: 0, Output: 0, PerMinute: 0.003 }, "gpt-live-1": { Input: 0, Cached: 0, Output: 0, PerMinute: 0.05 } },
+              today: { "gpt-6-luna": { Input: 120000, Cached: 90000, Output: 4000, Seconds: 0, Calls: 31 }, "gpt-4o-mini-transcribe": { Input: 0, Cached: 0, Output: 0, Seconds: 410, Calls: 40 } },
+              all: { "gpt-6-luna": { Input: 540000, Cached: 410000, Output: 21000, Seconds: 0, Calls: 160 }, "gpt-4o-mini-transcribe": { Input: 0, Cached: 0, Output: 0, Seconds: 1900, Calls: 210 }, "gpt-5.6-luna": { Input: 300000, Cached: 100000, Output: 9000, Seconds: 0, Calls: 50 } } },
             memory: ["Su navegador es Comet", "«El backlog» es la pestaña P&I · Backlog", "«Fresh» es Freshservice, el portal de tickets"],
             mics: [{ id: "{0.0.1.00000000}.{a}", name: "Micrófono (Realtek Audio)" }, { id: "{0.0.1.00000000}.{b}", name: "Microfone do Headset (Plantronics)" }],
             groups: [

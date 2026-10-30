@@ -27,6 +27,7 @@ sealed class SettingsWindow : Form
 
     readonly Settings _s;
     readonly Memory? _memory;
+    readonly TokenMeter? _meter;
     readonly WebView2 _web = new() { Dock = DockStyle.Fill, DefaultBackgroundColor = Color.White };
     readonly CancellationTokenSource _closing = new();
     string _voiceStatus = "";
@@ -57,10 +58,11 @@ sealed class SettingsWindow : Form
         Post(new { type = "voiceStatus", text });
     }
 
-    public SettingsWindow(Settings s, Memory? memory = null)
+    public SettingsWindow(Settings s, Memory? memory = null, TokenMeter? meter = null)
     {
         _s = s;
         _memory = memory;
+        _meter = meter;
         Text = "Colo · Ajustes";
         BackColor = Color.White;
         StartPosition = FormStartPosition.CenterScreen;
@@ -146,6 +148,7 @@ sealed class SettingsWindow : Form
                     printsDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "Colo"),
                     logFile = Log.FilePath,
                     memory = _memory?.Facts ?? [],
+                    usage = Usage(),
                 });
                 if (_voiceStatus.Length > 0) Post(new { type = "voiceStatus", text = _voiceStatus });
                 Ready?.Invoke();
@@ -200,6 +203,13 @@ sealed class SettingsWindow : Form
                 Close();
                 break;
         }
+    }
+
+    /// <summary>Lo usado por modelo (hoy y total) y los precios de lista; la página calcula los dólares.</summary>
+    object Usage()
+    {
+        var (today, all) = _meter?.ByModel() ?? ([], []);
+        return new { today, all, known = Prices.Known, asOf = Prices.AsOf };
     }
 
     static object[] SafeMics()
@@ -299,6 +309,7 @@ sealed class SettingsWindow : Form
         to.Vision = from.Vision;
         to.DisabledTools = from.DisabledTools ?? [];
         to.McpServers = from.McpServers ?? [];
+        to.Prices = from.Prices ?? [];
     }
 
     void Apply(JsonNode? settings)

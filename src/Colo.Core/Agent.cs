@@ -118,9 +118,38 @@ dejar lo que está haciendo? Responde solo «sí» o «no».
         catch { }
     }
 
+    /// <summary>El plan de la tarea en curso (tool plan): pasos y cuáles ya están hechos.</summary>
+    sealed class Plan
+    {
+        public List<string> Steps = [];
+        public HashSet<int> Done = [];
+    }
+
+    static string PlanCall(Plan plan, ToolCall call)
+    {
+        if (call.Args["steps"] is JsonArray steps && steps.Count > 0)
+        {
+            plan.Steps = steps.Select(x => x?.GetValue<string>() ?? "").Where(x => x.Length > 0).ToList();
+            plan.Done.Clear();
+        }
+        if (call.Int("done") is int n && n >= 1 && n <= plan.Steps.Count) plan.Done.Add(n);
+        if (plan.Steps.Count == 0) return "error: plan sin pasos";
+        var next = Enumerable.Range(1, plan.Steps.Count).FirstOrDefault(i => !plan.Done.Contains(i));
+        return next == 0 ? "ok: todas las partes hechas" : $"ok: sigue con la {next}";
+    }
+
+    /// <summary>«✓ 1. …», «→ 2. …», «  3. …» para el turno; null sin plan.</summary>
+    static List<string>? PlanLines(Plan plan)
+    {
+        if (plan.Steps.Count == 0) return null;
+        var next = Enumerable.Range(1, plan.Steps.Count).FirstOrDefault(i => !plan.Done.Contains(i));
+        return plan.Steps.Select((t, i) => (plan.Done.Contains(i + 1) ? "✓ " : i + 1 == next ? "→ " : "  ") + $"{i + 1}. {t}").ToList();
+    }
+
     async Task RunAsync(string first, CancellationToken ct)
     {
         var heard = new List<string> { first };
+        var plan = new Plan();
         var log = new List<string>();
         var fresh = new List<string>();
         string? final = null;
@@ -141,7 +170,7 @@ dejar lo que está haciendo? Responde solo «sí» o «no».
                 look = false;
                 DrainIncoming(heard, log);
                 Emit(AgentEventKind.Thinking, step == 0 ? "Pensando…" : "Mirando la pantalla…");
-                var body = BuildRequest(heard, log, obs, fresh);
+                var body = BuildRequest(heard, log, obs, fresh, PlanLines(plan));
                 var sentFresh = fresh.ToList();
                 fresh.Clear();
 
@@ -187,6 +216,13 @@ dejar lo que está haciendo? Responde solo «sí» o «no».
                         if (call.Name == "stop") { stopped = finished = closed = true; continue; }
                         if (call.Name == "ignore") { ignored = finished = closed = true; continue; }
                         if (call.Name == "listen" && !acted) { listening = closed = true; continue; }
+                        if (call.Name == "plan")
+                        {
+                            var r = PlanCall(plan, call);
+                            log.Add($"plan → {r}");
+                            Emit(AgentEventKind.Action, plan.Done.Count == 0 ? "Planea" : $"Parte {call.Int("done")} hecha");
+                            continue;
+                        }
                         if (call.Name == "look")
                         {
                             look = closed = true;
@@ -306,14 +342,7 @@ dejar lo que está haciendo? Responde solo «sí» o «no».
 
                 // Solo se espera a que la pantalla se asiente si algo cambió en este paso.
                 if (SettleMs > 0 && acted) await Task.Delay(SettleMs, ct);
-                if (log.Count > 40)
-                {
-                    // El plan del primer paso se queda: es lo que ordena un pedido largo.
-                    var plan = log.FindIndex(l => l.StartsWith("Tú:", StringComparison.Ordinal));
-                    var keep = plan >= 0 && plan < log.Count - 40 ? log[plan] : null;
-                    log.RemoveRange(0, log.Count - 40);
-                    if (keep is not null) log.Insert(0, keep);
-                }
+                if (log.Count > 40) log.RemoveRange(0, log.Count - 40);
             }
             Remember(heard, did, "se cortó por demasiados pasos");
             Emit(AgentEventKind.Error, "Me detuve: demasiados pasos.");
@@ -377,7 +406,7 @@ dejar lo que está haciendo? Responde solo «sí» o «no».
     void Emit(AgentEventKind kind, string text) => Event?.Invoke(new AgentEvent(kind, text));
 
     public JsonObject BuildRequest(IReadOnlyList<string> heard, IReadOnlyList<string> log, Observation obs,
-        IReadOnlyList<string>? fresh = null)
+        IReadOnlyList<string>? fresh = null, IReadOnlyList<string>? plan = null)
     {
         var sb = new StringBuilder();
         var facts = Memory is { } mem && !(_s.DisabledTools?.Contains("memory") ?? false) ? mem.Facts : [];
@@ -397,6 +426,11 @@ dejar lo que está haciendo? Responde solo «sí» o «no».
         }
         sb.AppendLine("El usuario dijo:");
         foreach (var h in heard) sb.AppendLine($"«{h}»");
+        if (plan is { Count: > 0 })
+        {
+            sb.AppendLine().AppendLine("Plan (✓ hecho, → ahora):");
+            foreach (var p in plan) sb.AppendLine(p);
+        }
         if (log.Count > 0)
         {
             sb.AppendLine().AppendLine("Ya hiciste:");
