@@ -1,9 +1,8 @@
 name: Windows
 
 # Prueba Colo en Windows real: tests, .exe único y la voz local (Whisper) con frases reales en español.
+# Solo a mano (Actions › Windows › Run workflow): no corre en cada push.
 on:
-  push:
-    branches: [master]
   workflow_dispatch:
 
 jobs:
