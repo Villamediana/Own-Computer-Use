@@ -19,7 +19,7 @@ sealed class PopMenu : LayeredWindow
     public enum Icon { Pause, Play, Stop, Settings, Power }
     public sealed record Entry(string Text, Icon Glyph, Action Run, bool Danger = false, bool GapBefore = false);
 
-    const float W = 236, Pad = 18, Radius = 14, ItemH = 36, HeadH = 58, Gap = 9;
+    const float Pad = 18, Radius = 12, ItemH = 32, HeadH = 50, Gap = 7, MinW = 190, MaxW = 300;
     const int OpenMs = 170, CloseMs = 110;
 
     readonly System.Windows.Forms.Timer _tick = new() { Interval = 15 };
@@ -32,6 +32,19 @@ sealed class PopMenu : LayeredWindow
     float _hoverY = -1, _hoverA;
     Action? _after;
     Point _anchor;
+    // Ancho de la tarjeta: lo que pide el texto más largo (antes fijo, y un título largo salía cortado).
+    float _w = MinW;
+
+    // Segoe UI fija: con la «Variable» GDI+ mide mal y corta letras.
+    static Font TitleFont() => new("Segoe UI Semibold", 9.75f);
+    static Font DetailFont() => new("Segoe UI", 8.25f);
+    static Font ItemFont() => new("Segoe UI", 9.5f);
+    static readonly StringFormat Exact = new(StringFormat.GenericTypographic)
+    {
+        FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.MeasureTrailingSpaces,
+        Trimming = StringTrimming.EllipsisCharacter,
+        LineAlignment = StringAlignment.Center,
+    };
 
     float S => DeviceDpi / 96f;
 
@@ -69,6 +82,14 @@ sealed class PopMenu : LayeredWindow
         _hoverA = hover >= 0 ? 1 : 0;
         _closing = false;
         _after = null;
+        using var bmp = new Bitmap(1, 1);
+        using var g = Graphics.FromImage(bmp);
+        using var tf = TitleFont();
+        using var df = DetailFont();
+        using var itf = ItemFont();
+        var need = Math.Max(30 + g.MeasureString(title, tf, 1000, Exact).Width, 30 + g.MeasureString(detail, df, 1000, Exact).Width);
+        foreach (var it in items) need = Math.Max(need, 44 + g.MeasureString(it.Text, itf, 1000, Exact).Width);
+        _w = Math.Clamp(need + 18, MinW, MaxW);
     }
 
     public void Open(Point at, string title, string detail, Color dot, List<Entry> items)
@@ -92,8 +113,8 @@ sealed class PopMenu : LayeredWindow
     Size CanvasSize()
     {
         var gaps = _items.Count(i => i.GapBefore);
-        var h = HeadH + _items.Count * ItemH + gaps * Gap + 12;
-        return new Size((int)((W + Pad * 2) * S), (int)((h + Pad * 2) * S));
+        var h = HeadH + _items.Count * ItemH + gaps * Gap + 10;
+        return new Size((int)((_w + Pad * 2) * S), (int)((h + Pad * 2) * S));
     }
 
     void Dismiss(Action? then = null)
@@ -128,7 +149,7 @@ sealed class PopMenu : LayeredWindow
 
     float RowTop(int i)
     {
-        var y = Pad + HeadH + 6;
+        var y = Pad + HeadH + 5;
         for (var k = 0; k <= i; k++)
         {
             if (_items[k].GapBefore) y += Gap;
@@ -160,7 +181,7 @@ sealed class PopMenu : LayeredWindow
             // Entra deslizándose 8 px desde el lado del puntero y con una pizca de escala.
             var lift = (1 - shown) * 8 * (_upward ? 1 : -1);
             var scale = 0.97f + 0.03f * shown;
-            var card = new RectangleF(Pad, Pad, W, size.Height / s - Pad * 2);
+            var card = new RectangleF(Pad, Pad, _w, size.Height / s - Pad * 2);
             var pivotY = _upward ? card.Bottom : card.Top;
             g.TranslateTransform(card.Left, pivotY + lift);
             g.ScaleTransform(scale, scale);
@@ -183,24 +204,25 @@ sealed class PopMenu : LayeredWindow
 
             // Cabecera: punto de estado, título y detalle (tokens).
             using (var dot = new SolidBrush(Color.FromArgb(alpha, _dot)))
-                g.FillEllipse(dot, card.X + 16, card.Y + 19, 8, 8);
-            using (var f = Theme.Semibold(10.5f))
+                g.FillEllipse(dot, card.X + 15, card.Y + 15.5f, 7, 7);
+            var textW = card.Width - 30 - 14;
+            using (var f = TitleFont())
             using (var b = new SolidBrush(Color.FromArgb(alpha, Theme.Ink)))
-                g.DrawString(_title, f, b, card.X + 30, card.Y + 13);
-            using (var f = Theme.Text(8.6f))
+                g.DrawString(_title, f, b, new RectangleF(card.X + 30, card.Y + 9, textW, 20), Exact);
+            using (var f = DetailFont())
             using (var b = new SolidBrush(Color.FromArgb(alpha, Theme.Muted)))
-                g.DrawString(_detail, f, b, card.X + 30, card.Y + 33);
+                g.DrawString(_detail, f, b, new RectangleF(card.X + 30, card.Y + 27, textW, 16), Exact);
             using (var line = new Pen(Color.FromArgb((int)(255 * shown), 238, 238, 241), 1f / s))
                 g.DrawLine(line, card.X + 14, card.Y + HeadH, card.Right - 14, card.Y + HeadH);
 
             if (_hoverY >= 0 && _hoverA > 0.01f)
             {
-                using var hp = Theme.Round(new RectangleF(card.X + 6, _hoverY, W - 12, ItemH), 9);
+                using var hp = Theme.Round(new RectangleF(card.X + 5, _hoverY, _w - 10, ItemH), 8);
                 using var hb = new SolidBrush(Color.FromArgb((int)(alpha * _hoverA), 243, 244, 246));
                 g.FillPath(hb, hp);
             }
 
-            using var text = Theme.Text(10f);
+            using var text = ItemFont();
             for (var i = 0; i < _items.Count; i++)
             {
                 var it = _items[i];
@@ -209,10 +231,9 @@ sealed class PopMenu : LayeredWindow
                     using (var sep = new Pen(Color.FromArgb((int)(255 * shown), 238, 238, 241), 1f / s))
                         g.DrawLine(sep, card.X + 14, top - Gap / 2f - 1, card.Right - 14, top - Gap / 2f - 1);
                 var ink = Color.FromArgb(alpha, it.Danger ? Theme.Danger : i == _hover ? Theme.Blue : Theme.Muted);
-                DrawIcon(g, it.Glyph, new PointF(card.X + 26, top + ItemH / 2), ink);
+                DrawIcon(g, it.Glyph, new PointF(card.X + 24, top + ItemH / 2), ink);
                 using var tb = new SolidBrush(Color.FromArgb(alpha, it.Danger ? Theme.Danger : Theme.Ink));
-                var ts = g.MeasureString(it.Text, text);
-                g.DrawString(it.Text, text, tb, card.X + 44, top + (ItemH - ts.Height) / 2);
+                g.DrawString(it.Text, text, tb, new RectangleF(card.X + 42, top, card.Width - 42 - 12, ItemH), Exact);
             }
         }
         return bmp;
@@ -256,7 +277,7 @@ sealed class PopMenu : LayeredWindow
     {
         var x = p.X / S;
         var y = p.Y / S;
-        if (x < Pad || x > Pad + W) return -1;
+        if (x < Pad || x > Pad + _w) return -1;
         for (var i = 0; i < _items.Count; i++)
         {
             var top = RowTop(i);
@@ -289,7 +310,7 @@ sealed class PopMenu : LayeredWindow
         base.OnMouseUp(e);
         var i = HitRow(e.Location);
         if (i >= 0) Dismiss(_items[i].Run);
-        else if (e.Location.X / S < Pad || e.Location.X / S > Pad + W) Dismiss();
+        else if (e.Location.X / S < Pad || e.Location.X / S > Pad + _w) Dismiss();
     }
 
     protected override void OnDeactivate(EventArgs e)

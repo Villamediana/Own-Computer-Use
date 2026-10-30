@@ -934,7 +934,7 @@ sealed class Widget : LayeredWindow
     void ShowMenu()
     {
         var (title, dot) = _agent.Busy ? ("Trabajando…", Color.FromArgb(245, 158, 11))
-            : _listening ? ($"Listo · mantén {_s.TalkHotkey}", Theme.Blue) : ("En pausa", Color.FromArgb(161, 161, 170));
+            : _listening ? ("Listo", Theme.Blue) : ("En pausa", Color.FromArgb(161, 161, 170));
         var detail = $"Tokens · hoy {TokenMeter.Short(_tokens.TodayTokens)} · total {TokenMeter.Short(_tokens.AllTokens)}";
         _menu.Open(Cursor.Position, title, detail, dot,
         [
