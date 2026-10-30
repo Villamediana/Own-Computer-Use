@@ -540,25 +540,35 @@ sealed class Widget : LayeredWindow
     });
 
     /// <summary>
-    /// El servicio a veces tarda 7–12 s en contestar lo que suele hacer en 0,5 s (visto en el registro): si a los
-    /// 2,5 s no llegó, se manda otra vez y vale la primera respuesta (el audio cuesta centésimos de centavo).
+    /// El servicio a veces tarda 7–12 s en contestar lo que suele hacer en 0,5 s (visto en el registro): cada 2,5 s
+    /// sin respuesta se manda otra vez (hasta 3) y vale la primera que llegue (el audio cuesta centésimos de centavo).
+    /// Una sola repetición no bastaba: a veces las dos se quedaban colgadas 10 s.
     /// </summary>
     static async Task<string> Hedged(Func<CancellationToken, Task<string>> call)
     {
         using var cts = new CancellationTokenSource();
-        var first = call(cts.Token);
-        if (await Task.WhenAny(first, Task.Delay(2500)) == first) return await first;
-        Log.Write("voz: la transcripción tarda, la pido otra vez");
-        var second = call(cts.Token);
-        var winner = await Task.WhenAny(first, second);
-        var other = winner == first ? second : first;
-        try
+        var pending = new List<Task<string>> { call(cts.Token) };
+        Exception? last = null;
+        while (pending.Count > 0)
         {
-            var text = await winner;
-            cts.Cancel();
-            return text;
+            var wait = pending.Count < 3 ? Task.Delay(2500) : null;
+            var any = wait is null ? await Task.WhenAny(pending) : await Task.WhenAny(pending.Append(wait));
+            if (any == wait)
+            {
+                Log.Write("voz: la transcripción tarda, la pido otra vez");
+                pending.Add(call(cts.Token));
+                continue;
+            }
+            var done = (Task<string>)any;
+            pending.Remove(done);
+            if (done.IsCompletedSuccessfully)
+            {
+                cts.Cancel();
+                return done.Result;
+            }
+            last = done.Exception?.InnerException ?? last;
         }
-        catch when (!other.IsCompleted || other.IsCompletedSuccessfully) { return await other; }
+        throw last ?? new InvalidOperationException("transcripción sin respuesta");
     }
 
     /// <summary>Junta los trozos en orden y hace lo que toca. Corre en el hilo de la interfaz.</summary>
@@ -820,6 +830,8 @@ sealed class Widget : LayeredWindow
                 Idle();
                 break;
             case AgentEventKind.Ignored:
+                // Sin esto la onda se iba sin decir nada y parecía colgado.
+                Say("No entendí, repite", Theme.Muted, 2500);
                 LiveResult(c => c.Thinking(_liveTask!, "En el PC no había nada que hacer con eso."));
                 Idle();
                 break;

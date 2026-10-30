@@ -205,14 +205,21 @@ sealed class WindowsComputer : IComputer
                     var role = Roles.FirstOrDefault(x => x.Type == type).Role ?? "elemento";
                     var name = (e.Cached.Name ?? "").Replace('\n', ' ').Replace('\r', ' ').Trim();
                     if (name.Length > 60) name = name[..60] + "…";
+                    var focused = e.GetCachedPropertyValue(AutomationElement.HasKeyboardFocusProperty, true) is true;
                     var value = "";
                     if (type == ControlType.Edit || type == ControlType.ComboBox)
                     {
                         var v = e.GetCachedPropertyValue(ValuePattern.ValueProperty, true);
                         if (v is string str && !(e.GetCachedPropertyValue(AutomationElement.IsPasswordProperty) is true))
-                            value = str.Length > 40 ? str[..40].Replace('\n', ' ') + "…" : str.Replace('\n', ' ');
+                        {
+                            // El campo con foco va entero: con 40 letras el modelo «mejoraba» un correo reescribiendo
+                            // solo el principio cortado (y lo borraba). Los demás, cortos y diciendo que falta texto.
+                            var max = focused ? 3000 : 40;
+                            str = str.Replace('\r', ' ').Replace('\n', ' ');
+                            value = str.Length > max ? $"{str[..max]}… [faltan {str.Length - max} letras: read_text]" : str;
+                        }
                     }
-                    var state = e.GetCachedPropertyValue(AutomationElement.HasKeyboardFocusProperty, true) is true ? "foco"
+                    var state = focused ? "foco"
                         : e.GetCachedPropertyValue(SelectionItemPattern.IsSelectedProperty, true) is true ? (type == ControlType.TabItem ? "activa" : "elegido")
                         : e.GetCachedPropertyValue(TogglePattern.ToggleStateProperty, true) is ToggleState.On ? "marcada" : "";
                     found.Add(new Element(role, name, value, r, state));
