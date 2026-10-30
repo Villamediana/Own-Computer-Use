@@ -94,6 +94,16 @@ static class Input
         }
     }
 
+    /// <summary>Clic seco, sin deslizar (para el dictado: tiene que ser instantáneo); el ratón vuelve a donde estaba.</summary>
+    public static void ClickNow(Point p)
+    {
+        GetCursorPos(out var cur);
+        SetCursorPos(p.X, p.Y);
+        Send(Mouse(MOUSEEVENTF_LEFTDOWN), Mouse(MOUSEEVENTF_LEFTUP));
+        Thread.Sleep(30);
+        SetCursorPos(cur.x, cur.y);
+    }
+
     public static void Scroll(Point p, string direction, int notches)
     {
         MoveTo(p);

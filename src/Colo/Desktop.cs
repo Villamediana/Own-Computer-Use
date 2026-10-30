@@ -155,31 +155,43 @@ static class Desktop
         if (Writable(under))
         {
             // Clic donde está el ratón: el cursor de texto queda ahí.
-            Input.Click(new System.Drawing.Point(m.x, m.y), "left", false);
+            Input.ClickNow(new System.Drawing.Point(m.x, m.y));
             return "bajo el ratón";
         }
         var fg = Native.GetForegroundWindow();
         if (fg == IntPtr.Zero) return "nada (sin ventana)";
+        // Todo lo que hace falta de cada campo viene en una sola ida (en Teams o un navegador el árbol es enorme).
+        var cr = new CacheRequest();
+        cr.Add(AutomationElement.BoundingRectangleProperty);
+        cr.Add(AutomationElement.NameProperty);
+        cr.Add(AutomationElement.ControlTypeProperty);
+        cr.Add(AutomationElement.IsTextPatternAvailableProperty);
+        cr.Add(AutomationElement.IsValuePatternAvailableProperty);
+        cr.Add(ValuePattern.IsReadOnlyProperty);
         AutomationElement? best = null;
         var bestDistance = double.MaxValue;
-        foreach (AutomationElement e in AutomationElement.FromHandle(fg).FindAll(TreeScope.Descendants, TextFields))
+        var root = AutomationElement.FromHandle(fg);
+        AutomationElementCollection found;
+        using (cr.Activate()) found = root.FindAll(TreeScope.Descendants, TextFields);
+        foreach (AutomationElement e in found)
         {
-            if (!Writable(e)) continue;
-            var r = e.Current.BoundingRectangle;
-            if (r.IsEmpty || r.Width < 8 || r.Height < 8) continue;
+            if (e.GetCachedPropertyValue(AutomationElement.IsValuePatternAvailableProperty) is true
+                && e.GetCachedPropertyValue(ValuePattern.IsReadOnlyProperty, true) is true) continue;
+            if (e.GetCachedPropertyValue(AutomationElement.ControlTypeProperty) != ControlType.Edit
+                && e.GetCachedPropertyValue(AutomationElement.IsTextPatternAvailableProperty) is not true) continue;
+            if (e.GetCachedPropertyValue(AutomationElement.BoundingRectangleProperty) is not System.Windows.Rect r
+                || r.IsEmpty || r.Width < 8 || r.Height < 8) continue;
             var dx = Math.Max(0, Math.Max(r.Left - mouse.X, mouse.X - r.Right));
             var dy = Math.Max(0, Math.Max(r.Top - mouse.Y, mouse.Y - r.Bottom));
             var d = dx * dx + dy * dy;
             if (d < bestDistance) { best = e; bestDistance = d; }
         }
         if (best is null) return "nada (no hay campo de texto)";
-        try { best.SetFocus(); } catch { }
-        if (!Writable(AutomationElement.FocusedElement) || AutomationElement.FocusedElement?.Current.BoundingRectangle != best.Current.BoundingRectangle)
-        {
-            var r = best.Current.BoundingRectangle;
-            Input.Click(new System.Drawing.Point((int)(r.Left + r.Width / 2), (int)(r.Top + r.Height / 2)), "left", false);
-        }
-        return $"«{best.Current.Name}» (el campo más cercano)";
+        var box = (System.Windows.Rect)best.GetCachedPropertyValue(AutomationElement.BoundingRectangleProperty);
+        var name = best.GetCachedPropertyValue(AutomationElement.NameProperty) as string ?? "";
+        // Clic en el centro: así también se activa en las páginas web, donde SetFocus no siempre basta.
+        Input.ClickNow(new System.Drawing.Point((int)(box.Left + box.Width / 2), (int)(box.Top + box.Height / 2)));
+        return $"«{name}» (el campo más cercano)";
     }
 
     [System.Runtime.InteropServices.DllImport("user32.dll")] static extern uint GetClipboardSequenceNumber();

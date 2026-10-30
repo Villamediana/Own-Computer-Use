@@ -141,7 +141,8 @@ public sealed class AiClient
         return TimeSpan.FromSeconds(Math.Clamp(s, 1, MaxRetryWait.TotalSeconds));
     }
 
-    public async IAsyncEnumerable<JsonNode> StreamAsync(JsonObject body, [EnumeratorCancellation] CancellationToken ct)
+    /// <param name="onText">Cada trozo de texto según llega (para escribir el dictado sin esperar al final).</param>
+    public async IAsyncEnumerable<JsonNode> StreamAsync(JsonObject body, [EnumeratorCancellation] CancellationToken ct, Action<string>? onText = null)
     {
         body["stream"] = true;
         var json = body.ToJsonString();
@@ -182,6 +183,9 @@ public sealed class AiClient
             try { ev = JsonNode.Parse(data); } catch { continue; }
             switch (ev?["type"]?.GetValue<string>())
             {
+                case "response.output_text.delta":
+                    if (onText is not null && ev["delta"]?.GetValue<string>() is { Length: > 0 } d) onText(d);
+                    break;
                 case "response.output_item.done":
                     if (ev["item"] is JsonNode item) yield return item;
                     break;

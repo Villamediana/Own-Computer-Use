@@ -39,10 +39,12 @@ A 1ª linha diz onde vai ser escrito: não a copie. Devolve só o texto.
         return body;
     }
 
-    public static async Task<string> PolishAsync(AiClient ai, Settings s, string heard, string window, CancellationToken ct)
+    /// <param name="onText">Cada trozo según llega: se puede ir escribiendo sin esperar el texto entero.</param>
+    public static async Task<string> PolishAsync(AiClient ai, Settings s, string heard, string window, CancellationToken ct,
+        Action<string>? onText = null)
     {
         var text = new StringBuilder();
-        await foreach (var item in ai.StreamAsync(Request(s, heard, window), ct))
+        await foreach (var item in ai.StreamAsync(Request(s, heard, window), ct, onText))
         {
             if (item["type"]?.GetValue<string>() != "message") continue;
             foreach (var c in item["content"]?.AsArray() ?? [])

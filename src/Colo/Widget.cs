@@ -659,7 +659,7 @@ sealed class Widget : LayeredWindow
                     if (_settingsWindow is not null) { _settingsWindow.VoiceHeard(text, ms); return; }
                     // Una letra suelta («¡Y!», «Eh.») es ruido: ni se manda al modelo. «Sí» o «no» sí pasan.
                     if (text.Count(char.IsLetter) < 2) { if (text.Length > 0) Log.Write($"voz: descartado «{text}» (sin palabras)"); return; }
-                    if (dictate) { DictateNow(text); return; }
+                    if (dictate) { DictateNow(text, ms); return; }
                     Command(text);
                 });
             }
@@ -674,30 +674,49 @@ sealed class Widget : LayeredWindow
     /// <summary>Glosario para la transcripción: palabras de las órdenes y los programas abiertos.</summary>
     static string Glossary() => LocalStt.PromptFor(Native.AppWindows().Select(Native.ProcessName));
 
-    /// <summary>Atajo de dictar: el modelo lo deja escrito con tu tono y va donde está el cursor.</summary>
-    async void DictateNow(string heard)
+    /// <summary>
+    /// Atajo de dictar: el modelo lo deja escrito con tu tono y va donde está el cursor. Se escribe a medida que
+    /// llega (no espera la respuesta entera) y, mientras tanto, se busca dónde escribir.
+    /// </summary>
+    async void DictateNow(string heard, long sttMs)
     {
         Say("Escribiendo…", Theme.Muted, 8000);
         var window = Native.WindowLabel(Native.GetForegroundWindow());
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var where = Task.Run(() =>
+        {
+            try { return Desktop.EnsureTextFocus(); }
+            catch (Exception ex) { return "no pude mirar el foco · " + ex.Message; }
+        });
+        var chunks = Channel.CreateUnbounded<string>(new UnboundedChannelOptions { SingleReader = true });
+        long first = -1, focusMs = 0;
+        var typer = Task.Run(async () =>
+        {
+            var target = await where;
+            focusMs = sw.ElapsedMilliseconds;
+            var start = true;
+            await foreach (var c in chunks.Reader.ReadAllAsync())
+            {
+                var t = start ? c.TrimStart() : c;
+                if (t.Length == 0) continue;
+                if (start) first = sw.ElapsedMilliseconds;
+                start = false;
+                Input.Type(t);
+            }
+            return target;
+        });
         try
         {
-            var sw = System.Diagnostics.Stopwatch.StartNew();
-            // Mientras el modelo lo pule, se busca dónde escribir: los dos a la vez, para no sumar tiempo.
-            var polish = Task.Run(() => Dictation.PolishAsync(_ai, _s, heard, window, CancellationToken.None));
-            var where = Task.Run(() =>
-            {
-                try { return Desktop.EnsureTextFocus(); }
-                catch (Exception ex) { return "no pude mirar el foco · " + ex.Message; }
-            });
-            var text = await polish;
-            var target = await where;
-            Log.Write($"dicta: «{heard}» → «{text}» ({sw.ElapsedMilliseconds} ms) en «{window}», escribe en {target}");
+            var text = await Task.Run(() => Dictation.PolishAsync(_ai, _s, heard, window, CancellationToken.None, d => chunks.Writer.TryWrite(d)));
+            chunks.Writer.TryComplete();
+            var target = await typer;
+            Log.Write($"dicta: transcribir {sttMs} ms · buscar campo {focusMs} ms · 1ª letra {first} ms · total {sw.ElapsedMilliseconds} ms · en {target} · «{heard}» → «{text}»");
             if (text.Length == 0) { Say("", Theme.Muted, 0); return; }
             Say("«" + text + "»", Theme.Muted, 1500 + text.Length * 30);
-            Input.Type(text);
         }
         catch (Exception ex)
         {
+            chunks.Writer.TryComplete();
             Log.Write("dicta: falló · " + ex.Message);
             Say("No pude escribir el dictado: " + ex.Message, Theme.Danger, 6000);
         }
