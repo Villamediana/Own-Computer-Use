@@ -484,21 +484,22 @@
           <h2>Modelo local</h2>
           <div class="seg" data-bind="LocalModel" data-options="base:Whisper base · rápido|small:Whisper small · más preciso"></div>
           <p class="hint" id="modelHint"></p>
+          <h2>Idioma en que hablas</h2>
+          <select class="input" id="language">
+            <option value="es">Español</option>
+            <option value="pt">Português</option>
+            <option value="en">English</option>
+            <option value="auto">Detectar solo (menos fiable en frases cortas)</option>
+          </select>
+          <p class="hint">Solo para Whisper en tu PC. Por API, ElevenLabs y GPT-Live entiende el idioma que hables.</p>
         </div>
-        <h2>Idioma en que hablas</h2>
-        <select class="input" id="language">
-          <option value="es">Español</option>
-          <option value="pt">Português</option>
-          <option value="en">English</option>
-          <option value="auto">Detectar solo (menos fiable en frases cortas)</option>
-        </select>
         <div id="apiVoice" hidden>
           <h2>Modelo de transcripción</h2>
           <div class="field combo" id="voiceCombo">
             <input class="input" id="voiceModel" spellcheck="false" autocomplete="off" placeholder="gpt-4o-mini-transcribe">
             <div class="pop"></div>
           </div>
-          <p class="hint">Va con el idioma elegido y un glosario con los programas abiertos.</p>
+          <p class="hint">Entiende el idioma que hables; va con un glosario de los programas abiertos.</p>
         </div>
         <div id="voiceConn" hidden>
           <h2>Conexión de la voz</h2>

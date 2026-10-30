@@ -176,28 +176,62 @@ sealed class Widget : LayeredWindow
         try { BeginInvoke(a); } catch (InvalidOperationException) { }
     }
 
-    int _micRetries;
-
     void OnMicFailed(string reason)
     {
-        if (!_listening) return;
-        _listening = false;
+        // Bluetooth que se desconecta, otro programa que toma el micrófono…: la próxima vez que aprietes se abre de nuevo.
         _hearing = false;
-        // Bluetooth que se desconecta, otro programa que toma el micrófono…: se reintenta solo.
-        if (++_micRetries > 5)
-        {
-            Problem("Micrófono: " + reason);
-            return;
-        }
-        Say("Micrófono cortado, reintentando…", Theme.Muted, 3000);
-        _ = RetryMicAsync();
+        Say("Micrófono: " + reason, Theme.Danger, 5000);
     }
 
-    async Task RetryMicAsync()
+    // ── el micrófono solo está abierto mientras se usa (atajo apretado o la prueba de Ajustes)
+    readonly object _micGate = new();
+    Task _micChain = Task.CompletedTask;
+    int _micUsers;
+
+    void MicAcquire()
     {
-        await Task.Delay(2000);
-        if (!_listening && !_settingsOpen && _mode != Mode.Paused) await StartListeningAsync();
+        var l = _listener;
+        if (l is null) return;
+        lock (_micGate)
+        {
+            if (_micUsers++ > 0) return;
+            MicChain(() =>
+            {
+                _mic.Start(_s.MicId, l);
+                Post(() => VoiceStatus($"Micrófono «{_mic.DeviceName}» abierto"));
+            });
+        }
     }
+
+    void MicRelease(bool all = false)
+    {
+        lock (_micGate)
+        {
+            if (_micUsers == 0) return;
+            _micUsers = all ? 0 : _micUsers - 1;
+            if (_micUsers > 0) return;
+            MicChain(() =>
+            {
+                _mic.Stop();
+                Post(() => VoiceStatus($"Listo · mantén {_s.TalkHotkey} y habla para probar"));
+            });
+        }
+    }
+
+    // Abrir y cerrar en orden y fuera del hilo de la interfaz (ahí corre el gancho del teclado: no puede esperar).
+    void MicChain(Action a) => _micChain = _micChain.ContinueWith(_ =>
+    {
+        try { a(); }
+        catch (Exception ex)
+        {
+            Log.Write("micrófono: " + ex);
+            Post(() =>
+            {
+                Say("Micrófono: " + ex.Message, Theme.Danger, 6000);
+                VoiceStatus("No pude abrir el micrófono: " + ex.Message);
+            });
+        }
+    }, TaskScheduler.Default);
 
     bool Configured() =>
         !string.IsNullOrWhiteSpace(_s.ApiKey) && !string.IsNullOrWhiteSpace(_s.Model)
@@ -303,18 +337,10 @@ sealed class Widget : LayeredWindow
         l.Raw += OnRaw;
         _speaker ??= TryCreateSpeaker();
         if (_speaker is not null) _speaker.Listener = l;
-        try { _mic.Start(_s.MicId, l); }
-        catch (Exception ex)
-        {
-            Log.Write("micrófono: no abrió · " + ex);
-            Problem("Micrófono: " + ex.Message);
-            VoiceStatus("No pude abrir el micrófono: " + ex.Message);
-            return;
-        }
+        // Listo para el atajo; el micrófono se abre al apretarlo.
         _listening = true;
-        VoiceStatus($"Micrófono «{_mic.DeviceName}» · mantén {_s.TalkHotkey} y habla para probar");
+        VoiceStatus($"Listo · mantén {_s.TalkHotkey} y habla para probar");
         if (!forTest) Say($"Mantén {_s.TalkHotkey} para hablarme", Theme.Muted, 3500);
-        _micRetries = 0;
         _mode = _agent.Busy ? Mode.Busy : Mode.Listening;
     }
 
@@ -325,7 +351,9 @@ sealed class Widget : LayeredWindow
 
     void StopListening()
     {
-        _mic.Stop();
+        _holding = null;
+        _listener?.EndTake();
+        MicRelease(all: true);
         _listening = false;
         _hearing = false;
         _target = 0;
@@ -391,6 +419,7 @@ sealed class Widget : LayeredWindow
         if (_listener is null) return;
         _listener.Muted = false;
         _holding = id;
+        MicAcquire();
         _hearing = true;
         _settingsWindow?.VoiceVad(true);
         Kick(-0.9);     // aparece estirándose hacia arriba, como una gota que cae y rebota
@@ -415,6 +444,7 @@ sealed class Widget : LayeredWindow
         {
             _live.Mute();
             _liveQuietSince = DateTime.Now;
+            MicRelease();
             return;
         }
         // Un poco de cola: al soltar rápido no se pierde la última sílaba.
@@ -427,6 +457,7 @@ sealed class Widget : LayeredWindow
         _holding = null;
         _hearing = false;
         _settingsWindow?.VoiceVad(false);
+        MicRelease();
         if (_live is not null && _listener?.Taking != true) { _live.Mute(); return; }
         _listener?.EndTake();
         Log.Write("atajo: cancelado (era otro atajo)");
@@ -434,6 +465,8 @@ sealed class Widget : LayeredWindow
 
     void FinishTake(bool dictate)
     {
+        MicRelease();
+        // Ya volvió a apretar: lo de antes se junta con lo nuevo.
         if (_holding is not null || _listener is null) return;
         var samples = _listener.EndTake();
         var seconds = samples.Length / (double)Listener.Rate;
@@ -545,12 +578,17 @@ sealed class Widget : LayeredWindow
                 _probe = null;
             }
         }
-        if (done is not null) _ = Task.Run(() => AnalyzeProbe(done));
+        if (done is not null)
+        {
+            Post(() => MicRelease());
+            _ = Task.Run(() => AnalyzeProbe(done));
+        }
     }
 
     void StartProbe()
     {
-        if (!_listening) { _settingsWindow?.ProbeResult(new { error = "El micrófono no está escuchando." }); return; }
+        if (!_listening) { _settingsWindow?.ProbeResult(new { error = "La voz todavía no está lista." }); return; }
+        MicAcquire();
         lock (_probeLock) _probe = new List<short>(Listener.Rate * 5);
         Log.Write("prueba: grabando 5 s");
     }
@@ -774,7 +812,7 @@ sealed class Widget : LayeredWindow
                 || (_s.SpeechEngine == SpeechEngine.ElevenLabs && _s.ElevenLabsKey.Length > 0) || Configured();
             f.Ready += () =>
             {
-                if (_listening) f.VoiceStatus($"Escuchando con «{_mic.DeviceName}»");
+                if (_listening) f.VoiceStatus($"Listo · mantén {_s.TalkHotkey} y habla para probar");
                 else if (CanTest())
                 {
                     // Para la prueba se enciende aunque falte la key del modelo.
@@ -848,11 +886,11 @@ sealed class Widget : LayeredWindow
     void ShowMenu()
     {
         var (title, dot) = _agent.Busy ? ("Trabajando…", Color.FromArgb(245, 158, 11))
-            : _listening ? ("Escuchando", Theme.Blue) : ("En pausa", Color.FromArgb(161, 161, 170));
+            : _listening ? ($"Listo · mantén {_s.TalkHotkey}", Theme.Blue) : ("En pausa", Color.FromArgb(161, 161, 170));
         var detail = $"Tokens · hoy {TokenMeter.Short(_tokens.TodayTokens)} · total {TokenMeter.Short(_tokens.AllTokens)}";
         _menu.Open(Cursor.Position, title, detail, dot,
         [
-            new(_listening ? "Pausar" : "Escuchar", _listening ? PopMenu.Icon.Pause : PopMenu.Icon.Play, ToggleListening),
+            new(_listening ? "Pausar" : "Seguir", _listening ? PopMenu.Icon.Pause : PopMenu.Icon.Play, ToggleListening),
             new("Detener lo que hace", PopMenu.Icon.Stop, () => _agent.Stop()),
             new("Ajustes…", PopMenu.Icon.Settings, OpenSettings, GapBefore: true),
             new("Salir", PopMenu.Icon.Power, Close, Danger: true),

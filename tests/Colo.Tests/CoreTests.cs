@@ -127,14 +127,13 @@ public class CoreTests(ITestOutputHelper output)
         Assert.Equal("https://latam.openai.azure.com/openai/deployments/gpt-4o-mini-transcribe/audio/transcriptions?api-version=2025-03-01-preview",
             h.Seen[0].Req.RequestUri!.ToString());
         Assert.Contains("name=model", h.Seen[0].Body);
-        // Idioma fijo y glosario van en la petición.
-        Assert.Contains("name=language", h.Seen[0].Body);
+        // Glosario sí; idioma no: entiende el que hables.
+        Assert.DoesNotContain("name=language", h.Seen[0].Body);
         Assert.Contains("Glosario: Comet.", h.Seen[0].Body);
 
-        var o = new Settings { Provider = Provider.OpenAI, ApiKey = "sk", TranscribeModel = "gpt-4o-mini-transcribe", Language = "auto" };
+        var o = new Settings { Provider = Provider.OpenAI, ApiKey = "sk", TranscribeModel = "gpt-4o-mini-transcribe" };
         await new AiClient(o, new HttpClient(h)).TranscribeAsync(wav, "", default);
         Assert.Equal("https://api.openai.com/v1/audio/transcriptions", h.Seen[1].Req.RequestUri!.ToString());
-        Assert.DoesNotContain("name=language", h.Seen[1].Body);
 
         // Conexión propia para la voz: otro recurso y otra llave que el modelo.
         var own = Azure();

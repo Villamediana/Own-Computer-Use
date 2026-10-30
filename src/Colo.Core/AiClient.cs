@@ -217,8 +217,7 @@ public sealed class AiClient
         file.Headers.ContentType = new("audio/wav");
         form.Add(file, "file", "voz.wav");
         form.Add(new StringContent(_s.TranscribeModel), "model");
-        // Idioma fijo y glosario: en frases cortas el modelo acierta mucho más que adivinando.
-        if (_s.Language is { Length: > 0 } lang && lang != "auto") form.Add(new StringContent(lang), "language");
+        // Sin idioma fijo: entiende el que hables. El glosario orienta en nombres de programas y órdenes.
         if (prompt.Length > 0) form.Add(new StringContent(prompt), "prompt");
         r.Content = form;
         var j = await Send(r, ct);

@@ -23,7 +23,7 @@ public sealed class Settings
     public SpeechEngine SpeechEngine { get; set; } = SpeechEngine.Local;
     /// <summary>Modelo de Whisper local: «base» o «small».</summary>
     public string LocalModel { get; set; } = "base";
-    /// <summary>Idioma en que hablas: «es», «pt», «en» o «auto».</summary>
+    /// <summary>Idioma de Whisper local: «es», «pt», «en» o «auto». La API, ElevenLabs y GPT-Live entienden el que hables.</summary>
     public string Language { get; set; } = "es";
     public string TranscribeModel { get; set; } = "";
     /// <summary>

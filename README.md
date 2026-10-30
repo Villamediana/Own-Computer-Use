@@ -19,9 +19,10 @@ hacer clic y qué está haciendo.
   el PC, GPT-Live lo delega en Colo (delegación al cliente) y dice el resultado con su voz; cuelga sola cuando la
   tarea terminó y lleva 8 s callada.
 
-- **Voz**: lo dicho con el atajo apretado (más 300 ms de antes) va a una de tres transcripciones: Whisper en el
-  propio PC (base o small, sin tokens), el modelo de transcripción de OpenAI/Foundry (p. ej. gpt-4o-mini-transcribe)
-  o ElevenLabs Scribe. Todas con el idioma fijo; Whisper y la API, además, con un glosario y los programas abiertos.
+- **Voz**: el micrófono se abre al apretar el atajo y se cierra al soltarlo (nada queda escuchando en segundo plano).
+  Lo dicho va a una de tres transcripciones: Whisper en el propio PC (base o small, sin tokens, con idioma fijo),
+  el modelo de transcripción de OpenAI/Foundry (p. ej. gpt-4o-mini-transcribe) o ElevenLabs Scribe; estas dos y
+  GPT-Live entienden el idioma que hables. Whisper y la API llevan un glosario con los programas abiertos.
   La API y GPT-Live pueden usar otra conexión (endpoint y llave) que la del modelo.
 - **Respuestas habladas** (opcional): ElevenLabs v4 con etiquetas de emoción ([laughs], [warmly]…) que la voz
   interpreta y no se ven en pantalla, o la voz de Windows. El micrófono se pausa mientras habla.

@@ -24,7 +24,6 @@ public sealed class ElevenLabsStt(Settings settings, HttpClient? http = null)
         // Solo el texto: sin etiquetas de sonidos ni marcas de tiempo por palabra (más rápido).
         form.Add(new StringContent("false"), "tag_audio_events");
         form.Add(new StringContent("none"), "timestamps_granularity");
-        if (settings.Language is { Length: > 0 } lang && lang != "auto") form.Add(new StringContent(lang), "language_code");
         req.Content = form;
         using var resp = await _http.SendAsync(req, ct);
         var body = await resp.Content.ReadAsStringAsync(ct);
