@@ -138,7 +138,7 @@ sealed class Widget : LayeredWindow
     {
         if (!Configured())
         {
-            Problem("Toca para configurar");
+            Problem(Missing() + " · toca para abrir");
             OpenSettings();
             return;
         }
@@ -233,16 +233,25 @@ sealed class Widget : LayeredWindow
         }
     }, TaskScheduler.Default);
 
-    bool Configured() =>
-        !string.IsNullOrWhiteSpace(_s.ApiKey) && !string.IsNullOrWhiteSpace(_s.Model)
-        && (_s.Provider == Provider.OpenAI || !string.IsNullOrWhiteSpace(_s.Endpoint))
-        && _s.SpeechEngine switch
+    bool Configured() => Missing() is null;
+
+    /// <summary>Qué falta para funcionar, dicho con el nombre que tiene en Ajustes; null = nada.</summary>
+    string? Missing()
+    {
+        if (string.IsNullOrWhiteSpace(_s.ApiKey)) return "Falta la API key en Ajustes › Modelo";
+        if (string.IsNullOrWhiteSpace(_s.Model)) return "Falta elegir el modelo en Ajustes › Modelo";
+        if (_s.Provider == Provider.Azure && string.IsNullOrWhiteSpace(_s.Endpoint)) return "Falta el endpoint en Ajustes › Modelo";
+        // En vivo, el motor de transcripción solo hace falta para el atajo de dictar.
+        if (!_s.Live || _s.DictateHotkey.Length > 0)
         {
-            SpeechEngine.Api => !string.IsNullOrWhiteSpace(_s.TranscribeModel),
-            SpeechEngine.ElevenLabs => !string.IsNullOrWhiteSpace(_s.ElevenLabsKey),
-            _ => true,
+            if (_s.SpeechEngine == SpeechEngine.Api && string.IsNullOrWhiteSpace(_s.TranscribeModel)) return "Falta el modelo de transcripción en Ajustes › Voz";
+            if (_s.SpeechEngine == SpeechEngine.ElevenLabs && string.IsNullOrWhiteSpace(_s.ElevenLabsKey)) return "Falta la API key de ElevenLabs en Ajustes › Voz";
         }
-        && (!_s.Live || (!string.IsNullOrWhiteSpace(_s.LiveModel) && !string.IsNullOrWhiteSpace(AiClient.VoiceConnection(_s).ApiKey)));
+        if (_s.Live && string.IsNullOrWhiteSpace(_s.LiveModel)) return "Falta el modelo de GPT-Live en Ajustes › Voz";
+        if (_s.VoiceOwn && (_s.Live || _s.SpeechEngine == SpeechEngine.Api) && string.IsNullOrWhiteSpace(_s.VoiceKey))
+            return "Falta la API key de la conexión de la voz en Ajustes › Voz";
+        return null;
+    }
 
     void ApplyAutostart()
     {
@@ -863,7 +872,7 @@ sealed class Widget : LayeredWindow
             Say("", Theme.Muted, 0);
             _ = StartListeningAsync();
         }
-        else Problem("Falta la llave o el modelo");
+        else Problem(Missing()!);
     }
 
     void BuildMenu()

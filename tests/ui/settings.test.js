@@ -40,9 +40,11 @@ const assert = (c, m) => { if (!c) { console.log('FAIL:', m); process.exitCode =
   await page.click('nav button[data-page=voice]');
   assert(await page.isVisible('#p-voice'), 'navega a Voz');
   assert((await page.textContent('#talkKeys')).replace(/\s/g, '') === 'CtrlWin', 'muestra el atajo para hablar');
-  assert((await page.textContent('#dictateKeys')).includes('Apagado'), 'dictar empieza apagado');
-  // dos letras cualesquiera, apretadas a la vez
-  await page.click('#recordDictate');
+  assert(!(await page.isChecked('#dictateOn')) && !(await page.isVisible('#dictateKeys')), 'dictar empieza apagado');
+  assert(await page.isVisible('#localVoice') && !(await page.isVisible('#voiceModel')), 'solo se ven las opciones de la transcripción elegida');
+  assert(!(await page.isVisible('#liveModel')) && !(await page.isVisible('#voiceConn')), 'lo de GPT-Live no se ve si no se elige');
+  // dos letras cualesquiera, apretadas a la vez (encender dictar ya pide el atajo)
+  await page.click('label.switch:has(#dictateOn)');
   await page.keyboard.down('KeyJ');
   await page.keyboard.down('KeyK');
   await page.keyboard.up('KeyK');
@@ -60,8 +62,10 @@ const assert = (c, m) => { if (!c) { console.log('FAIL:', m); process.exitCode =
   await page.keyboard.up('Shift');
   await page.keyboard.up('Control');
   assert((await sent()).some(m => m.type === 'recordingKeys' && m.on) && (await last('recordingKeys'))?.on === false, 'pausa los atajos mientras graba');
-  await page.click('label.switch:has(#live)');
+  await page.click('#modeChoice .choice[data-v=live]');
   assert(await page.isVisible('#liveModel') && await page.isVisible('#voiceConn'), 'GPT-Live muestra modelo y conexión');
+  assert(!(await page.isVisible('#replySection')), 'en vivo no hay voz de respuesta aparte');
+  assert((await page.textContent('#engineHint')).includes('dictar'), 'con dictar encendido, la transcripción queda para el dictado');
   await page.click('[data-bind=VoiceOwn] button[data-v=own]');
   await page.fill('#voiceKey', 'k-voz');
   await page.evaluate(() => document.querySelector('#talkKeys').scrollIntoView());
@@ -70,16 +74,28 @@ const assert = (c, m) => { if (!c) { console.log('FAIL:', m); process.exitCode =
   await page.evaluate(() => document.querySelector('#voiceConn').scrollIntoView());
   await page.waitForTimeout(800);
   await page.screenshot({ path: process.argv[2] + '/voz-conexion.png' });
+  await page.click('#modeChoice .choice[data-v=normal]');
+  assert(await page.isVisible('#replySection') && !(await page.isVisible('#liveModel')), 'volver a «le pides y lo hace»');
   await page.click('label.switch:has(#speak)');
   await page.selectOption('#mic', 'id-b');
   await page.click('[data-bind=LocalModel] button[data-v=small]');
   await page.selectOption('#language', 'pt');
-  await page.click('[data-bind=SpeechEngine] button[data-v=ElevenLabs]');
+  await page.click('#engineChoice .choice[data-v=ElevenLabs]');
   assert(await page.isVisible('#elevenKey') && !(await page.isVisible('#voiceModel')), 'ElevenLabs muestra su llave');
   await page.fill('#elevenKey', 'xi-abc');
-  await page.click('[data-bind=SpeechEngine] button[data-v=Api]');
+  await page.click('#engineChoice .choice[data-v=Api]');
   assert(await page.isVisible('#voiceModel'), 'modelo de transcripción aparece con API');
+  assert((await page.textContent('#voiceProblem')).includes('transcripción'), 'dice qué falta: el modelo de transcripción');
+  await page.click('[data-bind=VoiceOwn] button[data-v=same]');
+  assert((await page.textContent('#voiceSame')).includes('…ueva'), 'muestra qué llave toma de Modelo');
+  await page.focus('#voiceModel');
+  let vm = await last('listModels');
+  assert(vm?.for === 'voice' && vm.apiKey === 'sk-nueva', 'la misma de Modelo: la lista de transcripción usa esa llave');
+  await page.evaluate(() => window.__deliver({ type: 'models', for: 'voice', ok: true, models: [{ id: 'gpt-4o-mini-transcribe', base: 'gpt-4o-mini-transcribe' }] }));
+  assert(await page.isVisible('#voiceCombo .opt[data-id="gpt-4o-mini-transcribe"]'), 'aparecen los modelos de esa conexión');
+  await page.click('[data-bind=VoiceOwn] button[data-v=own]');
   await page.fill('#voiceModel', 'whisper');
+  assert(await page.isHidden('#voiceProblem'), 'con el modelo puesto ya no falta nada');
   // respuestas habladas con ElevenLabs: la llave sigue visible con transcripción por API
   assert(await page.isVisible('#elevenReply') && await page.isVisible('#elevenKey'), 'responder hablando muestra voz y llave de ElevenLabs');
   await page.waitForTimeout(700);
@@ -129,7 +145,6 @@ const assert = (c, m) => { if (!c) { console.log('FAIL:', m); process.exitCode =
   // general
   await page.click('nav button[data-page=general]');
   await page.click('label.switch:has(#autostart)');
-  assert((await page.textContent('#talkKeysGeneral')).replace(/\s/g, '') === 'CtrlMayúsK', 'General muestra el atajo para hablar');
   assert((await page.textContent('#facts')).includes('Su navegador es Comet'), 'muestra lo que Colo sabe');
   await page.click('[data-forget="0"]');
   assert((await last('forgetFact'))?.text === 'Su navegador es Comet' && !(await page.textContent('#facts')).includes('Comet'), 'olvidar un recuerdo');
@@ -150,7 +165,7 @@ const assert = (c, m) => { if (!c) { console.log('FAIL:', m); process.exitCode =
     Mcp: sv?.McpServers?.length === 1 && JSON.stringify(sv.McpServers[0].Tools) === '["read_file"]' && sv.McpServers[0].Enabled === true,
     Keeps: sv?.WidgetX === 5,
     Keys: sv?.TalkHotkey === 'Ctrl+Shift+K' && sv?.DictateHotkey === 'J+K',
-    Live: sv?.Live === true && sv?.LiveModel === 'gpt-live-1' && sv?.VoiceOwn === true && sv?.VoiceKey === 'k-voz',
+    Live: sv?.Live === false && sv?.LiveModel === 'gpt-live-1' && sv?.VoiceOwn === true && sv?.VoiceKey === 'k-voz',
   };
   for (const [k, v] of Object.entries(checks)) assert(v, 'se guarda solo con ' + k);
 

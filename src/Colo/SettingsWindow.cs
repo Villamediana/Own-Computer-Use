@@ -210,6 +210,8 @@ sealed class SettingsWindow : Form
 
     async Task ListModelsAsync(JsonNode msg)
     {
+        // «voice»: la lista para la transcripción, con la conexión de la voz.
+        var target = msg["for"]?.GetValue<string>() ?? "model";
         var probe = new Settings
         {
             Provider = msg["provider"]?.GetValue<string>() == "OpenAI" ? Provider.OpenAI : Provider.Azure,
@@ -219,12 +221,12 @@ sealed class SettingsWindow : Form
         try
         {
             var models = await new AiClient(probe).ListModelsAsync(_closing.Token);
-            Post(new { type = "models", ok = true, models = models.Select(m => new { id = m.Id, @base = m.BaseModel }) });
+            Post(new { type = "models", ok = true, @for = target, models = models.Select(m => new { id = m.Id, @base = m.BaseModel }) });
         }
         catch (Exception ex) when (!_closing.IsCancellationRequested)
         {
             var hint = probe.Provider == Provider.Azure ? " · puedes escribir el nombre del deployment a mano" : "";
-            Post(new { type = "models", ok = false, error = Short(ex.Message) + hint });
+            Post(new { type = "models", ok = false, @for = target, error = Short(ex.Message) + hint });
         }
     }
 

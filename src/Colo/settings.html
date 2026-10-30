@@ -121,6 +121,26 @@
   }
   .row .icon svg { width: 17px; height: 17px; stroke: var(--ink-2); }
   .hint { color: var(--muted); font-size: 12.5px; margin: 8px 2px 0; }
+  .problem { color: var(--red); font-size: 13px; margin: -14px 2px 18px; }
+  .hint.err { color: var(--red); }
+
+  /* elegir una opción: solo la elegida despliega lo suyo */
+  .choice { display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; cursor: pointer; border-radius: var(--radius); }
+  .choice + .choice { border-top: 1px solid var(--line); border-radius: 0; }
+  .choice:hover { background: #fafafb; }
+  .choice[aria-checked="true"] { cursor: default; background: transparent; }
+  .choice:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
+  .choice .radio {
+    width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid #c9c9d0; background: #fff;
+    flex: none; margin-top: 1px; transition: border var(--t-soft) var(--spring);
+  }
+  .choice[aria-checked="true"] .radio { border: 5.5px solid var(--blue); }
+  .choice .label { flex: 1; min-width: 0; }
+  .choice .label > b { display: block; font-weight: 500; }
+  .choice .label > small { display: block; color: var(--muted); font-size: 12.5px; margin-top: 1px; }
+  .choice .more { display: none; margin-top: 4px; cursor: auto; }
+  .choice[aria-checked="true"] .more { display: block; animation: in var(--t-spring) var(--spring) both; }
+  .choice .more label.t { display: block; font-weight: 600; font-size: 12.5px; color: var(--ink-2); margin: 12px 0 6px 2px; }
 
   /* campos */
   .field { position: relative; }
@@ -419,91 +439,89 @@
       <!-- VOZ -->
       <section class="page" id="p-voice">
         <h1>Voz</h1>
-        <p class="lead">Mantén el atajo mientras hablas; al soltarlo, transcribe y lo hace.</p>
+        <p class="lead">Mantén el atajo, habla y suelta.</p>
+        <p class="problem" id="voiceProblem" hidden></p>
 
-        <h2>Prueba del micrófono</h2>
-        <div class="group test">
-          <div class="row">
-            <span class="dot" id="vDot"></span>
-            <div class="label"><b id="vStatus">Esperando al micrófono…</b><small>Mantén el atajo y habla: aquí ves lo que oye y lo que entiende. Mientras Ajustes está abierto no ejecuta nada.</small></div>
+        <h2>Cómo funciona</h2>
+        <div class="group choices" id="modeChoice">
+          <div class="choice" data-v="normal" role="radio" tabindex="0">
+            <span class="radio"></span>
+            <div class="label"><b>Le pides y lo hace</b><small>Transcribe y actúa.</small></div>
           </div>
-          <div class="row stack">
-            <div class="meter"><i id="vMeter"></i></div>
-            <div class="heard" id="vHeard"><span class="placeholder">Lo que digas aparecerá aquí</span></div>
-          </div>
-          <div class="row stack">
-            <div style="display:flex;align-items:center;gap:12px">
-              <button class="btn" id="probe">Grabar 5 s y analizar</button>
-              <span class="status" id="probeStatus">Pulsa y habla normal durante 5 segundos.</span>
-            </div>
-            <div class="probe" id="probeOut" hidden></div>
-          </div>
-        </div>
-
-        <h2>Atajos para hablar</h2>
-        <div class="group">
-          <div class="row">
-            <div class="label"><b>Hablarle</b><small id="talkKeyHint">Mantén apretado, habla y suelta.</small></div>
-            <div class="keys" id="talkKeys"></div>
-            <button class="btn" id="recordTalk">Cambiar</button>
-          </div>
-          <div class="row">
-            <div class="label"><b>Dictar</b><small id="dictateKeyHint">Opcional: escribe tal cual donde está el cursor, sin pasar por el modelo.</small></div>
-            <div class="keys" id="dictateKeys"></div>
-            <button class="btn" id="recordDictate">Poner</button>
-            <button class="icon-btn" id="clearDictate" title="Quitar"><svg><use href="#i-trash"/></svg></button>
-          </div>
-        </div>
-        <p class="hint">Valen dos teclas cualesquiera, también dos letras cercanas: aprieta una, luego la otra, y mantenlas. Sin el atajo de dictar, el modelo decide igual cuándo es un dictado.</p>
-
-        <h2>Conversación en vivo</h2>
-        <div class="group">
-          <div class="row">
-            <div class="label"><b>GPT-Live</b><small>Habla y responde con voz; lo que haya que hacer en el PC se lo pasa a Colo. La llamada sigue hasta que la tarea termina; con el atajo vuelves a hablarle.</small></div>
-            <label class="switch"><input type="checkbox" id="live"><span></span></label>
-          </div>
-          <div id="liveRows">
-            <div class="row stack">
-              <div class="label"><b>Modelo</b><small>Deployment en Foundry o modelo en OpenAI.</small></div>
-              <input class="input mono" id="liveModel" spellcheck="false" autocomplete="off" placeholder="gpt-live-1">
-            </div>
-            <div class="row stack">
-              <div class="label"><b>Voz</b></div>
-              <select class="input" id="liveVoice">
-                <option>marin</option><option>cedar</option><option>alloy</option><option>ash</option><option>ballad</option>
-                <option>coral</option><option>echo</option><option>sage</option><option>shimmer</option><option>verse</option>
-              </select>
+          <div class="choice" data-v="live" role="radio" tabindex="0">
+            <span class="radio"></span>
+            <div class="label"><b>Conversación en vivo</b><small>GPT-Live te contesta hablando.</small>
+              <div class="more" id="liveRows">
+                <label class="t">Modelo</label>
+                <input class="input mono" id="liveModel" spellcheck="false" autocomplete="off" placeholder="gpt-live-1">
+                <label class="t">Voz</label>
+                <select class="input" id="liveVoice">
+                  <option>marin</option><option>cedar</option><option>alloy</option><option>ash</option><option>ballad</option>
+                  <option>coral</option><option>echo</option><option>sage</option><option>shimmer</option><option>verse</option>
+                </select>
+              </div>
             </div>
           </div>
         </div>
 
-        <h2>Transcripción</h2>
-        <div class="seg" data-bind="SpeechEngine" data-options="Local:En tu PC · gratis|Api:OpenAI / Foundry|ElevenLabs:ElevenLabs"></div>
-        <p class="hint" id="engineHint"></p>
-        <div id="localVoice">
-          <h2>Modelo local</h2>
-          <div class="seg" data-bind="LocalModel" data-options="base:Whisper base · rápido|small:Whisper small · más preciso"></div>
-          <p class="hint" id="modelHint"></p>
-          <h2>Idioma en que hablas</h2>
-          <select class="input" id="language">
-            <option value="es">Español</option>
-            <option value="pt">Português</option>
-            <option value="en">English</option>
-            <option value="auto">Detectar solo (menos fiable en frases cortas)</option>
-          </select>
-          <p class="hint">Solo para Whisper en tu PC. Por API, ElevenLabs y GPT-Live entiende el idioma que hables.</p>
-        </div>
-        <div id="apiVoice" hidden>
-          <h2>Modelo de transcripción</h2>
-          <div class="field combo" id="voiceCombo">
-            <input class="input" id="voiceModel" spellcheck="false" autocomplete="off" placeholder="gpt-4o-mini-transcribe">
-            <div class="pop"></div>
+        <div id="engineSection">
+          <h2>Quién transcribe</h2>
+          <div class="group choices" id="engineChoice">
+            <div class="choice" data-v="Local" role="radio" tabindex="0">
+              <span class="radio"></span>
+              <div class="label"><b>Tu PC</b><small>Whisper · gratis, sin internet</small>
+                <div class="more" id="localVoice">
+                  <label class="t">Modelo</label>
+                  <div class="seg" data-bind="LocalModel" data-options="base:Base · rápido|small:Small · más preciso"></div>
+                  <label class="t">Idioma</label>
+                  <select class="input" id="language">
+                    <option value="es">Español</option>
+                    <option value="pt">Português</option>
+                    <option value="en">English</option>
+                    <option value="auto">Detectar solo (menos fiable en frases cortas)</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+            <div class="choice" data-v="Api" role="radio" tabindex="0">
+              <span class="radio"></span>
+              <div class="label"><b>OpenAI / Foundry</b><small>Cualquier idioma</small>
+                <div class="more" id="apiVoice">
+                  <label class="t">Modelo de transcripción</label>
+                  <div class="field combo" id="voiceCombo">
+                    <input class="input" id="voiceModel" spellcheck="false" autocomplete="off" placeholder="gpt-4o-mini-transcribe">
+                    <div class="pop"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="choice" data-v="ElevenLabs" role="radio" tabindex="0">
+              <span class="radio"></span>
+              <div class="label"><b>ElevenLabs</b><small>Scribe · cualquier idioma, cobra por minuto</small>
+                <div class="more" id="elevenVoice">
+                  <div id="elevenKeyField">
+                    <label class="t">API key de ElevenLabs</label>
+                    <div class="field with-btn">
+                      <input class="input mono" id="elevenKey" type="password" spellcheck="false" autocomplete="off" placeholder="sk_…">
+                      <button class="inline-btn" id="revealEleven" title="Mostrar"><svg><use href="#i-eye"/></svg></button>
+                    </div>
+                  </div>
+                  <label class="t">Modelo</label>
+                  <div class="field combo" id="elevenCombo">
+                    <input class="input" id="elevenModel" spellcheck="false" autocomplete="off" placeholder="scribe_v2">
+                    <div class="pop"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
-          <p class="hint">Entiende el idioma que hables; va con un glosario de los programas abiertos.</p>
+          <p class="hint" id="engineHint"></p>
         </div>
+
         <div id="voiceConn" hidden>
-          <h2>Conexión de la voz</h2>
-          <div class="seg" data-bind="VoiceOwn" data-options="same:La misma del Modelo|own:Otra"></div>
+          <h2>Conexión</h2>
+          <div class="seg" data-bind="VoiceOwn" data-options="same:La misma de Modelo|own:Otra"></div>
+          <p class="hint" id="voiceSame"></p>
           <div class="group" id="voiceOwnRows" style="margin-top:10px">
             <div class="row stack">
               <div class="seg" data-bind="VoiceProvider" data-options="Azure:Azure AI Foundry|OpenAI:OpenAI"></div>
@@ -520,58 +538,71 @@
               </div>
             </div>
           </div>
-          <p class="hint">Para la transcripción por API y GPT-Live.</p>
         </div>
-        <div id="elevenVoice" hidden>
-          <h2>Modelo de Scribe</h2>
-          <div class="field combo" id="elevenCombo">
-            <input class="input" id="elevenModel" spellcheck="false" autocomplete="off" placeholder="scribe_v2">
-            <div class="pop"></div>
+
+
+        <h2>Atajos</h2>
+        <div class="group">
+          <div class="row">
+            <div class="label"><b>Hablarle</b><small id="talkKeyHint"></small></div>
+            <div class="keys" id="talkKeys"></div>
+            <button class="btn" id="recordTalk">Cambiar</button>
+          </div>
+          <div class="row">
+            <div class="label"><b>Dictar</b><small id="dictateKeyHint">Escribe tal cual, sin el modelo</small></div>
+            <div class="keys" id="dictateKeys"></div>
+            <button class="btn" id="recordDictate">Cambiar</button>
+            <label class="switch"><input type="checkbox" id="dictateOn"><span></span></label>
+          </div>
+        </div>
+
+        <div id="replySection">
+          <h2>Respuesta</h2>
+          <div class="group">
+            <div class="row">
+              <div class="label"><b>Leerla en voz alta</b></div>
+              <label class="switch"><input type="checkbox" id="speak"><span></span></label>
+            </div>
+            <div class="row stack" id="replyVoiceRow">
+              <div class="seg" data-bind="ReplyVoice" data-options="ElevenLabs:ElevenLabs · con emociones|Windows:Voz de Windows"></div>
+            </div>
+            <div id="elevenReply">
+              <div class="row stack" id="elevenKeyReply"></div>
+              <div class="row stack">
+                <div class="label"><b>Voz</b><small id="voicesStatus"></small></div>
+                <select class="input" id="elevenVoiceSel"></select>
+              </div>
+              <div class="row stack">
+                <div class="label"><b>Modelo</b></div>
+                <div class="seg" data-bind="ElevenTtsModel" data-options="eleven_v4:v4 · actúa las emociones|eleven_v4_turbo:v4 turbo · más rápida|eleven_flash_v2_5:Flash · la más rápida"></div>
+              </div>
+              <div class="row">
+                <div class="label"><b>Probar</b></div>
+                <button class="btn" id="sayTest">Escuchar</button>
+              </div>
+            </div>
           </div>
         </div>
 
         <h2>Micrófono</h2>
-        <div class="group">
+        <div class="group test">
           <div class="row stack">
             <select class="input" id="mic"></select>
           </div>
-        </div>
-
-        <h2>Respuestas en voz alta</h2>
-        <div class="group">
           <div class="row">
-            <div class="label"><b>Responder hablando</b><small>Frases cortas. Mientras habla, el micrófono se pausa.</small></div>
-            <label class="switch"><input type="checkbox" id="speak"><span></span></label>
+            <span class="dot" id="vDot"></span>
+            <div class="label"><b id="vStatus">Preparando…</b></div>
           </div>
-          <div class="row stack" id="replyVoiceRow">
-            <div class="seg" data-bind="ReplyVoice" data-options="ElevenLabs:ElevenLabs · con emociones|Windows:Voz de Windows"></div>
+          <div class="row stack">
+            <div class="meter"><i id="vMeter"></i></div>
+            <div class="heard" id="vHeard"><span class="placeholder">Mantén el atajo y habla para probar</span></div>
           </div>
-          <div id="elevenReply">
-            <div class="row stack">
-              <div class="label"><b>Voz</b><small id="voicesStatus">Pon la API key de ElevenLabs y se cargan tus voces.</small></div>
-              <select class="input" id="elevenVoiceSel"></select>
+          <div class="row stack">
+            <div style="display:flex;align-items:center;gap:12px">
+              <button class="btn" id="probe">Grabar 5 s y analizar</button>
+              <span class="status" id="probeStatus"></span>
             </div>
-            <div class="row stack">
-              <div class="label"><b>Modelo</b></div>
-              <div class="seg" data-bind="ElevenTtsModel" data-options="eleven_v4:v4 · actúa las emociones|eleven_v4_turbo:v4 turbo · más rápida|eleven_flash_v2_5:Flash · la más rápida"></div>
-            </div>
-            <div class="row">
-              <div class="label"><b>Probar</b><small>Dice una frase con la voz elegida.</small></div>
-              <button class="btn" id="sayTest">Escuchar</button>
-            </div>
-          </div>
-        </div>
-
-        <div id="elevenAccount" hidden>
-          <h2>Cuenta de ElevenLabs</h2>
-          <div class="group">
-            <div class="row stack">
-              <div class="label"><b>API key</b><small>La misma para escuchar (Scribe) y para hablar.</small></div>
-              <div class="field with-btn">
-                <input class="input mono" id="elevenKey" type="password" spellcheck="false" autocomplete="off" placeholder="sk_…">
-                <button class="inline-btn" id="revealEleven" title="Mostrar"><svg><use href="#i-eye"/></svg></button>
-              </div>
-            </div>
+            <div class="probe" id="probeOut" hidden></div>
           </div>
         </div>
       </section>
@@ -610,7 +641,6 @@
 
         <h2>Atajos</h2>
         <div class="group">
-          <div class="row"><div class="label"><b>Hablarle</b><small>Se cambia en Voz.</small></div><div class="keys" id="talkKeysGeneral"></div></div>
           <div class="row"><div class="label"><b>Pausar o seguir escuchando</b></div><div class="keys"><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>Espacio</kbd></div></div>
           <div class="row"><div class="label"><b>Detener lo que está haciendo</b></div><div class="keys"><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>X</kbd></div></div>
           <div class="row"><div class="label"><b>Mover la onda</b></div><div class="keys"><kbd>Arrastrar</kbd></div></div>
@@ -684,6 +714,7 @@ const host = window.chrome?.webview
 
 let S = null;           // ajustes en edición
 let models = [];        // [{id, base}]
+let voiceModels = [];   // los de la conexión de la voz (para la transcripción)
 let groups = [];        // [{id, title, summary, icon}]
 let dirty = false;
 
@@ -745,14 +776,14 @@ function seg(el, value, onChange) {
 }
 
 // ── combobox de modelos (filtra al escribir, admite texto libre)
-function combo(root, getList, onPick) {
+function combo(root, getList, onPick, emptyText = "Pulsa «Conectar y traer modelos» o escribe el nombre", onOpen = null) {
   const input = $("input", root), pop = $(".pop", root);
   let active = -1;
   const render = () => {
     const q = input.value.trim().toLowerCase();
     const list = getList();
     const shown = list.filter(m => !q || m.id.toLowerCase().includes(q) || (m.base || "").toLowerCase().includes(q) || list.some(x => x.id === input.value));
-    if (!list.length) pop.innerHTML = '<div class="opt empty">Pulsa «Conectar y traer modelos» o escribe el nombre</div>';
+    if (!list.length) pop.innerHTML = `<div class="opt empty">${esc(emptyText)}</div>`;
     else if (!shown.length) pop.innerHTML = '<div class="opt empty">Sin coincidencias; se usará lo escrito</div>';
     else pop.innerHTML = shown.map((m, i) =>
       `<div class="opt${i === active ? " active" : ""}" data-id="${esc(m.id)}"><span class="id">${esc(m.id)}</span>${m.base && m.base !== m.id ? `<span class="base">${esc(m.base)}</span>` : ""}</div>`).join("");
@@ -765,7 +796,7 @@ function combo(root, getList, onPick) {
     const room = window.innerHeight - r.bottom;
     root.classList.toggle("up", room < 220 && r.top > 260);
   };
-  input.onfocus = () => { active = -1; render(); place(); root.classList.add("open"); };
+  input.onfocus = () => { active = -1; onOpen?.(); render(); place(); root.classList.add("open"); };
   input.onblur = () => root.classList.remove("open");
   input.oninput = () => { active = -1; render(); root.classList.add("open"); onPick(input.value.trim()); };
   input.onkeydown = e => {
@@ -814,10 +845,8 @@ function kbd(combo) {
 }
 function showKeys() {
   $("#talkKeys").innerHTML = kbd(S.TalkHotkey);
-  $("#talkKeysGeneral").innerHTML = kbd(S.TalkHotkey);
   $("#dictateKeys").innerHTML = kbd(S.DictateHotkey);
-  $("#recordDictate").textContent = S.DictateHotkey ? "Cambiar" : "Poner";
-  $("#clearDictate").hidden = !S.DictateHotkey;
+  syncVoice();
 }
 function recordHold(field, btn, hint) {
   const idle = hint.textContent;
@@ -858,17 +887,57 @@ function recordHold(field, btn, hint) {
   window.addEventListener("keyup", onUp, true);
 }
 
-// ── voz de las respuestas
-function syncReply() {
-  const speak = !!S.SpeakReplies, eleven = speak && S.ReplyVoice === "ElevenLabs";
+// ── voz: cada elección muestra solo lo suyo
+function choice(root, value, onPick) {
+  const items = [...root.querySelectorAll(":scope > .choice")];
+  const set = v => items.forEach(c => c.setAttribute("aria-checked", String(c.dataset.v === v)));
+  items.forEach(c => {
+    const pick = () => { if (c.getAttribute("aria-checked") !== "true") { set(c.dataset.v); onPick(c.dataset.v); } };
+    c.addEventListener("click", e => { if (!e.target.closest(".more")) pick(); });
+    c.addEventListener("keydown", e => { if ((e.key === "Enter" || e.key === " ") && e.target === c) { e.preventDefault(); pick(); } });
+  });
+  set(value);
+}
+function syncVoice() {
+  const live = !!S.Live, dictate = !!S.DictateHotkey;
+  // En vivo transcribe GPT-Live; el motor solo hace falta para el atajo de dictar.
+  const engine = !live || dictate;
+  $("#engineSection").hidden = !engine;
+  $("#engineHint").textContent = live ? "Solo para el atajo de dictar." : "";
+  $("#voiceConn").hidden = !(live || (engine && S.SpeechEngine === "Api"));
+  $("#voiceOwnRows").hidden = !S.VoiceOwn;
+  const same = $("#voiceSame");
+  same.hidden = !!S.VoiceOwn;
+  same.className = "hint" + (S.ApiKey ? "" : " err");
+  same.textContent = !S.ApiKey ? "Modelo todavía no tiene API key."
+    : `${S.Provider === "OpenAI" ? "OpenAI" : "Azure AI Foundry"} · ${hostOf(S.Endpoint) || "api.openai.com"} · llave …${S.ApiKey.slice(-4)}`;
+  const speak = !live && !!S.SpeakReplies, eleven = speak && S.ReplyVoice === "ElevenLabs";
+  $("#replySection").hidden = live;
   $("#replyVoiceRow").hidden = !speak;
   $("#elevenReply").hidden = !eleven;
-  $("#elevenAccount").hidden = !(eleven || S.SpeechEngine === "ElevenLabs");
-  $("#voiceConn").hidden = !(S.SpeechEngine === "Api" || S.Live);
-  $("#voiceOwnRows").hidden = !S.VoiceOwn;
-  $("#liveRows").hidden = !S.Live;
+  // Una sola llave de ElevenLabs, donde se usa: en Scribe si transcribe con él; si no, en la voz de la respuesta.
+  const scribe = engine && S.SpeechEngine === "ElevenLabs";
+  const keyField = $("#elevenKeyField"), home = scribe ? $("#elevenVoice") : $("#elevenKeyReply");
+  if (keyField.parentElement !== home) home.prepend(keyField);
+  $("#elevenKeyReply").hidden = scribe;
   $("#sayTest").disabled = eleven && !S.ElevenVoiceId;
+  $("#dictateOn").checked = dictate;
+  $("#dictateKeys").hidden = $("#recordDictate").hidden = !dictate;
+  const miss = voiceMissing();
+  $("#voiceProblem").hidden = !miss;
+  $("#voiceProblem").textContent = miss || "";
 }
+// Lo mismo que mira Colo al cerrar: qué falta, una cosa a la vez.
+function voiceMissing() {
+  const live = !!S.Live, engine = !live || !!S.DictateHotkey, conn = live || (engine && S.SpeechEngine === "Api");
+  if (engine && S.SpeechEngine === "Api" && !S.TranscribeModel) return "Falta el modelo de transcripción.";
+  if (engine && S.SpeechEngine === "ElevenLabs" && !S.ElevenLabsKey) return "Falta la API key de ElevenLabs.";
+  if (live && !S.LiveModel) return "Falta el modelo de GPT-Live.";
+  if (conn && S.VoiceOwn && !S.VoiceKey) return "Falta la API key de la conexión.";
+  if (conn && !S.VoiceOwn && !S.ApiKey) return "Usa la conexión de Modelo, que no tiene API key.";
+  return "";
+}
+const syncReply = syncVoice;
 function loadVoices() {
   $("#voicesStatus").textContent = "Cargando tus voces…";
   $("#voicesStatus").className = "status";
@@ -919,38 +988,24 @@ function init(msg) {
   seg($("[data-bind=Provider]"), S.Provider, v => { S.Provider = v; syncProvider(); touch(); });
   syncProvider();
   $("#endpoint").value = S.Endpoint || "";
-  $("#endpoint").oninput = e => { S.Endpoint = e.target.value.trim(); touch(); };
+  $("#endpoint").oninput = e => { S.Endpoint = e.target.value.trim(); voiceChanged(); touch(); };
   $("#apikey").value = S.ApiKey || "";
-  $("#apikey").oninput = e => { S.ApiKey = e.target.value.trim(); touch(); };
+  $("#apikey").oninput = e => { S.ApiKey = e.target.value.trim(); voiceChanged(); touch(); };
   $("#reveal").onclick = () => { const k = $("#apikey"); k.type = k.type === "password" ? "text" : "password"; };
   $("#model").value = S.Model || "";
   window.modelCombo = combo($("#modelCombo"), () => models, v => { S.Model = v; touch(); });
   seg($("[data-bind=ReasoningEffort]"), S.ReasoningEffort || "low", v => { S.ReasoningEffort = v; touch(); });
 
-  const syncEngine = () => {
-    $("#localVoice").hidden = S.SpeechEngine !== "Local";
-    $("#apiVoice").hidden = S.SpeechEngine !== "Api";
-    $("#elevenVoice").hidden = S.SpeechEngine !== "ElevenLabs";
-    syncReply();
-    $("#engineHint").textContent = {
-      Local: "Whisper en tu PC: sin internet y sin gastar tokens. Se descarga una vez.",
-      Api: "Cada frase se manda al modelo de transcripción de tu proveedor.",
-      ElevenLabs: "Cada frase se manda a ElevenLabs Scribe: muy preciso, cobra por minuto de audio.",
-    }[S.SpeechEngine] || "";
-  };
-  seg($("[data-bind=SpeechEngine]"), S.SpeechEngine, v => { S.SpeechEngine = v; syncEngine(); touch(); });
-  syncEngine();
+  choice($("#modeChoice"), S.Live ? "live" : "normal", v => { S.Live = v === "live"; syncVoice(); touch(); });
+  choice($("#engineChoice"), S.SpeechEngine || "Local", v => { S.SpeechEngine = v; syncVoice(); touch(); });
   $("#voiceModel").value = S.TranscribeModel || "";
-  window.voiceCombo = combo($("#voiceCombo"), () => models, v => { S.TranscribeModel = v; touch(); });
-  const syncModel = () => $("#modelHint").textContent = S.LocalModel === "small"
-    ? "190 MB · ~0,5 s por frase · entiende mejor palabras difíciles."
-    : "60 MB · ~0,2 s por frase · lo más rápido.";
-  seg($("[data-bind=LocalModel]"), S.LocalModel || "base", v => { S.LocalModel = v; syncModel(); touch(); });
-  syncModel();
+  window.voiceCombo = combo($("#voiceCombo"), () => voiceModels, v => { S.TranscribeModel = v; syncVoice(); touch(); },
+    "Escribe el deployment (p. ej. gpt-4o-mini-transcribe)", loadVoiceModels);
+  seg($("[data-bind=LocalModel]"), S.LocalModel || "base", v => { S.LocalModel = v; touch(); });
   $("#language").value = S.Language || "es";
   $("#language").onchange = e => { S.Language = e.target.value; touch(); };
   $("#elevenKey").value = S.ElevenLabsKey || "";
-  $("#elevenKey").oninput = e => { S.ElevenLabsKey = e.target.value.trim(); touch(); loadVoicesSoon(); };
+  $("#elevenKey").oninput = e => { S.ElevenLabsKey = e.target.value.trim(); syncVoice(); touch(); loadVoicesSoon(); };
   $("#revealEleven").onclick = () => { const k = $("#elevenKey"); k.type = k.type === "password" ? "text" : "password"; };
   $("#elevenModel").value = S.ElevenLabsModel || "scribe_v2";
   combo($("#elevenCombo"), () => [{ id: "scribe_v2", base: "el más nuevo" }, { id: "scribe_v1", base: "anterior" }], v => { S.ElevenLabsModel = v; touch(); });
@@ -967,26 +1022,35 @@ function init(msg) {
   showKeys();
   $("#recordTalk").onclick = () => recordHold("TalkHotkey", $("#recordTalk"), $("#talkKeyHint"));
   $("#recordDictate").onclick = () => recordHold("DictateHotkey", $("#recordDictate"), $("#dictateKeyHint"));
-  $("#clearDictate").onclick = () => { S.DictateHotkey = ""; showKeys(); touch(); };
+  $("#dictateOn").onchange = e => {
+    if (e.target.checked) {
+      // Se enciende grabando el atajo; con Esc queda apagado.
+      $("#recordDictate").hidden = false;
+      recordHold("DictateHotkey", $("#recordDictate"), $("#dictateKeyHint"));
+      return;
+    }
+    S.DictateHotkey = "";
+    touch();
+    showKeys();
+  };
   // ── GPT-Live y la conexión de la voz
   S.LiveModel ||= "gpt-live-1";
   S.LiveVoice ||= "marin";
-  sw("live", "Live", syncReply);
   $("#liveModel").value = S.LiveModel;
-  $("#liveModel").oninput = e => { S.LiveModel = e.target.value.trim(); touch(); };
+  $("#liveModel").oninput = e => { S.LiveModel = e.target.value.trim(); syncVoice(); touch(); };
   $("#liveVoice").value = S.LiveVoice;
   $("#liveVoice").onchange = e => { S.LiveVoice = e.target.value; touch(); };
-  seg($("[data-bind=VoiceOwn]"), S.VoiceOwn ? "own" : "same", v => { S.VoiceOwn = v === "own"; syncReply(); touch(); });
+  seg($("[data-bind=VoiceOwn]"), S.VoiceOwn ? "own" : "same", v => { S.VoiceOwn = v === "own"; voiceChanged(); touch(); });
   S.VoiceProvider ||= "Azure";
   const syncVoiceProvider = () => {
     $("#voiceEndpoint").placeholder = S.VoiceProvider === "OpenAI" ? "https://api.openai.com/v1  (opcional)" : "https://mi-recurso.openai.azure.com";
   };
-  seg($("[data-bind=VoiceProvider]"), S.VoiceProvider, v => { S.VoiceProvider = v; syncVoiceProvider(); touch(); });
+  seg($("[data-bind=VoiceProvider]"), S.VoiceProvider, v => { S.VoiceProvider = v; syncVoiceProvider(); voiceChanged(); touch(); });
   syncVoiceProvider();
   $("#voiceEndpoint").value = S.VoiceEndpoint || "";
-  $("#voiceEndpoint").oninput = e => { S.VoiceEndpoint = e.target.value.trim(); touch(); };
+  $("#voiceEndpoint").oninput = e => { S.VoiceEndpoint = e.target.value.trim(); voiceChanged(); touch(); };
   $("#voiceKey").value = S.VoiceKey || "";
-  $("#voiceKey").oninput = e => { S.VoiceKey = e.target.value.trim(); touch(); };
+  $("#voiceKey").oninput = e => { S.VoiceKey = e.target.value.trim(); voiceChanged(); touch(); };
   $("#revealVoice").onclick = () => { const k = $("#voiceKey"); k.type = k.type === "password" ? "text" : "password"; };
   sw("speak", "SpeakReplies", syncReply);
   S.ReplyVoice ||= "ElevenLabs";
@@ -1037,7 +1101,27 @@ $("#connect").onclick = () => {
   host.send({ type: "listModels", provider: S.Provider, endpoint: S.Endpoint, apiKey: S.ApiKey });
 };
 
+// La conexión que usa la voz: la propia o la de Modelo.
+function voiceConn() {
+  return S.VoiceOwn ? { provider: S.VoiceProvider || "Azure", endpoint: S.VoiceEndpoint || "", apiKey: S.VoiceKey || "" }
+    : { provider: S.Provider, endpoint: S.Endpoint || "", apiKey: S.ApiKey || "" };
+}
+// Otra conexión: la lista de modelos de antes ya no vale.
+function voiceChanged() { voiceModels = []; syncVoice(); }
+function hostOf(url) { try { return new URL(url).host; } catch { return url; } }
+function loadVoiceModels() {
+  const c = voiceConn();
+  if (!c.apiKey || voiceModels.loading) return;
+  voiceModels.loading = true;
+  host.send({ type: "listModels", for: "voice", ...c });
+}
 function onModels(msg) {
+  if (msg.for === "voice") {
+    voiceModels = msg.ok ? msg.models || [] : [];
+    voiceModels.error = msg.ok ? "" : msg.error;
+    window.voiceCombo?.refresh();
+    return;
+  }
   const b = $("#connect"), st = $("#connStatus");
   b.disabled = false;
   if (!msg.ok) { st.className = "status err"; st.textContent = msg.error; return; }
