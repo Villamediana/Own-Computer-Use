@@ -682,8 +682,16 @@ sealed class Widget : LayeredWindow
         try
         {
             var sw = System.Diagnostics.Stopwatch.StartNew();
-            var text = await Task.Run(() => Dictation.PolishAsync(_ai, _s, heard, window, CancellationToken.None));
-            Log.Write($"dicta: «{heard}» → «{text}» ({sw.ElapsedMilliseconds} ms) en «{window}»");
+            // Mientras el modelo lo pule, se busca dónde escribir: los dos a la vez, para no sumar tiempo.
+            var polish = Task.Run(() => Dictation.PolishAsync(_ai, _s, heard, window, CancellationToken.None));
+            var where = Task.Run(() =>
+            {
+                try { return Desktop.EnsureTextFocus(); }
+                catch (Exception ex) { return "no pude mirar el foco · " + ex.Message; }
+            });
+            var text = await polish;
+            var target = await where;
+            Log.Write($"dicta: «{heard}» → «{text}» ({sw.ElapsedMilliseconds} ms) en «{window}», escribe en {target}");
             if (text.Length == 0) { Say("", Theme.Muted, 0); return; }
             Say("«" + text + "»", Theme.Muted, 1500 + text.Length * 30);
             Input.Type(text);

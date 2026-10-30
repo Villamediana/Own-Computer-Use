@@ -308,9 +308,13 @@ sealed class WindowsComputer : IComputer
                 return "ok";
             }
             case "dictate":
+            {
+                // Sin un campo con foco, el que más sentido tiene (bajo el ratón o el más cercano).
+                var where = await Task.Run(Desktop.EnsureTextFocus, ct);
                 Cursor?.Say("Escribiendo…");
                 Input.Type(c.Str("text"));
-                return "ok";
+                return where == "el foco" ? "ok" : "ok: escrito en " + where;
+            }
             case "drag":
             {
                 if (!Target(c, out var from, out var err, "from_")) return err;

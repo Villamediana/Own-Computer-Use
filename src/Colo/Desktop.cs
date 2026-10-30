@@ -119,6 +119,69 @@ static class Desktop
         return e.Current.Name;
     }
 
+    /// <summary>Se escribe ahí: un campo, un editor o un terminal (TextPattern), y no algo de solo lectura.</summary>
+    static bool Writable(AutomationElement? e)
+    {
+        if (e is null) return false;
+        try
+        {
+            if (!e.Current.IsEnabled) return false;
+            if (e.TryGetCurrentPattern(ValuePattern.Pattern, out var vp) && ((ValuePattern)vp).Current.IsReadOnly) return false;
+            return e.Current.ControlType == ControlType.Edit || e.TryGetCurrentPattern(TextPattern.Pattern, out _);
+        }
+        catch (ElementNotAvailableException) { return false; }
+    }
+
+    static readonly Condition TextFields = new AndCondition(
+        new PropertyCondition(AutomationElement.IsOffscreenProperty, false),
+        new PropertyCondition(AutomationElement.IsEnabledProperty, true),
+        new OrCondition(
+            new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Edit),
+            new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Document)));
+
+    /// <summary>
+    /// Antes de escribir un dictado: si el foco ya está donde se escribe, nada. Si no (clic en un botón, la
+    /// ventana sin campo activo), el campo bajo el ratón; si no hay, el campo de la ventana activa más cercano
+    /// al ratón (en Teams, la caja de mensaje). Devuelve dónde va a escribir, para el registro.
+    /// </summary>
+    public static string EnsureTextFocus()
+    {
+        if (Writable(AutomationElement.FocusedElement)) return "el foco";
+        Native.GetCursorPos(out var m);
+        var mouse = new System.Windows.Point(m.x, m.y);
+        var under = AutomationElement.FromPoint(mouse);
+        for (var i = 0; i < 4 && under is not null && !Writable(under); i++)
+            under = TreeWalker.ControlViewWalker.GetParent(under);
+        if (Writable(under))
+        {
+            // Clic donde está el ratón: el cursor de texto queda ahí.
+            Input.Click(new System.Drawing.Point(m.x, m.y), "left", false);
+            return "bajo el ratón";
+        }
+        var fg = Native.GetForegroundWindow();
+        if (fg == IntPtr.Zero) return "nada (sin ventana)";
+        AutomationElement? best = null;
+        var bestDistance = double.MaxValue;
+        foreach (AutomationElement e in AutomationElement.FromHandle(fg).FindAll(TreeScope.Descendants, TextFields))
+        {
+            if (!Writable(e)) continue;
+            var r = e.Current.BoundingRectangle;
+            if (r.IsEmpty || r.Width < 8 || r.Height < 8) continue;
+            var dx = Math.Max(0, Math.Max(r.Left - mouse.X, mouse.X - r.Right));
+            var dy = Math.Max(0, Math.Max(r.Top - mouse.Y, mouse.Y - r.Bottom));
+            var d = dx * dx + dy * dy;
+            if (d < bestDistance) { best = e; bestDistance = d; }
+        }
+        if (best is null) return "nada (no hay campo de texto)";
+        try { best.SetFocus(); } catch { }
+        if (!Writable(AutomationElement.FocusedElement) || AutomationElement.FocusedElement?.Current.BoundingRectangle != best.Current.BoundingRectangle)
+        {
+            var r = best.Current.BoundingRectangle;
+            Input.Click(new System.Drawing.Point((int)(r.Left + r.Width / 2), (int)(r.Top + r.Height / 2)), "left", false);
+        }
+        return $"«{best.Current.Name}» (el campo más cercano)";
+    }
+
     [System.Runtime.InteropServices.DllImport("user32.dll")] static extern uint GetClipboardSequenceNumber();
 
     /// <summary>Copia lo seleccionado con ctrl+c y deja el texto que había en el portapapeles.</summary>
