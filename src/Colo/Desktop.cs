@@ -223,18 +223,23 @@ static class Desktop
 
     [System.Runtime.InteropServices.DllImport("user32.dll")] static extern uint GetClipboardSequenceNumber();
 
+    /// <summary>Hasta entonces los cambios del portapapeles son de Colo leyendo la selección: no van al historial.</summary>
+    public static DateTime QuietUntil;
+
     /// <summary>Copia lo seleccionado con ctrl+c y deja el texto que había en el portapapeles.</summary>
     static async Task<string> ReadSelectionAsync(CancellationToken ct)
     {
+        QuietUntil = DateTime.Now.AddSeconds(3);
         var before = Sta(() => Clipboard.ContainsText() ? Clipboard.GetText() : null);
         var seq = GetClipboardSequenceNumber();
         Input.Combo(Colo.Core.Keys.Parse("ctrl+c"));
         // Sin selección el portapapeles no cambia: así no se confunde con lo que ya había.
         for (var i = 0; i < 12 && GetClipboardSequenceNumber() == seq; i++) await Task.Delay(40, ct);
-        if (GetClipboardSequenceNumber() == seq) return "ok: (no hay nada seleccionado)";
+        if (GetClipboardSequenceNumber() == seq) { QuietUntil = DateTime.Now; return "ok: (no hay nada seleccionado)"; }
         await Task.Delay(30, ct);
         var text = Sta(() => Clipboard.ContainsText() ? Clipboard.GetText() : "") ?? "";
         if (before is not null) Sta(() => { Clipboard.SetText(before); return 0; });
+        QuietUntil = DateTime.Now.AddMilliseconds(600);
         if (text.Length == 0) return "ok: (lo seleccionado no es texto)";
         return "ok:\n" + (text.Length > MaxText ? text[..MaxText] + "\n…(cortado)" : text);
     }

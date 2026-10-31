@@ -73,11 +73,15 @@ Actuar
 - Las herramientas mcp_* vienen de servidores MCP del usuario; úsalas cuando encajen mejor que la pantalla.
 
 Memoria
-- «Lo que sabes del usuario» viene de otros días: úsalo para entenderle.
-- remember cuando aprendes algo que servirá otro día: cómo llama a sus cosas («el backlog» = la pestaña
-  P&I · Backlog), qué programa usa para qué, una corrección que te hizo. No tareas del momento ni datos sensibles.
-  forget si deja de ser cierto o te lo pide. Si además hay una tarea, sigue con ella sin comentarlo; si solo te
-  estaba enseñando algo, done con una confirmación muy corta.
+- «Lo que sabes del usuario» viene de otros días: úsalo para entenderle y para ir directo (la URL, la carpeta).
+- remember lo que servirá otro día: cómo llama a sus cosas («el backlog» = la pestaña P&I · Backlog), dónde
+  está cada cosa («esta URL es el sistema de chamados» → con la URL entera de la línea URL; «esta carpeta es la
+  de contratos» → la ruta), qué programa usa para qué, una corrección que te hizo. También lo que descubras
+  trabajando si te ahorrará pasos la próxima vez (dónde está una opción, la URL de un sistema). where si solo
+  vale en un sitio (una palabra del título, el programa o la URL).
+- Prudente: una frase con el dato concreto. Nada de tareas del momento, cosas de una vez ni datos sensibles. Si
+  ya hay uno parecido, replaces (corrige o junta) en vez de otro. forget si deja de ser cierto o te lo pide.
+  Si además hay una tarea, sigue con ella sin comentarlo; si solo te estaba enseñando algo, done muy corto.
 
 Responder
 - done con una frase corta y natural, en el idioma de la frase que acaba de decir (español → español,
@@ -98,7 +102,7 @@ Responder
         new("office", "Word y Excel", "Secciones, buscar, escribir y formato en Word; leer, escribir y filtrar en Excel", ["doc", "sheet"]),
         new("terminal", "Terminal", "Leer la terminal, esperar comandos y ejecutar en segundo plano", ["terminal"]),
         new("print", "Print", "Captura al portapapeles", ["screenshot"]),
-        new("memory", "Memoria", "Recordar lo que aprende de ti entre días", ["remember", "forget"]),
+        new("memory", "Memoria", "Recordar lo que aprende de ti entre días y lo que hiciste hace un rato", ["remember", "forget", "recent"]),
     ];
 
     const string Defs = """
@@ -135,8 +139,8 @@ Responder
   "parameters":{"type":"object","properties":{"text":{"type":"string"},"n":{"type":"integer"},"up":{"type":"boolean"}},"required":["text"]}},
  {"type":"function","name":"extract","description":"Saca datos de toda la ventana activa (también lo que no se ve): email, phone, url, date, id (CPF, CNPJ, protocolo, pedido), money. near: solo los que están cerca de ese texto (un nombre, «factura»…).",
   "parameters":{"type":"object","properties":{"kind":{"type":"string","enum":["email","phone","url","date","id","money"]},"near":{"type":"string"}},"required":["kind"]}},
- {"type":"function","name":"clipboard","description":"Portapapeles de texto: get lo lee, set pone text.",
-  "parameters":{"type":"object","properties":{"action":{"type":"string","enum":["get","set"]},"text":{"type":"string"}},"required":["action"]}},
+ {"type":"function","name":"clipboard","description":"Portapapeles de texto: get lo lee (n=2: lo copiado antes de eso, n=3…), set pone text, history lista lo último copiado.",
+  "parameters":{"type":"object","properties":{"action":{"type":"string","enum":["get","set","history"]},"text":{"type":"string"},"n":{"type":"integer"}},"required":["action"]}},
  {"type":"function","name":"find_files","description":"Busca archivos y carpetas del usuario (Escritorio, Documentos, Descargas, Imágenes, Vídeos, Música, OneDrive) por palabras del nombre. content: busca dentro de los documentos (índice de Windows). Más recientes primero.",
   "parameters":{"type":"object","properties":{"query":{"type":"string"},"content":{"type":"boolean"}},"required":["query"]}},
  {"type":"function","name":"files","description":"Archivos y carpetas sin tocar la pantalla. Rutas completas, relativas a la carpeta abierta en el Explorador o con ~ (~/Descargas, ~/Documentos, ~/Escritorio); comodines en el nombre (*.pdf). list: contenido de una carpeta (pattern). rename: paths y names (uno por archivo; sin extensión conserva la suya). move/copy: paths a la carpeta to (se crea si no existe). new_folder: paths[0]. delete: a la papelera. zip: paths a to (.zip). unzip: paths[0] a to. open_with: paths[0] con app. undo: deshace la última. Nunca sobrescribe.",
@@ -158,8 +162,10 @@ Responder
    "confirmed":{"type":"boolean","description":"true solo si el usuario ya confirmó este comando que borra o cambia algo."}},"required":["action"]}},
  {"type":"function","name":"screenshot","description":"Print al portapapeles (y guardado como PNG). Se pega con ctrl+v.",
   "parameters":{"type":"object","properties":{"area":{"type":"string","enum":["screen","window"]}}}},
- {"type":"function","name":"remember","description":"Guarda algo duradero sobre el usuario para los próximos días (cómo llama a sus cosas, qué app usa para qué, una corrección que te hizo). Una frase corta.",
-  "parameters":{"type":"object","properties":{"fact":{"type":"string"}},"required":["fact"]}},
+ {"type":"function","name":"remember","description":"Guarda algo duradero para los próximos días (cómo llama a sus cosas, dónde está un sistema o carpeta con su URL o ruta, qué app usa para qué, una corrección). Una frase corta con el dato. where: solo vale donde el título, programa o URL contengan esa palabra. replaces: el recuerdo viejo que este corrige o completa.",
+  "parameters":{"type":"object","properties":{"fact":{"type":"string"},"where":{"type":"string"},"replaces":{"type":"string"}},"required":["fact"]}},
+ {"type":"function","name":"recent","description":"Qué ventanas tuvo delante el usuario en los últimos minutes (60 por defecto), con horas: «¿qué estaba haciendo?», «vuelve a lo de antes», «¿dónde vi…?».",
+  "parameters":{"type":"object","properties":{"minutes":{"type":"integer"}}}},
  {"type":"function","name":"forget","description":"Borra un recuerdo que ya no es cierto o que pidió olvidar (el texto o parte de él).",
   "parameters":{"type":"object","properties":{"fact":{"type":"string"}},"required":["fact"]}},
  {"type":"function","name":"plan","description":"Plan de un pedido con varias partes: steps lo fija (una frase por parte); done marca hecha la parte n (1, 2…). Va en cada turno.",

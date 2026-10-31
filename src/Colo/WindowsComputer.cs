@@ -32,6 +32,11 @@ sealed class WindowsComputer : IComputer
 
     readonly object _lock = new();
     readonly FileOps _files = new(new WindowsRecycleBin());
+
+    /// <summary>Qué tuvo delante el usuario (lo alimenta el vigía de ventanas del Widget).</summary>
+    public Colo.Core.Activity Activity { get; } = new();
+    /// <summary>Lo último copiado (lo alimenta el aviso de portapapeles del Widget).</summary>
+    public ClipHistory Clips { get; } = new();
     Rectangle _screen;
     double _scale = 1;
     Dictionary<int, Rectangle> _marks = [];
@@ -56,14 +61,15 @@ sealed class WindowsComputer : IComputer
         // UI Automation en paralelo con la captura; si tarda demasiado, sigue sin marcas.
         // Si una lectura anterior sigue colgada (app que no responde), no se lanza otra encima.
         List<Element> elements = [];
-        Task<List<Element>>? uia = null;
+        string? url = null;
+        Task<(List<Element>, string?)>? uia = null;
         lock (_lock)
         {
             if (_uia is null || _uia.IsCompleted) _uia = uia = Task.Run(() => Collect(hwnd, b));
         }
         Bitmap? full = withImage ? Capture(b) : null;
         var uiaWatch = Stopwatch.StartNew();
-        if (uia is not null && uia.Wait(UiaBudgetMs, ct)) elements = uia.Result;
+        if (uia is not null && uia.Wait(UiaBudgetMs, ct)) (elements, url) = uia.Result;
         // Sin marcas el modelo trabaja solo con la captura (más lento y menos preciso): que quede en el registro.
         if (elements.Count == 0)
             Log.Write(uia is null ? $"UIA: lectura anterior sigue colgada · «{window}»"
@@ -92,7 +98,8 @@ sealed class WindowsComputer : IComputer
             _names = names;
         }
         var others = OtherWindows(hwnd);
-        var details = app == "explorer" && Files.Explorer(hwnd) is { } ex ? Files.Details(ex) : null;
+        var details = app == "explorer" && Files.Explorer(hwnd) is { } ex ? Files.Details(ex)
+            : url is { Length: > 0 } ? ["URL: " + (url.Length > 400 ? url[..400] + "…" : url)] : null;
         if (full is null) return new Observation([], 0, 0, window, marks, others, app, details);
 
         using (full)
@@ -171,9 +178,18 @@ sealed class WindowsComputer : IComputer
         new PropertyCondition(AutomationElement.IsOffscreenProperty, false),
         new OrCondition(Roles.Select(r => (Condition)new PropertyCondition(AutomationElement.ControlTypeProperty, r.Type)).ToArray()));
 
-    static List<Element> Collect(IntPtr hwnd, Rectangle screen)
+    /// <summary>La barra de direcciones del navegador se llama así en inglés, portugués y español (Chrome, Edge, Firefox).</summary>
+    static bool IsAddressBar(string name)
+    {
+        var n = Fold(name);
+        return n.Contains("address") || n.Contains("endereco") || n.Contains("direccion") || n.Contains("url");
+    }
+
+    static (List<Element>, string?) Collect(IntPtr hwnd, Rectangle screen)
     {
         var found = new List<Element>();
+        string? url = null;
+        var browser = Browsers.Contains(Native.ProcessName(hwnd).ToLowerInvariant());
         var limit = screen.Width * screen.Height / 2;
 
         void From(IntPtr h)
@@ -215,6 +231,7 @@ sealed class WindowsComputer : IComputer
                         var v = e.GetCachedPropertyValue(ValuePattern.ValueProperty, true);
                         if (v is string str && !(e.GetCachedPropertyValue(AutomationElement.IsPasswordProperty) is true))
                         {
+                            if (browser && url is null && type == ControlType.Edit && str.Length > 0 && IsAddressBar(name)) url = str;
                             // El campo con foco va entero: con 40 letras el modelo «mejoraba» un correo reescribiendo
                             // solo el principio cortado (y lo borraba). Los demás, cortos y diciendo que falta texto.
                             var max = focused ? 3000 : 40;
@@ -234,11 +251,11 @@ sealed class WindowsComputer : IComputer
         if (found.Count < MaxMarks)
             try { From(Native.FindWindow("Shell_TrayWnd", null)); } catch (Exception ex) { Log.Write("UIA: falló la barra de tareas · " + ex.Message); }
 
-        return found
+        return (found
             .GroupBy(e => e.Rect).Select(g => g.First())
             .Take(MaxMarks)
             .OrderBy(e => e.Rect.Y / 8).ThenBy(e => e.Rect.X)
-            .ToList();
+            .ToList(), url);
     }
 
     bool Target(ToolCall c, out Point p, out string error, string prefix = "")
@@ -355,7 +372,17 @@ sealed class WindowsComputer : IComputer
                 Cursor?.Say("Corrigiendo…");
                 return await EditTextAsync(c.Str("find"), c.Str("replace"), ct);
             case "clipboard":
-                return c.Str("action") == "set" ? Desktop.SetClipboard(c.Str("text")) : Desktop.GetClipboard();
+                switch (c.Str("action"))
+                {
+                    case "set": return Desktop.SetClipboard(c.Str("text"));
+                    case "history": return Clips.List(DateTime.Now);
+                    default:
+                        if (c.Int("n") is not (> 1 and var n)) return Desktop.GetClipboard();
+                        return Clips.Get(n) is { } old ? "ok:\n" + (old.Length > 8000 ? old[..8000] + "\n…(cortado)" : old)
+                            : $"error: no tengo tantas cosas copiadas (mira clipboard history)";
+                }
+            case "recent":
+                return Activity.Summary(DateTime.Now, c.Int("minutes") ?? 60);
             case "press_keys":
             {
                 var keys = Colo.Core.Keys.Parse(c.Str("keys"));

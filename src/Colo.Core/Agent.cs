@@ -239,14 +239,14 @@ dejar lo que está haciendo? Responde solo «sí» o «no».
                         }
                         Emit(AgentEventKind.Action, label);
                         var remembers = call.Name is "remember" or "forget";
-                        // Recordar no toca la pantalla: no hace falta esperar a que se asiente.
-                        if (!remembers) acted = true;
+                        // Recordar o mirar el historial no toca la pantalla: no hace falta esperar a que se asiente.
+                        if (!remembers && call.Name != "recent") acted = true;
                         string result;
                         try
                         {
                             result = remembers
                                 ? Memory is { } mem
-                                    ? call.Name == "remember" ? mem.Remember(call.Str("fact")) : mem.Forget(call.Str("fact"))
+                                    ? call.Name == "remember" ? mem.Remember(call.Str("fact"), call.Str("where"), call.Str("replaces")) : mem.Forget(call.Str("fact"))
                                     : "error: memoria apagada"
                                 : Extra is { } host && host.Handles(call.Name)
                                     ? await host.CallAsync(call.Name, call.Args, stepCt)
@@ -379,11 +379,13 @@ dejar lo que está haciendo? Responde solo «sí» o «no».
         IReadOnlyList<string>? fresh = null, IReadOnlyList<string>? plan = null)
     {
         var sb = new StringBuilder();
-        var facts = Memory is { } mem && !(_s.DisabledTools?.Contains("memory") ?? false) ? mem.Facts : [];
+        // Los recuerdos de un sitio concreto solo van cuando ese sitio está delante.
+        var here = $"{obs.Window} {obs.App} {string.Join(" ", obs.Details ?? [])}";
+        var facts = Memory is { } mem && !(_s.DisabledTools?.Contains("memory") ?? false) ? mem.For(here) : [];
         if (facts.Count > 0)
         {
             sb.AppendLine("Lo que sabes del usuario:");
-            foreach (var f in facts) sb.AppendLine("- " + f);
+            foreach (var f in facts) sb.AppendLine("- " + f.Text + (f.Where.Length > 0 ? $" (en {f.Where})" : ""));
             sb.AppendLine();
         }
         string[] past;
@@ -527,7 +529,13 @@ dejar lo que está haciendo? Responde solo «sí» o «no».
             "read_text" => "Lee la pantalla",
             "find_on_screen" => $"Busca «{Trunc(c.Str("text"), 40)}»",
             "extract" => $"Saca {c.Str("kind")}" + (c.Str("near").Length > 0 ? $" de «{Trunc(c.Str("near"), 30)}»" : ""),
-            "clipboard" => c.Str("action") == "set" ? "Copia al portapapeles" : "Lee el portapapeles",
+            "clipboard" => c.Str("action") switch
+            {
+                "set" => "Copia al portapapeles",
+                "history" => "Mira lo copiado",
+                _ => c.Int("n") is > 1 ? "Busca lo copiado antes" : "Lee el portapapeles",
+            },
+            "recent" => "Mira lo que hiciste",
             "screenshot" => c.Str("area") == "window" ? "Print de la ventana" : "Print de la pantalla",
             "doc" => c.Str("action") switch
             {

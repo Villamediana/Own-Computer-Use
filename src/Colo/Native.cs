@@ -118,6 +118,9 @@ static class Native
     [DllImport("user32.dll")] static extern bool AttachThreadInput(uint a, uint b, bool attach);
     public const int SW_MAXIMIZE = 3, SW_MINIMIZE = 6, SW_RESTORE = 9;
     public const uint WM_CLOSE = 0x10, GW_OWNER = 4;
+    public const int WM_CLIPBOARDUPDATE = 0x031D;
+    [DllImport("user32.dll")] public static extern bool AddClipboardFormatListener(IntPtr h);
+    [DllImport("user32.dll")] public static extern bool RemoveClipboardFormatListener(IntPtr h);
 
     public static string Title(IntPtr h)
     {

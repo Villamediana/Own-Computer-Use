@@ -124,6 +124,8 @@ sealed class Widget : LayeredWindow
             : new Point(wa.X + (wa.Width - w) / 2, wa.Bottom - h + (int)(4 * S));
         Bounds = new Rectangle(_pos, new Size(w, h));
         _frame.Start();
+        Native.AddClipboardFormatListener(Handle);
+        _watch = new System.Threading.Timer(_ => WatchWindow(), null, 2000, 2000);
         RegisterHotkeys();
         SetupKeys();
         ApplyAutostart();
@@ -1158,8 +1160,44 @@ sealed class Widget : LayeredWindow
         Native.RegisterHotKey(Handle, HotStop, Native.MOD_CONTROL | Native.MOD_ALT | Native.MOD_NOREPEAT, 0x58);
     }
 
+    // ── lo que hace el usuario (para recent y el historial del portapapeles; solo en memoria)
+    System.Threading.Timer? _watch;
+    IntPtr _watchHwnd;
+    string _watchTitle = "", _watchLabel = "";
+
+    void WatchWindow()
+    {
+        try
+        {
+            var h = Native.GetForegroundWindow();
+            if (h == IntPtr.Zero || Native.IsOwnWindow(h)) return;
+            var title = Native.Title(h);
+            if (h != _watchHwnd || title != _watchTitle)
+            {
+                _watchHwnd = h;
+                _watchTitle = title;
+                _watchLabel = Native.WindowLabel(h);
+            }
+            _pc.Activity.Seen(_watchLabel, DateTime.Now);
+        }
+        catch { }
+    }
+
+    void OnClipboardChanged()
+    {
+        if (DateTime.Now < Desktop.QuietUntil) return;
+        try
+        {
+            // Los gestores de contraseñas marcan lo que copian para que nadie lo guarde.
+            if (Clipboard.ContainsData("ExcludeClipboardContentFromMonitorProcessing") || Clipboard.ContainsData("Clipboard Viewer Ignore")) return;
+            if (Clipboard.ContainsText()) _pc.Clips.Add(Clipboard.GetText(), DateTime.Now);
+        }
+        catch { } // otro programa lo tiene abierto: este se pierde, no pasa nada
+    }
+
     protected override void WndProc(ref Message m)
     {
+        if (m.Msg == Native.WM_CLIPBOARDUPDATE) OnClipboardChanged();
         if (m.Msg == Native.WM_HOTKEY)
         {
             if (m.WParam == HotToggle) ToggleListening();
@@ -1170,6 +1208,8 @@ sealed class Widget : LayeredWindow
 
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
+        Native.RemoveClipboardFormatListener(Handle);
+        _watch?.Dispose();
         Native.UnregisterHotKey(Handle, HotToggle);
         Native.UnregisterHotKey(Handle, HotStop);
         _keys?.Dispose();
