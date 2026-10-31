@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Automation;
 using System.Windows.Forms;
+using Colo.Core;
 
 namespace Colo;
 
@@ -158,79 +159,106 @@ static class Desktop
     /// ventana sin campo activo), el campo bajo el ratón; si no hay, el campo de la ventana activa más cercano
     /// al ratón (en Teams, la caja de mensaje). Devuelve dónde va a escribir, para el registro.
     /// </summary>
-    public static string EnsureTextFocus() => Current().Go();
+    public static string EnsureTextFocus()
+    {
+        if (Direct() is { } here) return here;
+        Native.GetCursorPos(out var m);
+        return Nearest(Native.GetForegroundWindow(), new System.Windows.Point(m.x, m.y));
+    }
 
     /// <summary>
-    /// Dónde iría ahora el texto (lo de <see cref="EnsureTextFocus"/>), sin tocar nada todavía: Label para que el
-    /// modelo lo vea y Go para ir. Window: la ventana de ese sitio.
+    /// El dictado va directo solo si el foco ya está en un campo («el foco») o el ratón está encima de uno (clic
+    /// ahí, «bajo el ratón»). null = ninguna de las dos: decide el modelo entre <see cref="Inputs"/>.
     /// </summary>
-    public static (string Label, IntPtr Window, Func<string> Go) Current()
+    public static string? Direct()
     {
-        var fg = Native.GetForegroundWindow();
-        var focused = AutomationElement.FocusedElement;
-        if (Writable(focused))
-            return ($"donde está el cursor: {Field(focused)} en «{Short(Native.WindowLabel(fg))}»", fg, () => "el foco");
+        if (Writable(AutomationElement.FocusedElement)) return "el foco";
         Native.GetCursorPos(out var m);
-        var mouse = new System.Windows.Point(m.x, m.y);
-        var under = AutomationElement.FromPoint(mouse);
+        var under = AutomationElement.FromPoint(new System.Windows.Point(m.x, m.y));
         for (var i = 0; i < 4 && under is not null && !Writable(under); i++)
             under = TreeWalker.ControlViewWalker.GetParent(under);
-        if (Writable(under))
-        {
-            var h = WindowOf(under!);
-            return ($"bajo el ratón: {Field(under!)} en «{Short(Native.WindowLabel(h))}»", h, () =>
-            {
-                // Clic donde está el ratón: el cursor de texto queda ahí.
-                Input.ClickNow(new System.Drawing.Point(m.x, m.y));
-                return "bajo el ratón";
-            });
-        }
-        return ($"el campo más cercano al ratón en la ventana activa «{Short(Native.WindowLabel(fg))}»", fg, () => Nearest(fg, mouse));
+        if (!Writable(under)) return null;
+        // Clic donde está el ratón: el cursor de texto queda ahí.
+        Input.ClickNow(new System.Drawing.Point(m.x, m.y));
+        return "bajo el ratón";
     }
 
-    /// <summary>Las otras ventanas abiertas (no minimizadas), de la de arriba hacia abajo: otros sitios posibles.</summary>
-    public static List<(string Label, IntPtr Window)> OtherWindows(IntPtr except, int max = 6)
+    /// <summary>Un campo donde se puede escribir, en alguna de las ventanas abiertas.</summary>
+    public sealed record TextInput(string Label, IntPtr Window, System.Drawing.Point Center);
+
+    /// <summary>
+    /// Los campos de las ventanas abiertas (la activa primero, luego de arriba hacia abajo, también en el otro
+    /// monitor), para que el modelo elija dónde va el dictado. Cada ventana se lee en paralelo y con tope de
+    /// tiempo: la que tarda se queda fuera.
+    /// </summary>
+    public static List<TextInput> Inputs(int maxWindows = 6, int perWindow = 4)
     {
-        try
+        var fg = Native.GetForegroundWindow();
+        var windows = new List<IntPtr>();
+        if (fg != IntPtr.Zero && !Native.IsOwnWindow(fg)) windows.Add(fg);
+        foreach (var h in Native.AppWindows())
+            if (windows.Count < maxWindows && h != fg && !Native.IsIconic(h)) windows.Add(h);
+        var scans = windows.Select(h => Task.Run(() =>
         {
-            return Native.AppWindows().Where(h => h != except && !Native.IsIconic(h)).Take(max)
-                .Select(h => (Short(Native.WindowLabel(h)), h)).ToList();
-        }
-        catch { return []; }
+            try { return FieldsOf(h, perWindow); }
+            catch { return []; }
+        })).ToArray();
+        Task.WaitAll(scans, 1200);
+        var result = new List<TextInput>();
+        foreach (var t in scans)
+            if (t.IsCompletedSuccessfully) result.AddRange(t.Result);
+        return result;
     }
 
-    /// <summary>Trae esa ventana y deja el cursor donde se escribe en ella (como un dictado normal).</summary>
-    public static string GoToWindow(IntPtr h)
+    static List<TextInput> FieldsOf(IntPtr h, int max)
     {
-        if (Native.GetForegroundWindow() != h) Native.Focus(h);
-        Thread.Sleep(80);
-        return $"«{Short(Native.WindowLabel(h))}» · " + EnsureTextFocus();
-    }
-
-    static string Short(string s) => s.Length > 70 ? s[..70] + "…" : s;
-
-    static string Field(AutomationElement e)
-    {
-        try
+        var app = Native.ProcessName(h);
+        var title = Native.Title(h);
+        if (title.Length > 50) title = title[..50] + "…";
+        var browser = WindowsComputer.IsBrowser(app);
+        var cr = new CacheRequest();
+        cr.Add(AutomationElement.BoundingRectangleProperty);
+        cr.Add(AutomationElement.NameProperty);
+        cr.Add(AutomationElement.ControlTypeProperty);
+        cr.Add(AutomationElement.IsValuePatternAvailableProperty);
+        cr.Add(ValuePattern.IsReadOnlyProperty);
+        var cond = new AndCondition(
+            new PropertyCondition(AutomationElement.IsOffscreenProperty, false),
+            new PropertyCondition(AutomationElement.IsEnabledProperty, true),
+            new OrCondition(
+                new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Edit),
+                new PropertyCondition(AutomationElement.IsTextPatternAvailableProperty, true)));
+        var root = AutomationElement.FromHandle(h);
+        AutomationElementCollection found;
+        using (cr.Activate()) found = root.FindAll(TreeScope.Descendants, cond);
+        var list = new List<TextInput>();
+        foreach (AutomationElement e in found)
         {
-            var name = (e.Current.Name ?? "").Replace('\n', ' ').Trim();
+            if (list.Count >= max) break;
+            if (e.GetCachedPropertyValue(AutomationElement.IsValuePatternAvailableProperty) is true
+                && e.GetCachedPropertyValue(ValuePattern.IsReadOnlyProperty, true) is true) continue;
+            var type = (ControlType)e.GetCachedPropertyValue(AutomationElement.ControlTypeProperty);
+            // La página entera de un navegador tiene texto pero no es un campo donde escribir.
+            if (browser && type == ControlType.Document) continue;
+            if (e.GetCachedPropertyValue(AutomationElement.BoundingRectangleProperty) is not System.Windows.Rect r
+                || r.IsEmpty || r.Width < 8 || r.Height < 8) continue;
+            var name = ((e.GetCachedPropertyValue(AutomationElement.NameProperty) as string) ?? "").Replace('\n', ' ').Trim();
             if (name.Length > 40) name = name[..40] + "…";
-            return name.Length > 0 ? $"«{name}»" : "un campo";
+            var what = name.Length > 0 ? $"«{name}»" : Terminal.Kind(app, title) != Shell.None ? "la terminal" : "un campo";
+            list.Add(new TextInput($"{what} en «{title}» [{app}]", h, new System.Drawing.Point((int)(r.Left + r.Width / 2), (int)(r.Top + r.Height / 2))));
         }
-        catch (ElementNotAvailableException) { return "un campo"; }
+        return list;
     }
 
-    static IntPtr WindowOf(AutomationElement e)
+    /// <summary>Como hace Colo: trae la ventana, lleva la mano (el cursor azul) hasta el campo, clic, y ahí se escribe.</summary>
+    public static string GoTo(TextInput t, AiCursor? cursor)
     {
-        try
-        {
-            var walker = TreeWalker.ControlViewWalker;
-            for (var x = e; x is not null; x = walker.GetParent(x))
-                if (x.Current.NativeWindowHandle != 0 && walker.GetParent(x) is { } p && Automation.Compare(p, AutomationElement.RootElement))
-                    return new IntPtr(x.Current.NativeWindowHandle);
-        }
-        catch (ElementNotAvailableException) { }
-        return Native.GetForegroundWindow();
+        if (Native.GetForegroundWindow() != t.Window) Native.Focus(t.Window);
+        cursor?.Glide(t.Center, "Clic");
+        Input.Click(t.Center, "left", false);
+        cursor?.Pulse();
+        Thread.Sleep(60);
+        return t.Label;
     }
 
     static string Nearest(IntPtr fg, System.Windows.Point mouse)
