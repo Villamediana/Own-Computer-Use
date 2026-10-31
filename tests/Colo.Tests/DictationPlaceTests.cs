@@ -20,6 +20,8 @@ public class DictationPlaceTests
         Assert.Equal((2, "ok"), Run(3, "@2 ok"));
         Assert.Equal((1, "sem lugar"), Run(3, "sem ", "lugar"));
         Assert.Equal((1, "texto"), Run(2, "@9\ntexto")); // fuera de rango → el primero
+        Assert.Equal((1, "@Felipe olha isso"), Run(2, "@", "Felipe olha isso")); // una mención no es un lugar
+        Assert.Equal((2, "@Felipe olha"), Run(2, "@2\n@Felipe olha"));
     }
 
     [Fact]
@@ -42,8 +44,9 @@ public class DictationPlaceTests
         string Text(IReadOnlyList<string>? places) => Dictation.Request(s, "roda os testes", "Chrome", places)["input"]![0]!["content"]![0]!["text"]!.GetValue<string>();
         Assert.Equal("[Chrome]\nroda os testes", Text(null));
         Assert.Equal("[Chrome]\nroda os testes", Text(["só um"]));
-        var two = Text(["«Buscar» em «Google» [chrome]", "terminal «claude» [WindowsTerminal]"]);
-        Assert.Contains("Onde escrever:\n@1 «Buscar» em «Google» [chrome]\n@2 terminal «claude»", two);
+        var two = Text(["donde está el cursor: «Barra de direcciones» en «Google - Chrome  [chrome]»", "claude  [WindowsTerminal]"]);
+        Assert.Contains("Onde escrever:\n@1 donde está el cursor: «Barra de direcciones»", two);
+        Assert.Contains("@2 claude  [WindowsTerminal]", two);
         Assert.EndsWith("roda os testes", two);
     }
 }

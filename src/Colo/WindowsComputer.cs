@@ -530,8 +530,6 @@ sealed class WindowsComputer : IComputer
         ["chrome", "msedge", "firefox", "brave", "opera", "vivaldi", "chromium", "arc", "zen", "librewolf", "waterfox", "iexplore",
          "comet", "dia", "thorium", "yandex", "floorp", "sidekick", "opera_gx", "duckduckgo"];
 
-    internal static bool IsBrowser(string process) => Browsers.Contains(process.ToLowerInvariant());
-
     async Task<string> Browser(ToolCall c, CancellationToken ct)
     {
         var action = c.Str("action");

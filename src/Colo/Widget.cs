@@ -760,23 +760,28 @@ sealed class Widget : LayeredWindow
         Say("Escribiendo…", Theme.Muted, 8000);
         var window = Native.WindowLabel(Native.GetForegroundWindow());
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        // Dónde escribir: con el foco en un campo es inmediato. Si no, los sitios posibles (también el otro monitor);
-        // con uno solo se va ahí, con varios el modelo elige en la misma llamada del dictado (1ª línea @n).
-        (string? Done, List<Desktop.TextTarget> Options) targets;
-        try { targets = await Task.Run(Desktop.FindTextTargets); }
-        catch (Exception ex) { targets = ("no pude mirar el foco · " + ex.Message, []); }
-        var focusMs = sw.ElapsedMilliseconds;
-        var options = targets.Options;
-        string where = targets.Done ?? (options.Count == 0 ? "nada (no hay campo de texto)" : "");
-        if (targets.Done is null && options.Count == 1) where = await Task.Run(() => Desktop.Apply(options[0]));
-        var choose = targets.Done is null && options.Count > 1 ? options : null;
-        var place = choose is null ? null : new Dictation.Place(choose.Count);
+        // Dónde iría (como siempre) y las demás ventanas abiertas: el modelo, en la misma llamada del dictado, ve
+        // si el texto encaja ahí o es claramente para otra (1ª línea @n). Sin otras ventanas, no se pregunta nada.
+        (string Label, IntPtr Window, Func<string> Go) here;
+        try { here = await Task.Run(Desktop.Current); }
+        catch (Exception ex) { here = ("no pude mirar el foco · " + ex.Message, IntPtr.Zero, () => "sin mirar"); }
+        var others = Desktop.OtherWindows(here.Window);
+        var place = others.Count > 0 ? new Dictation.Place(others.Count + 1) : null;
+        // Sin elección se va ya, mientras el modelo pule el texto (como antes).
+        var where = place is null ? Task.Run(here.Go) : null;
+        long first = -1, focusMs = 0;
+        string target = "";
 
         var chunks = Channel.CreateUnbounded<string>(new UnboundedChannelOptions { SingleReader = true });
-        long first = -1;
         var typer = Task.Run(async () =>
         {
+            if (where is not null) { target = await where; focusMs = sw.ElapsedMilliseconds; }
             var start = true;
+            void Go()
+            {
+                target = place!.Choice == 1 ? here.Go() : Desktop.GoToWindow(others[place.Choice - 2].Window);
+                focusMs = sw.ElapsedMilliseconds;
+            }
             void Write(string c)
             {
                 var t = start ? c.TrimStart() : c;
@@ -790,24 +795,24 @@ sealed class Widget : LayeredWindow
                 if (place is null) { Write(c); continue; }
                 var wasDecided = place.Decided;
                 var t = place.Feed(c);
-                if (!wasDecided && place.Decided) where = Desktop.Apply(choose![place.Choice - 1]);
+                if (!wasDecided && place.Decided) Go();
                 Write(t);
             }
             if (place is { Decided: false })
             {
                 var rest = place.Flush();
-                where = Desktop.Apply(choose![place.Choice - 1]);
+                Go();
                 Write(rest);
             }
         });
         try
         {
-            var text = await Task.Run(() => Dictation.PolishAsync(_ai, _s, heard, window, CancellationToken.None, d => chunks.Writer.TryWrite(d),
-                choose?.Select(o => o.Label).ToList()));
+            var places = place is null ? null : new List<string> { here.Label }.Concat(others.Select(o => o.Label)).ToList();
+            var text = await Task.Run(() => Dictation.PolishAsync(_ai, _s, heard, window, CancellationToken.None, d => chunks.Writer.TryWrite(d), places));
             chunks.Writer.TryComplete();
             await typer;
-            var among = choose is null ? "" : $" (elegido entre {choose.Count}: {string.Join(" | ", choose.Select(o => o.Label))})";
-            Log.Write($"dicta: transcribir {sttMs} ms · buscar campo {focusMs} ms · 1ª letra {first} ms · total {sw.ElapsedMilliseconds} ms · en {where}{among} · «{heard}» → «{Dictation.WithoutPlace(text)}»");
+            var chosen = place is null ? "" : $" · eligió @{place.Choice} de {places!.Count}";
+            Log.Write($"dicta: transcribir {sttMs} ms · buscar campo {focusMs} ms · 1ª letra {first} ms · total {sw.ElapsedMilliseconds} ms · en {target}{chosen} · «{heard}» → «{(place is null ? text : Dictation.WithoutPlace(text))}»");
             Say("", Theme.Muted, 0);
         }
         catch (Exception ex)

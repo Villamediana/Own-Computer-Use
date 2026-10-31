@@ -120,8 +120,6 @@ static class Native
     public const uint WM_CLOSE = 0x10, GW_OWNER = 4;
     public const int WM_CLIPBOARDUPDATE = 0x031D;
     [DllImport("user32.dll")] public static extern bool AddClipboardFormatListener(IntPtr h);
-    [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(POINT p);
-    [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr h, uint flags);
     [DllImport("user32.dll")] public static extern bool RemoveClipboardFormatListener(IntPtr h);
 
     public static string Title(IntPtr h)
