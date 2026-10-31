@@ -417,6 +417,12 @@ sealed class WindowsComputer : IComputer
                 }
                 return await Task.Run(() => _files.Run(c.Str("action"), folder, paths, c.Str("to"), Strings(c, "names"), c.Str("pattern")), ct);
             }
+            case "doc":
+                Cursor?.Say(Agent.Describe(c, new Observation([], 0, 0, "", [])));
+                return await Office.DocAsync(c, ct);
+            case "sheet":
+                Cursor?.Say(Agent.Describe(c, new Observation([], 0, 0, "", [])));
+                return await Office.SheetAsync(c, ct);
             case "terminal":
                 switch (c.Str("action"))
                 {

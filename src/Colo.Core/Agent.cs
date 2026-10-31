@@ -529,6 +529,24 @@ dejar lo que está haciendo? Responde solo «sí» o «no».
             "extract" => $"Saca {c.Str("kind")}" + (c.Str("near").Length > 0 ? $" de «{Trunc(c.Str("near"), 30)}»" : ""),
             "clipboard" => c.Str("action") == "set" ? "Copia al portapapeles" : "Lee el portapapeles",
             "screenshot" => c.Str("area") == "window" ? "Print de la ventana" : "Print de la pantalla",
+            "doc" => c.Str("action") switch
+            {
+                "outline" => "Mira los títulos",
+                "goto" => $"Va a «{Trunc(c.Str("target"), 40)}»",
+                "read" => "Lee el documento",
+                "find" => $"Busca «{Trunc(c.Str("text"), 40)}»",
+                "write" => $"Escribe «{Trunc(c.Str("text"), 60)}»",
+                "format" => "Formato " + c.Str("style"),
+                var a => a,
+            },
+            "sheet" => c.Str("action") switch
+            {
+                "read" => "Lee la hoja",
+                "write" => "Escribe en " + (c.Str("range").Length > 0 ? c.Str("range") : "la hoja"),
+                "goto" => "Va a " + (c.Str("range").Length > 0 ? c.Str("range") : c.Str("sheet")),
+                "filter" => $"Filtra «{Trunc(c.Str("criteria"), 30)}»",
+                var a => a,
+            },
             "find_files" => $"Busca archivos «{c.Str("query")}»",
             "files" => c.Str("action") switch
             {

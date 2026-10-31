@@ -16,6 +16,8 @@ public static class AppHints
         return app.ToLowerInvariant() switch
         {
             "explorer" => "Explorador: files trabaja sobre la carpeta abierta (rutas relativas). f2 renombra, ctrl+shift+n carpeta nueva, alt+↑ sube, ctrl+l ruta, ctrl+e busca.",
+            "winword" => "Word: doc antes que ctrl+f o desplazar (outline, goto, read, find, write, format). Preguntas sobre el documento: read (section o all) y responde. Escribir o completar una parte: read de esa sección y write con el tono y el estilo del documento (at=section_end para añadir al final).",
+            "excel" => "Excel: sheet para leer, escribir, fórmulas y filtros. f2 edita la celda, ctrl+flechas salta al borde de la tabla, ctrl+z deshace.",
             _ => "",
         };
     }
