@@ -34,6 +34,8 @@ public sealed class Agent
     public IToolHost? Extra { get; set; }
     /// <summary>Lo que sabe del usuario entre días (null = sin memoria).</summary>
     public Memory? Memory { get; set; }
+    /// <summary>Cofre de contraseñas: el modelo ve solo los nombres (null = sin cofre).</summary>
+    public Vault? Vault { get; set; }
     public event Action<AgentEvent>? Event;
 
     public Agent(AiClient ai, Settings settings, IComputer pc)
@@ -254,6 +256,9 @@ dejar lo que está haciendo? Responde solo «sí» o «no».
                         }
                         catch (Exception ex) when (ex is not OperationCanceledException) { result = "error: " + ex.Message; }
                         // El resultado largo viaja entero solo en el turno siguiente; en el registro queda corto.
+                        // Un secreto dicho en voz alta y ya guardado no vuelve a viajar en los turnos siguientes.
+                        if (call.Name == "vault" && call.Str("secret") is { Length: > 0 } secret && result.StartsWith("ok", StringComparison.Ordinal))
+                            for (var i = 0; i < heard.Count; i++) heard[i] = heard[i].Replace(secret, "••••");
                         if (result.Length > 300) fresh.Add($"{label}:\n{result}");
                         log.Add($"{label} → {Trunc(result, 300)}");
                         did.Add(result.StartsWith("error", StringComparison.Ordinal) ? $"{label} (falló)" : label);
@@ -388,6 +393,8 @@ dejar lo que está haciendo? Responde solo «sí» o «no».
             foreach (var f in facts) sb.AppendLine("- " + f.Text + (f.Where.Length > 0 ? $" (en {f.Where})" : ""));
             sb.AppendLine();
         }
+        var vault = Vault is { } v && !(_s.DisabledTools?.Contains("vault") ?? false) ? v.Lines() : [];
+        if (vault.Count > 0) sb.AppendLine("Cofre: " + string.Join(" · ", vault)).AppendLine();
         string[] past;
         lock (_lock) past = [.. _past];
         if (past.Length > 0)
@@ -536,6 +543,14 @@ dejar lo que está haciendo? Responde solo «sí» o «no».
                 _ => c.Int("n") is > 1 ? "Busca lo copiado antes" : "Lee el portapapeles",
             },
             "recent" => "Mira lo que hiciste",
+            "vault" => c.Str("action") switch
+            {
+                "save" => $"Guarda «{Trunc(c.Str("name"), 40)}» en el cofre",
+                "forget" => $"Borra «{Trunc(c.Str("name"), 40)}» del cofre",
+                "copy" => $"Copia «{Trunc(c.Str("name"), 40)}» (oculto)",
+                _ => c.Str("field") is "user" or "host" ? $"Escribe el {(c.Str("field") == "user" ? "usuario" : "host")} de «{Trunc(c.Str("name"), 40)}»"
+                    : $"Escribe la clave de «{Trunc(c.Str("name"), 40)}» (oculta)",
+            },
             "screenshot" => c.Str("area") == "window" ? "Print de la ventana" : "Print de la pantalla",
             "doc" => c.Str("action") switch
             {

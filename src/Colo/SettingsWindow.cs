@@ -28,6 +28,7 @@ sealed class SettingsWindow : Form
     readonly Settings _s;
     readonly Memory? _memory;
     readonly TokenMeter? _meter;
+    readonly Vault? _vault;
     readonly WebView2 _web = new() { Dock = DockStyle.Fill, DefaultBackgroundColor = Color.White };
     readonly CancellationTokenSource _closing = new();
     string _voiceStatus = "";
@@ -58,11 +59,20 @@ sealed class SettingsWindow : Form
         Post(new { type = "voiceStatus", text });
     }
 
-    public SettingsWindow(Settings s, Memory? memory = null, TokenMeter? meter = null)
+    object[] VaultList() => (_vault?.Entries ?? []).Select(e => (object)new
+    {
+        name = e.Name,
+        kind = e.Kind,
+        detail = (e.User.Length > 0 || e.Host.Length > 0 ? e.User + (e.User.Length > 0 && e.Host.Length > 0 ? "@" : "") + e.Host : "")
+            + (e.Where.Length > 0 ? " · " + e.Where : ""),
+    }).ToArray();
+
+    public SettingsWindow(Settings s, Memory? memory = null, TokenMeter? meter = null, Vault? vault = null)
     {
         _s = s;
         _memory = memory;
         _meter = meter;
+        _vault = vault;
         Text = "Colo · Ajustes";
         BackColor = Color.White;
         StartPosition = FormStartPosition.CenterScreen;
@@ -148,6 +158,7 @@ sealed class SettingsWindow : Form
                     printsDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "Colo"),
                     logFile = Log.FilePath,
                     memory = _memory?.Facts ?? [],
+                    vault = VaultList(),
                     usage = Usage(),
                 });
                 if (_voiceStatus.Length > 0) Post(new { type = "voiceStatus", text = _voiceStatus });
@@ -176,6 +187,24 @@ sealed class SettingsWindow : Form
             case "save":
                 Apply(msg["settings"]);
                 break;
+
+            // Cofre: el secreto entra desde la página y nunca vuelve a ella (ni al registro).
+            case "vaultAdd":
+            {
+                var name = msg["name"]?.GetValue<string>() ?? "";
+                var r = _vault?.Save(name, msg["kind"]?.GetValue<string>() ?? "password", msg["user"]?.GetValue<string>() ?? "",
+                    msg["host"]?.GetValue<string>() ?? "", msg["where"]?.GetValue<string>() ?? "", msg["secret"]?.GetValue<string>() ?? "") ?? "error: sin cofre";
+                Log.Write($"cofre: «{name}» desde Ajustes → {(r.StartsWith("ok") ? "guardado" : r)}");
+                Post(new { type = "vault", items = VaultList(), error = r.StartsWith("error") ? r[7..] : null });
+                break;
+            }
+            case "vaultForget":
+            {
+                var name = msg["name"]?.GetValue<string>() ?? "";
+                Log.Write($"cofre: «{name}» borrado desde Ajustes → {_vault?.Forget(name)}");
+                Post(new { type = "vault", items = VaultList() });
+                break;
+            }
 
             case "forgetFact":
                 var fact = msg["text"]?.GetValue<string>() ?? "";

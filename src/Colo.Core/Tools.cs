@@ -82,6 +82,9 @@ Memoria
 - Prudente: una frase con el dato concreto. Nada de tareas del momento, cosas de una vez ni datos sensibles. Si
   ya hay uno parecido, replaces (corrige o junta) en vez de otro. forget si deja de ser cierto o te lo pide.
   Si además hay una tarea, sigue con ella sin comentarlo; si solo te estaba enseñando algo, done muy corto.
+- Contraseñas, claves, PIN, tokens y accesos (IP + usuario + clave de un ssh) van al cofre con vault save, nunca a
+  remember: si te pide guardarlos o te los da para usarlos. Para usarlos, vault type en el campo (la contraseña de
+  una web, el «password:» del ssh en la terminal). Nunca escribas un secreto con type_text ni lo repitas en done.
 
 Responder
 - done con una frase corta y natural, en el idioma de la frase que acaba de decir (español → español,
@@ -102,6 +105,7 @@ Responder
         new("office", "Word y Excel", "Secciones, buscar, escribir y formato en Word; leer, escribir y filtrar en Excel", ["doc", "sheet"]),
         new("terminal", "Terminal", "Leer la terminal, esperar comandos y ejecutar en segundo plano", ["terminal"]),
         new("print", "Print", "Captura al portapapeles", ["screenshot"]),
+        new("vault", "Cofre", "Contraseñas y accesos cifrados en este PC; Colo los escribe sin verlos", ["vault"]),
         new("memory", "Memoria", "Recordar lo que aprende de ti entre días y lo que hiciste hace un rato", ["remember", "forget", "recent"]),
     ];
 
@@ -162,6 +166,11 @@ Responder
    "confirmed":{"type":"boolean","description":"true solo si el usuario ya confirmó este comando que borra o cambia algo."}},"required":["action"]}},
  {"type":"function","name":"screenshot","description":"Print al portapapeles (y guardado como PNG). Se pega con ctrl+v.",
   "parameters":{"type":"object","properties":{"area":{"type":"string","enum":["screen","window"]}}}},
+ {"type":"function","name":"vault","description":"Cofre cifrado de contraseñas y accesos (ssh, logins, tokens). Ves los nombres en «Cofre», nunca los secretos. type: escribe el secreto de name (o field user/host) donde está el foco, sin mostrarlo; submit: Enter después. copy: secreto al portapapeles 30 s. save: guarda name (kind, user, host, where) con secret (lo que dijo) o from (clipboard, selection, focused: se lee aquí sin pasar por ti). forget: lo borra.",
+  "parameters":{"type":"object","properties":{"action":{"type":"string","enum":["type","copy","save","forget"]},"name":{"type":"string"},
+   "field":{"type":"string","enum":["secret","user","host"]},"submit":{"type":"boolean"},
+   "kind":{"type":"string","enum":["password","ssh","login","token","pin","note"]},"user":{"type":"string"},"host":{"type":"string"},
+   "where":{"type":"string"},"secret":{"type":"string"},"from":{"type":"string","enum":["clipboard","selection","focused"]}},"required":["action","name"]}},
  {"type":"function","name":"remember","description":"Guarda algo duradero para los próximos días (cómo llama a sus cosas, dónde está un sistema o carpeta con su URL o ruta, qué app usa para qué, una corrección). Una frase corta con el dato. where: solo vale donde el título, programa o URL contengan esa palabra. replaces: el recuerdo viejo que este corrige o completa.",
   "parameters":{"type":"object","properties":{"fact":{"type":"string"},"where":{"type":"string"},"replaces":{"type":"string"}},"required":["fact"]}},
  {"type":"function","name":"recent","description":"Qué ventanas tuvo delante el usuario en los últimos minutes (60 por defecto), con horas: «¿qué estaba haciendo?», «vuelve a lo de antes», «¿dónde vi…?».",
@@ -184,7 +193,7 @@ Responder
 """;
 
     /// <summary>Acciones que pueden cerrar el pedido en la misma llamada (campo done): ahorra un turno entero.</summary>
-    public static readonly HashSet<string> Finishing = ["click", "type_text", "dictate", "edit_text", "press_keys", "browser", "open", "window", "scroll", "clipboard", "screenshot"];
+    public static readonly HashSet<string> Finishing = ["vault", "click", "type_text", "dictate", "edit_text", "press_keys", "browser", "open", "window", "scroll", "clipboard", "screenshot"];
 
     /// <summary>Herramientas activas: todas menos los grupos apagados (plan, look, wait, done, stop e ignore van siempre).</summary>
     public static JsonArray Build(IEnumerable<string>? disabledGroups)

@@ -84,6 +84,7 @@ sealed class Widget : LayeredWindow
     static readonly TimeSpan LiveHangup = TimeSpan.FromSeconds(8);
     readonly TokenMeter _tokens = new(System.IO.Path.Combine(Store.Dir, "usage.json"));
     readonly Memory _memory = new(System.IO.Path.Combine(Store.Dir, "memory.json"));
+    readonly Vault _vault = Secrets.Open(System.IO.Path.Combine(Store.Dir, "vault.json"));
     long _orderTokens;
 
     // ── arrastre
@@ -96,8 +97,9 @@ sealed class Widget : LayeredWindow
     {
         _ai = new AiClient(_s);
         _eleven = new ElevenLabsStt(_s);
-        _agent = new Agent(_ai, _s, _pc) { Memory = _memory };
+        _agent = new Agent(_ai, _s, _pc) { Memory = _memory, Vault = _vault };
         _pc.Cursor = _cursor;
+        _pc.Vault = _vault;
         Text = "Colo";
         try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
 
@@ -918,7 +920,7 @@ sealed class Widget : LayeredWindow
         bool saved;
         try
         {
-            using var f = new SettingsWindow(_s, _memory, _tokens);
+            using var f = new SettingsWindow(_s, _memory, _tokens, _vault);
             _settingsWindow = f;
             f.RecordTest += StartProbe;
             f.SayTest += TrySpeaking;

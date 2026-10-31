@@ -105,6 +105,19 @@ static class Desktop
         return sb.ToString();
     }
 
+    /// <summary>El texto del campo con foco tal cual (sin «ok:»).</summary>
+    public static string FocusedRaw()
+    {
+        try { return Focused(); } catch { return ""; }
+    }
+
+    /// <summary>Lo seleccionado tal cual (sin «ok:»); null si no hay.</summary>
+    public static async Task<string?> SelectionRawAsync(CancellationToken ct)
+    {
+        var r = await ReadSelectionAsync(ct, max: int.MaxValue);
+        return r.StartsWith("ok:\n", StringComparison.Ordinal) ? r[4..] : null;
+    }
+
     static string Focused()
     {
         var e = AutomationElement.FocusedElement;
@@ -227,7 +240,7 @@ static class Desktop
     public static DateTime QuietUntil;
 
     /// <summary>Copia lo seleccionado con ctrl+c y deja el texto que había en el portapapeles.</summary>
-    static async Task<string> ReadSelectionAsync(CancellationToken ct)
+    static async Task<string> ReadSelectionAsync(CancellationToken ct, int max = MaxText)
     {
         QuietUntil = DateTime.Now.AddSeconds(3);
         var before = Sta(() => Clipboard.ContainsText() ? Clipboard.GetText() : null);
@@ -241,11 +254,14 @@ static class Desktop
         if (before is not null) Sta(() => { Clipboard.SetText(before); return 0; });
         QuietUntil = DateTime.Now.AddMilliseconds(600);
         if (text.Length == 0) return "ok: (lo seleccionado no es texto)";
-        return "ok:\n" + (text.Length > MaxText ? text[..MaxText] + "\n…(cortado)" : text);
+        return "ok:\n" + (text.Length > max ? text[..max] + "\n…(cortado)" : text);
     }
 
     public static string GetClipboard()
     {
+        // Una clave copiada del cofre (o de un gestor de contraseñas) no se lee: no va al modelo.
+        if (Sta(() => Clipboard.ContainsData("ExcludeClipboardContentFromMonitorProcessing")))
+            return "ok: (el portapapeles tiene una clave protegida; pégala con ctrl+v sin leerla)";
         var t = Sta(() => Clipboard.ContainsText() ? Clipboard.GetText() : null);
         if (t is null) return "ok: (el portapapeles no tiene texto)";
         return "ok:\n" + (t.Length > MaxText ? t[..MaxText] + "\n…(cortado)" : t);

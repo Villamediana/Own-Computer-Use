@@ -11,6 +11,24 @@ static class Log
     public static string FilePath { get; } =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Colo", "colo.log");
 
+    /// <summary>Tapa un secreto que haya quedado escrito (una contraseña dicha en voz alta y transcrita).</summary>
+    public static void Redact(string secret)
+    {
+        if (secret.Length < 3) return;
+        try
+        {
+            lock (Gate)
+                foreach (var path in new[] { FilePath, FilePath + ".1" })
+                {
+                    if (!File.Exists(path)) continue;
+                    var text = File.ReadAllText(path, Encoding.UTF8);
+                    if (text.Contains(secret, StringComparison.Ordinal))
+                        File.WriteAllText(path, text.Replace(secret, "••••"), Encoding.UTF8);
+                }
+        }
+        catch { }
+    }
+
     public static void Write(string text)
     {
         try

@@ -37,6 +37,8 @@ sealed class WindowsComputer : IComputer
     public Colo.Core.Activity Activity { get; } = new();
     /// <summary>Lo último copiado (lo alimenta el aviso de portapapeles del Widget).</summary>
     public ClipHistory Clips { get; } = new();
+    /// <summary>Cofre de contraseñas (null = sin cofre).</summary>
+    public Vault? Vault { get; set; }
     Rectangle _screen;
     double _scale = 1;
     Dictionary<int, Rectangle> _marks = [];
@@ -292,16 +294,20 @@ sealed class WindowsComputer : IComputer
     {
         var front = Native.WindowLabel(Native.GetForegroundWindow());
         var sw = Stopwatch.StartNew();
+        // El secreto que el modelo manda para guardar no se escribe en el registro.
+        var args = c.Name == "vault" && c.Args["secret"] is not null
+            ? new System.Text.Json.Nodes.JsonObject(c.Args.Where(kv => kv.Key != "secret").Select(kv => KeyValuePair.Create(kv.Key, kv.Value?.DeepClone()))).ToJsonString() + " +secreto"
+            : c.Args.ToJsonString();
         string result;
         try { result = await ExecuteCoreAsync(c, ct); }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            Log.Write($"acción {c.Name} {c.Args.ToJsonString()} · ventana «{front}» · EXCEPCIÓN {ex.Message}");
+            Log.Write($"acción {c.Name} {args} · ventana «{front}» · EXCEPCIÓN {ex.Message}");
             throw;
         }
         var shortResult = result.Replace('\n', ' ');
         if (shortResult.Length > 160) shortResult = shortResult[..160] + "…";
-        Log.Write($"acción {c.Name} {c.Args.ToJsonString()} · ventana «{front}» → {shortResult} ({sw.ElapsedMilliseconds} ms)");
+        Log.Write($"acción {c.Name} {args} · ventana «{front}» → {shortResult} ({sw.ElapsedMilliseconds} ms)");
         return result;
     }
 
@@ -381,6 +387,9 @@ sealed class WindowsComputer : IComputer
                         return Clips.Get(n) is { } old ? "ok:\n" + (old.Length > 8000 ? old[..8000] + "\n…(cortado)" : old)
                             : $"error: no tengo tantas cosas copiadas (mira clipboard history)";
                 }
+            case "vault":
+                if (Vault is null) return "error: cofre apagado";
+                return await Secrets.RunAsync(Vault, c, Cursor, ct);
             case "recent":
                 return Activity.Summary(DateTime.Now, c.Int("minutes") ?? 60);
             case "press_keys":

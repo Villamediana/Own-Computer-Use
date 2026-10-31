@@ -45,7 +45,7 @@ sealed class FakeComputer : IComputer
 public class CoreTests(ITestOutputHelper output)
 {
     /// <summary>Respuesta en streaming (SSE) de la Responses API con esas llamadas.</summary>
-    static string Calls(params (string Name, string Args)[] calls)
+    internal static string Calls(params (string Name, string Args)[] calls)
     {
         var sb = new StringBuilder();
         void Ev(JsonObject e) => sb.Append("event: ").Append(e["type"]!.GetValue<string>()).Append("\ndata: ").Append(e.ToJsonString()).Append("\n\n");

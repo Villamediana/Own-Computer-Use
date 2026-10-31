@@ -120,6 +120,10 @@
     display: grid; place-items: center; flex: none;
   }
   .row .icon svg { width: 17px; height: 17px; stroke: var(--ink-2); }
+  #vault + .group { margin-top: 10px; }
+  .vault-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .vault-grid .wide { grid-column: 1 / -1; }
+  .vault-kind { font-size: 11.5px; font-weight: 600; color: var(--muted); background: var(--fill); border-radius: 99px; padding: 2px 8px; margin-left: 8px; }
   .hint { color: var(--muted); font-size: 12.5px; margin: 8px 2px 0; }
   .cost-total { display: grid; grid-template-columns: 1fr 1fr; }
   .cost-total > div { padding: 16px 18px; }
@@ -383,6 +387,7 @@
     <symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></symbol>
     <symbol id="i-edit" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/></symbol>
     <symbol id="i-memory" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3.5h10a1.5 1.5 0 0 1 1.5 1.5v15.5L12 16.5l-6.5 4V5A1.5 1.5 0 0 1 7 3.5z"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></symbol>
     <symbol id="i-trash" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 7h15M10 7V4.5h4V7M6.5 7l1 12.5h9l1-12.5"/></symbol>
     <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></symbol>
     <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
@@ -679,6 +684,25 @@
         <div class="group" id="facts"></div>
         <p class="hint">Lo aprende solo mientras le hablas y lo usa otros días. Quita lo que no quieras que recuerde.</p>
 
+        <h2>Cofre</h2>
+        <div class="group" id="vault"></div>
+        <div class="group">
+          <div class="row stack">
+            <div class="vault-grid">
+              <input class="input" id="vName" placeholder="Nombre" spellcheck="false" autocomplete="off">
+              <select class="input" id="vKind">
+                <option value="password">Contraseña</option><option value="ssh">SSH</option><option value="login">Login</option>
+                <option value="token">Token</option><option value="pin">PIN</option>
+              </select>
+              <input class="input mono" id="vUser" placeholder="Usuario" spellcheck="false" autocomplete="off">
+              <input class="input mono" id="vHost" placeholder="Host, IP o sitio" spellcheck="false" autocomplete="off">
+              <input class="input mono wide" id="vSecret" type="password" placeholder="Clave" autocomplete="new-password">
+            </div>
+            <div><button class="btn" id="vAdd"><svg><use href="#i-lock"/></svg>Guardar</button></div>
+          </div>
+        </div>
+        <p class="hint">Cifrado con tu usuario de Windows. Colo ve los nombres; las claves las escribe sin verlas.</p>
+
         <h2>Registro</h2>
         <div class="group">
           <div class="row">
@@ -746,7 +770,7 @@ let voiceModels = [];   // los de la conexión de la voz (para la transcripción
 let groups = [];        // [{id, title, summary, icon}]
 let dirty = false;
 
-const GROUP_ICONS = { mouse: "i-mouse", keyboard: "i-keyboard", browser: "i-globe", windows: "i-window", read: "i-text", files: "i-folder", terminal: "i-terminal", office: "i-office", print: "i-camera", memory: "i-memory" };
+const GROUP_ICONS = { mouse: "i-mouse", keyboard: "i-keyboard", browser: "i-globe", windows: "i-window", read: "i-text", files: "i-folder", terminal: "i-terminal", office: "i-office", vault: "i-lock", print: "i-camera", memory: "i-memory" };
 
 // ── navegación
 function go(page) {
@@ -854,6 +878,23 @@ function renderFacts() {
     facts = facts.filter(x => x !== f);
     renderFacts();
   });
+}
+
+// ── cofre: la clave va a Colo y no vuelve nunca a la página
+let vault = [];
+const KIND_LABEL = { password: "Contraseña", ssh: "SSH", login: "Login", token: "Token", pin: "PIN", note: "Nota" };
+function renderVault() {
+  $("#vault").innerHTML = vault.length
+    ? vault.map((v, i) => `<div class="row"><div class="label"><span>${esc(v.name)}<span class="vault-kind">${esc(KIND_LABEL[v.kind] || v.kind)}</span></span>${v.detail ? `<small>${esc(v.detail)}</small>` : ""}</div><button class="icon-btn" data-vforget="${i}" title="Borrar"><svg><use href="#i-trash"/></svg></button></div>`).join("")
+    : '<div class="row"><div class="label"><small>Vacío.</small></div></div>';
+  $$("[data-vforget]").forEach(b => b.onclick = () => host.send({ type: "vaultForget", name: vault[+b.dataset.vforget].name }));
+}
+function addToVault() {
+  const name = $("#vName").value.trim(), secret = $("#vSecret").value;
+  if (!name) { $("#vName").focus(); return; }
+  if (!secret) { $("#vSecret").focus(); return; }
+  host.send({ type: "vaultAdd", name, kind: $("#vKind").value, user: $("#vUser").value.trim(), host: $("#vHost").value.trim(), secret });
+  for (const id of ["#vName", "#vUser", "#vHost", "#vSecret"]) $(id).value = "";
 }
 
 // ── atajos que se mantienen: se graban apretándolos (todas las teclas a la vez) y soltando
@@ -1011,6 +1052,10 @@ function init(msg) {
   $("#logFile").textContent = msg.logFile || "";
   facts = msg.memory || [];
   renderFacts();
+  vault = msg.vault || [];
+  renderVault();
+  $("#vAdd").onclick = addToVault;
+  $("#vSecret").onkeydown = e => { if (e.key === "Enter") addToVault(); };
   usage = msg.usage || usage;
   S.Prices ||= {};
 
@@ -1413,6 +1458,7 @@ host.on(msg => {
   else if (msg.type === "models") onModels(msg);
   else if (msg.type === "mcpTools") onMcpTools(msg);
   else if (msg.type === "toast") toast(msg.text);
+  else if (msg.type === "vault") { vault = msg.items || []; renderVault(); if (msg.error) toast(msg.error); }
   else if (msg.type === "voiceStatus") voiceStatus(msg.text);
   else if (msg.type === "voiceLevel") voiceLevel(msg.v);
   else if (msg.type === "voiceVad") voiceVad(msg.on);
@@ -1426,6 +1472,7 @@ host.send({ type: "ready" });
 function demoHost() {
   let handler = () => {};
   const reply = m => setTimeout(() => handler(m), 350);
+  let demoVault = [{ name: "ssh servidor", kind: "ssh", detail: "miguel@10.0.0.5" }, { name: "Freshservice", kind: "login", detail: "miguel@vertistorres.com.br · freshservice" }];
   const page = new URLSearchParams(location.hash.slice(1));
   if (page.has("still")) document.documentElement.classList.add("still");
   return {
@@ -1439,6 +1486,7 @@ function demoHost() {
               known: { "gpt-6-luna": { Input: 0.1, Cached: 0.01, Output: 0.5, PerMinute: 0 }, "gpt-4o-mini-transcribe": { Input: 0, Cached: 0, Output: 0, PerMinute: 0.003 }, "gpt-live-1": { Input: 0, Cached: 0, Output: 0, PerMinute: 0.05 } },
               today: { "gpt-6-luna": { Input: 120000, Cached: 90000, Output: 4000, Seconds: 0, Calls: 31 }, "gpt-4o-mini-transcribe": { Input: 0, Cached: 0, Output: 0, Seconds: 410, Calls: 40 } },
               all: { "gpt-6-luna": { Input: 540000, Cached: 410000, Output: 21000, Seconds: 0, Calls: 160 }, "gpt-4o-mini-transcribe": { Input: 0, Cached: 0, Output: 0, Seconds: 1900, Calls: 210 }, "gpt-5.6-luna": { Input: 300000, Cached: 100000, Output: 9000, Seconds: 0, Calls: 50 } } },
+            vault: demoVault,
             memory: ["Su navegador es Comet", "«El backlog» es la pestaña P&I · Backlog", "«Fresh» es Freshservice, el portal de tickets"],
             mics: [{ id: "{0.0.1.00000000}.{a}", name: "Micrófono (Realtek Audio)" }, { id: "{0.0.1.00000000}.{b}", name: "Microfone do Headset (Plantronics)" }],
             groups: [
@@ -1467,6 +1515,12 @@ function demoHost() {
           if (page.get("voice")) { handler({ type: "voiceVad", on: true }); handler({ type: "voiceLevel", v: .55 }); handler({ type: "voiceHeard", text: "abre chrome y entra en youtube", ms: 312 }); }
           if (page.get("combo")) setTimeout(() => { models = [{ id: "gpt-5.6-luna", base: "gpt-5.6" }, { id: "gpt-4.1", base: "gpt-4.1" }, { id: "gpt-4o-mini-transcribe", base: "gpt-4o-mini-transcribe" }]; window.modelCombo.open(); }, 50);
         }, 10);
+      } else if (m.type === "vaultAdd") {
+        demoVault = demoVault.filter(v => v.name !== m.name).concat([{ name: m.name, kind: m.kind, detail: [m.user, m.host].filter(Boolean).join("@") }]);
+        reply({ type: "vault", items: demoVault });
+      } else if (m.type === "vaultForget") {
+        demoVault = demoVault.filter(v => v.name !== m.name);
+        reply({ type: "vault", items: demoVault });
       } else if (m.type === "listModels") {
         reply({ type: "models", ok: true, models: [{ id: "gpt-5.6-luna", base: "gpt-5.6" }, { id: "gpt-4.1", base: "gpt-4.1" }, { id: "gpt-4o-mini-transcribe", base: "gpt-4o-mini-transcribe" }] });
       } else if (m.type === "mcpTools") {
