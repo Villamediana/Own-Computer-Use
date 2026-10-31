@@ -339,6 +339,16 @@ sealed class WindowsComputer : IComputer
             case "read_text":
                 Cursor?.Say("Leyendo…");
                 return await Desktop.ReadTextAsync(c.Str("what"), ct);
+            case "find_on_screen":
+                Cursor?.Say("Buscando «" + Short(c.Str("text")) + "»");
+                return await Finder.FindAsync(c.Str("text"), c.Int("n") ?? 1, c.Bool("up"), t => Cursor?.Say(t), ct);
+            case "extract":
+            {
+                Cursor?.Say("Buscando datos…");
+                var work = Finder.AllTextAsync(ct);
+                if (await Task.WhenAny(work, Task.Delay(6000, ct)) != work) return "error: la ventana tardó demasiado en dar su texto";
+                return Extract.Report(await work, c.Str("kind"), c.Str("near").Trim());
+            }
             case "edit_text":
                 Cursor?.Say("Corrigiendo…");
                 return await EditTextAsync(c.Str("find"), c.Str("replace"), ct);

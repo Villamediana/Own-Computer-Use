@@ -525,6 +525,8 @@ dejar lo que está haciendo? Responde solo «sí» o «no».
                 var a => a,
             },
             "read_text" => "Lee la pantalla",
+            "find_on_screen" => $"Busca «{Trunc(c.Str("text"), 40)}»",
+            "extract" => $"Saca {c.Str("kind")}" + (c.Str("near").Length > 0 ? $" de «{Trunc(c.Str("near"), 30)}»" : ""),
             "clipboard" => c.Str("action") == "set" ? "Copia al portapapeles" : "Lee el portapapeles",
             "screenshot" => c.Str("area") == "window" ? "Print de la ventana" : "Print de la pantalla",
             "find_files" => $"Busca archivos «{c.Str("query")}»",

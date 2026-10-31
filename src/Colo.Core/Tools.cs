@@ -45,6 +45,9 @@ Actuar
   Si quedan pasos o no sabes cómo quedará la pantalla, déjalo vacío y mira el resultado. Cuenta solo lo hecho.
 - Apunta con mark. x,y solo si tienes la captura a la vista. Si la lista no basta, look (la captura llega en
   el siguiente turno). Para leer contenido (correo, página, documento) usa read_text.
+- Algo que no está en la lista (un nombre en un hilo de correo, un tema en una página larga): find_on_screen, no
+  scroll a ciegas. Un dato (correo de alguien, teléfono, número de pedido): extract con near; si no sale, ábrelo
+  (clic en el nombre, «mostrar más») y prueba otra vez. Para pasárselo: clipboard set o dilo en done.
 - Navegador: browser (go, new_tab, search, back, find, tab…) antes que clics.
 - Programas: si ya está en «Otras ventanas», window focus; si no, open. Archivos: find_files y luego open.
   «Toma un print» = screenshot.
@@ -88,7 +91,7 @@ Responder
         new("keyboard", "Teclado", "Escribir, dictar, corregir, atajos y teclas", ["type_text", "dictate", "edit_text", "press_keys"]),
         new("browser", "Navegador", "Ir a sitios, pestañas, buscar, atrás", ["browser"]),
         new("windows", "Programas y ventanas", "Abrir, cambiar, minimizar, cerrar", ["open", "window"]),
-        new("read", "Lectura", "Leer el texto de la pantalla y el portapapeles", ["read_text", "clipboard"]),
+        new("read", "Lectura", "Leer, buscar y sacar datos de la pantalla y el portapapeles", ["read_text", "find_on_screen", "extract", "clipboard"]),
         new("files", "Archivos", "Buscar archivos del usuario", ["find_files"]),
         new("terminal", "Terminal", "Leer la terminal, esperar comandos y ejecutar en segundo plano", ["terminal"]),
         new("print", "Print", "Captura al portapapeles", ["screenshot"]),
@@ -125,6 +128,10 @@ Responder
   "parameters":{"type":"object","properties":{"action":{"type":"string","enum":["list","focus","minimize","maximize","close"]},"name":{"type":"string"}},"required":["action"]}},
  {"type":"function","name":"read_text","description":"Devuelve texto de la pantalla. window: contenido de la ventana activa (página, correo, documento). focused: el campo con foco. selection: lo seleccionado.",
   "parameters":{"type":"object","properties":{"what":{"type":"string","enum":["window","focused","selection"]}},"required":["what"]}},
+ {"type":"function","name":"find_on_screen","description":"Busca un texto en la ventana activa, también lo que no se ve (más abajo en un hilo de correo, una lista o una página larga): desplaza solo hasta encontrarlo y lo deja a la vista. n: la ocurrencia n. up: buscar hacia arriba.",
+  "parameters":{"type":"object","properties":{"text":{"type":"string"},"n":{"type":"integer"},"up":{"type":"boolean"}},"required":["text"]}},
+ {"type":"function","name":"extract","description":"Saca datos de toda la ventana activa (también lo que no se ve): email, phone, url, date, id (CPF, CNPJ, protocolo, pedido), money. near: solo los que están cerca de ese texto (un nombre, «factura»…).",
+  "parameters":{"type":"object","properties":{"kind":{"type":"string","enum":["email","phone","url","date","id","money"]},"near":{"type":"string"}},"required":["kind"]}},
  {"type":"function","name":"clipboard","description":"Portapapeles de texto: get lo lee, set pone text.",
   "parameters":{"type":"object","properties":{"action":{"type":"string","enum":["get","set"]},"text":{"type":"string"}},"required":["action"]}},
  {"type":"function","name":"find_files","description":"Busca archivos y carpetas del usuario (Escritorio, Documentos, Descargas, Imágenes, Vídeos, Música, OneDrive) por palabras del nombre. Más recientes primero.",
