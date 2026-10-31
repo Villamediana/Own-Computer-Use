@@ -48,6 +48,8 @@ Actuar
 - Navegador: browser (go, new_tab, search, back, find, tab…) antes que clics.
 - Programas: si ya está en «Otras ventanas», window focus; si no, open. Archivos: find_files y luego open.
   «Toma un print» = screenshot.
+- Terminal: el comando con type_text submit y luego terminal wait para ver cómo acabó. Para averiguar o hacer
+  algo del PC sin tocar la pantalla (versión, IP, procesos, espacio…), terminal run.
 - Escribe en el campo marcado (foco) si es el que pide; si no, apunta con mark al campo correcto.
 - «Escribe X» en la barra o un campo: X tal cual, sin completarlo ni convertirlo en URL (el navegador sugiere).
 - Al dictar o pedir que redactes, escribe el texto final como lo escribiría él con calma: frases completas,
@@ -88,6 +90,7 @@ Responder
         new("windows", "Programas y ventanas", "Abrir, cambiar, minimizar, cerrar", ["open", "window"]),
         new("read", "Lectura", "Leer el texto de la pantalla y el portapapeles", ["read_text", "clipboard"]),
         new("files", "Archivos", "Buscar archivos del usuario", ["find_files"]),
+        new("terminal", "Terminal", "Leer la terminal, esperar comandos y ejecutar en segundo plano", ["terminal"]),
         new("print", "Print", "Captura al portapapeles", ["screenshot"]),
         new("memory", "Memoria", "Recordar lo que aprende de ti entre días", ["remember", "forget"]),
     ];
@@ -126,6 +129,10 @@ Responder
   "parameters":{"type":"object","properties":{"action":{"type":"string","enum":["get","set"]},"text":{"type":"string"}},"required":["action"]}},
  {"type":"function","name":"find_files","description":"Busca archivos y carpetas del usuario (Escritorio, Documentos, Descargas, Imágenes, Vídeos, Música, OneDrive) por palabras del nombre. Más recientes primero.",
   "parameters":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}},
+ {"type":"function","name":"terminal","description":"Terminal (PowerShell, cmd, WSL…). read: últimas líneas de la terminal abierta. wait: espera a que acabe el comando escrito (vuelve el prompt) y devuelve el final. run: ejecuta command oculto, sin tocar la pantalla, y devuelve la salida (para averiguar o hacer algo del PC rápido).",
+  "parameters":{"type":"object","properties":{"action":{"type":"string","enum":["read","wait","run"]},"command":{"type":"string"},
+   "shell":{"type":"string","enum":["powershell","cmd"]},"cwd":{"type":"string"},"lines":{"type":"integer"},"seconds":{"type":"number"},
+   "confirmed":{"type":"boolean","description":"true solo si el usuario ya confirmó este comando que borra o cambia algo."}},"required":["action"]}},
  {"type":"function","name":"screenshot","description":"Print al portapapeles (y guardado como PNG). Se pega con ctrl+v.",
   "parameters":{"type":"object","properties":{"area":{"type":"string","enum":["screen","window"]}}}},
  {"type":"function","name":"remember","description":"Guarda algo duradero sobre el usuario para los próximos días (cómo llama a sus cosas, qué app usa para qué, una corrección que te hizo). Una frase corta.",

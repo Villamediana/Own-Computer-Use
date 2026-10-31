@@ -8,9 +8,11 @@ public sealed record Mark(int Id, string Role, string Name, string Value = "", s
 /// <summary>
 /// Jpeg vacío = este turno va sin captura (solo la lista de elementos).
 /// Others: las demás ventanas abiertas, para cambiar a una sin tener que listarlas antes.
+/// App: programa de la ventana activa (chrome, winword…). Details: datos vivos de esa app (URL, carpeta,
+/// seleccionados…), una línea cada uno.
 /// </summary>
 public sealed record Observation(byte[] Jpeg, int Width, int Height, string Window, IReadOnlyList<Mark> Marks,
-    IReadOnlyList<string>? Others = null);
+    IReadOnlyList<string>? Others = null, string App = "", IReadOnlyList<string>? Details = null);
 
 public sealed record ToolCall(string Name, JsonObject Args)
 {

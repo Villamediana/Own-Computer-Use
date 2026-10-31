@@ -50,6 +50,7 @@ sealed class WindowsComputer : IComputer
         var screen = hwnd == IntPtr.Zero ? Screen.PrimaryScreen! : Screen.FromHandle(hwnd);
         var b = screen.Bounds;
         var window = Native.WindowLabel(hwnd);
+        var app = Native.ProcessName(hwnd).ToLowerInvariant();
 
         // UI Automation en paralelo con la captura; si tarda demasiado, sigue sin marcas.
         // Si una lectura anterior sigue colgada (app que no responde), no se lanza otra encima.
@@ -90,7 +91,7 @@ sealed class WindowsComputer : IComputer
             _names = names;
         }
         var others = OtherWindows(hwnd);
-        if (full is null) return new Observation([], 0, 0, window, marks, others);
+        if (full is null) return new Observation([], 0, 0, window, marks, others, app);
 
         using (full)
         {
@@ -119,7 +120,7 @@ sealed class WindowsComputer : IComputer
                     g.DrawString(label, font, Brushes.White, r.X, ly - 1);
                 }
             }
-            return new Observation(Jpeg(small, 76), w, h, window, marks, others);
+            return new Observation(Jpeg(small, 76), w, h, window, marks, others, app);
         }
     }, ct);
 
@@ -390,6 +391,19 @@ sealed class WindowsComputer : IComputer
             case "find_files":
                 Cursor?.Say("Buscando archivos");
                 return FindFiles(c.Str("query"), ct);
+            case "terminal":
+                switch (c.Str("action"))
+                {
+                    case "run":
+                        Cursor?.Say("Ejecutando…");
+                        return await Term.RunAsync(c.Str("command"), c.Str("shell"), c.Str("cwd"), c.Num("seconds") ?? 30, c.Bool("confirmed"), ct);
+                    case "wait":
+                        Cursor?.Say("Esperando a la terminal…");
+                        return await Term.WaitAsync(c.Num("seconds") ?? 30, Math.Clamp(c.Int("lines") ?? 25, 1, 200), ct);
+                    default:
+                        Cursor?.Say("Leyendo la terminal");
+                        return await Term.ReadAsync(Math.Clamp(c.Int("lines") ?? 40, 1, 200), ct);
+                }
             case "wait":
                 await Task.Delay(TimeSpan.FromSeconds(Math.Clamp(c.Num("seconds") ?? 1, 0.1, 10)), ct);
                 return "ok";

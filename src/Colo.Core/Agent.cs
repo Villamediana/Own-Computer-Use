@@ -413,6 +413,8 @@ dejar lo que está haciendo? Responde solo «sí» o «no».
         }
         var withImage = obs.Jpeg.Length > 0;
         sb.AppendLine().AppendLine($"Ventana activa: {obs.Window}");
+        foreach (var d in obs.Details ?? []) sb.AppendLine(d);
+        if (AppHints.For(obs.App, obs.Window) is { Length: > 0 } hint) sb.AppendLine(hint.TrimEnd());
         if (obs.Others is { Count: > 0 } others) sb.AppendLine("Otras ventanas: " + string.Join(" · ", others));
         sb.AppendLine(withImage
             ? $"Captura {obs.Width}x{obs.Height} adjunta. Elementos:"
@@ -526,6 +528,12 @@ dejar lo que está haciendo? Responde solo «sí» o «no».
             "clipboard" => c.Str("action") == "set" ? "Copia al portapapeles" : "Lee el portapapeles",
             "screenshot" => c.Str("area") == "window" ? "Print de la ventana" : "Print de la pantalla",
             "find_files" => $"Busca archivos «{c.Str("query")}»",
+            "terminal" => c.Str("action") switch
+            {
+                "run" => $"Ejecuta «{Trunc(c.Str("command"), 50)}»",
+                "wait" => "Espera a la terminal",
+                _ => "Lee la terminal",
+            },
             "wait" => "Espera",
             var n when n.StartsWith("mcp_", StringComparison.Ordinal) => n[4..].Replace('_', ' '),
             _ => c.Name,
