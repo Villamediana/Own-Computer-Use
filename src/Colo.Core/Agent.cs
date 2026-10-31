@@ -530,6 +530,20 @@ dejar lo que está haciendo? Responde solo «sí» o «no».
             "clipboard" => c.Str("action") == "set" ? "Copia al portapapeles" : "Lee el portapapeles",
             "screenshot" => c.Str("area") == "window" ? "Print de la ventana" : "Print de la pantalla",
             "find_files" => $"Busca archivos «{c.Str("query")}»",
+            "files" => c.Str("action") switch
+            {
+                "list" => "Mira la carpeta",
+                "rename" => "Renombra",
+                "move" => "Mueve a " + Path.GetFileName(c.Str("to").TrimEnd('\\', '/')),
+                "copy" => "Copia a " + Path.GetFileName(c.Str("to").TrimEnd('\\', '/')),
+                "new_folder" => "Carpeta nueva",
+                "delete" => "A la papelera",
+                "zip" => "Comprime",
+                "unzip" => "Descomprime",
+                "open_with" => "Abre con " + c.Str("app"),
+                "undo" => "Deshace",
+                var a => a,
+            },
             "terminal" => c.Str("action") switch
             {
                 "run" => $"Ejecuta «{Trunc(c.Str("command"), 50)}»",

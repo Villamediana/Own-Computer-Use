@@ -13,6 +13,10 @@ public static class AppHints
             ? window[..^(app.Length + 2)].TrimEnd() : window;
         var shell = Terminal.Kind(app, title);
         if (shell != Shell.None) return Terminal.Hint(shell);
-        return "";
+        return app.ToLowerInvariant() switch
+        {
+            "explorer" => "Explorador: files trabaja sobre la carpeta abierta (rutas relativas). f2 renombra, ctrl+shift+n carpeta nueva, alt+↑ sube, ctrl+l ruta, ctrl+e busca.",
+            _ => "",
+        };
     }
 }

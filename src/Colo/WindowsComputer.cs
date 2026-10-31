@@ -31,6 +31,7 @@ sealed class WindowsComputer : IComputer
     ];
 
     readonly object _lock = new();
+    readonly FileOps _files = new(new WindowsRecycleBin());
     Rectangle _screen;
     double _scale = 1;
     Dictionary<int, Rectangle> _marks = [];
@@ -91,7 +92,8 @@ sealed class WindowsComputer : IComputer
             _names = names;
         }
         var others = OtherWindows(hwnd);
-        if (full is null) return new Observation([], 0, 0, window, marks, others, app);
+        var details = app == "explorer" && Files.Explorer(hwnd) is { } ex ? Files.Details(ex) : null;
+        if (full is null) return new Observation([], 0, 0, window, marks, others, app, details);
 
         using (full)
         {
@@ -120,7 +122,7 @@ sealed class WindowsComputer : IComputer
                     g.DrawString(label, font, Brushes.White, r.X, ly - 1);
                 }
             }
-            return new Observation(Jpeg(small, 76), w, h, window, marks, others, app);
+            return new Observation(Jpeg(small, 76), w, h, window, marks, others, app, details);
         }
     }, ct);
 
@@ -400,7 +402,21 @@ sealed class WindowsComputer : IComputer
                 return Screenshot(c.Str("area") == "window");
             case "find_files":
                 Cursor?.Say("Buscando archivos");
-                return FindFiles(c.Str("query"), ct);
+                return c.Bool("content") ? await Task.Run(() => Files.SearchContent(c.Str("query"), ct), ct) : FindFiles(c.Str("query"), ct);
+            case "files":
+            {
+                Cursor?.Say(Agent.Describe(c, new Observation([], 0, 0, "", [])));
+                var paths = Strings(c, "paths");
+                if (paths.Count == 0 && c.Str("path").Length > 0) paths.Add(c.Str("path"));
+                var folder = await Task.Run(() => Files.Explorer(Native.GetForegroundWindow())?.Folder, ct);
+                if (c.Str("action") == "open_with")
+                {
+                    if (paths.Count == 0) return "error: falta paths";
+                    try { return Files.OpenWith(FileOps.Resolve(paths[0], folder), c.Str("app")); }
+                    catch (ArgumentException e) { return "error: " + e.Message; }
+                }
+                return await Task.Run(() => _files.Run(c.Str("action"), folder, paths, c.Str("to"), Strings(c, "names"), c.Str("pattern")), ct);
+            }
             case "terminal":
                 switch (c.Str("action"))
                 {
@@ -535,6 +551,11 @@ sealed class WindowsComputer : IComputer
                 return "ok";
         }
     }
+
+    static List<string> Strings(ToolCall c, string key) =>
+        c.Args[key] is System.Text.Json.Nodes.JsonArray a
+            ? a.Select(x => x is System.Text.Json.Nodes.JsonValue v && v.TryGetValue<string>(out var t) ? t : "").Where(t => t.Length > 0).ToList()
+            : c.Str(key) is { Length: > 0 } one ? [one] : [];
 
     static string Short(string s) => s.Length > 30 ? s[..30] + "…" : s;
 

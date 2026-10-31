@@ -49,7 +49,9 @@ Actuar
   scroll a ciegas. Un dato (correo de alguien, teléfono, número de pedido): extract con near; si no sale, ábrelo
   (clic en el nombre, «mostrar más») y prueba otra vez. Para pasárselo: clipboard set o dilo en done.
 - Navegador: browser (go, new_tab, search, back, find, tab…) antes que clics.
-- Programas: si ya está en «Otras ventanas», window focus; si no, open. Archivos: find_files y luego open.
+- Programas: si ya está en «Otras ventanas», window focus; si no, open.
+- Archivos: find_files (content: dentro de los documentos) y open. Renombrar, mover, copiar, carpetas, zip,
+  papelera: files, no clics en el Explorador; «esto» ahí = los seleccionados. «Deshaz eso» = files undo.
   «Toma un print» = screenshot.
 - Terminal: el comando con type_text submit y luego terminal wait para ver cómo acabó. Para averiguar o hacer
   algo del PC sin tocar la pantalla (versión, IP, procesos, espacio…), terminal run.
@@ -92,7 +94,7 @@ Responder
         new("browser", "Navegador", "Ir a sitios, pestañas, buscar, atrás", ["browser"]),
         new("windows", "Programas y ventanas", "Abrir, cambiar, minimizar, cerrar", ["open", "window"]),
         new("read", "Lectura", "Leer, buscar y sacar datos de la pantalla y el portapapeles", ["read_text", "find_on_screen", "extract", "clipboard"]),
-        new("files", "Archivos", "Buscar archivos del usuario", ["find_files"]),
+        new("files", "Archivos", "Buscar, renombrar, mover, copiar, comprimir y borrar a la papelera (con deshacer)", ["find_files", "files"]),
         new("terminal", "Terminal", "Leer la terminal, esperar comandos y ejecutar en segundo plano", ["terminal"]),
         new("print", "Print", "Captura al portapapeles", ["screenshot"]),
         new("memory", "Memoria", "Recordar lo que aprende de ti entre días", ["remember", "forget"]),
@@ -134,8 +136,12 @@ Responder
   "parameters":{"type":"object","properties":{"kind":{"type":"string","enum":["email","phone","url","date","id","money"]},"near":{"type":"string"}},"required":["kind"]}},
  {"type":"function","name":"clipboard","description":"Portapapeles de texto: get lo lee, set pone text.",
   "parameters":{"type":"object","properties":{"action":{"type":"string","enum":["get","set"]},"text":{"type":"string"}},"required":["action"]}},
- {"type":"function","name":"find_files","description":"Busca archivos y carpetas del usuario (Escritorio, Documentos, Descargas, Imágenes, Vídeos, Música, OneDrive) por palabras del nombre. Más recientes primero.",
-  "parameters":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}},
+ {"type":"function","name":"find_files","description":"Busca archivos y carpetas del usuario (Escritorio, Documentos, Descargas, Imágenes, Vídeos, Música, OneDrive) por palabras del nombre. content: busca dentro de los documentos (índice de Windows). Más recientes primero.",
+  "parameters":{"type":"object","properties":{"query":{"type":"string"},"content":{"type":"boolean"}},"required":["query"]}},
+ {"type":"function","name":"files","description":"Archivos y carpetas sin tocar la pantalla. Rutas completas, relativas a la carpeta abierta en el Explorador o con ~ (~/Descargas, ~/Documentos, ~/Escritorio); comodines en el nombre (*.pdf). list: contenido de una carpeta (pattern). rename: paths y names (uno por archivo; sin extensión conserva la suya). move/copy: paths a la carpeta to (se crea si no existe). new_folder: paths[0]. delete: a la papelera. zip: paths a to (.zip). unzip: paths[0] a to. open_with: paths[0] con app. undo: deshace la última. Nunca sobrescribe.",
+  "parameters":{"type":"object","properties":{"action":{"type":"string","enum":["list","rename","move","copy","new_folder","delete","zip","unzip","open_with","undo"]},
+   "paths":{"type":"array","items":{"type":"string"}},"to":{"type":"string"},"names":{"type":"array","items":{"type":"string"}},
+   "pattern":{"type":"string"},"app":{"type":"string"}},"required":["action"]}},
  {"type":"function","name":"terminal","description":"Terminal (PowerShell, cmd, WSL…). read: últimas líneas de la terminal abierta. wait: espera a que acabe el comando escrito (vuelve el prompt) y devuelve el final. run: ejecuta command oculto, sin tocar la pantalla, y devuelve la salida (para averiguar o hacer algo del PC rápido).",
   "parameters":{"type":"object","properties":{"action":{"type":"string","enum":["read","wait","run"]},"command":{"type":"string"},
    "shell":{"type":"string","enum":["powershell","cmd"]},"cwd":{"type":"string"},"lines":{"type":"integer"},"seconds":{"type":"number"},
