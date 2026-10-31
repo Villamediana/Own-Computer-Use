@@ -1,10 +1,12 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Automation;
 using System.Windows.Forms;
+using Colo.Core;
 
 namespace Colo;
 
@@ -132,7 +134,10 @@ static class Desktop
         return e.Current.Name;
     }
 
-    /// <summary>Se escribe ahí: un campo, un editor o un terminal (TextPattern), y no algo de solo lectura.</summary>
+    /// <summary>
+    /// Se escribe ahí: un campo, un editor o un terminal (TextPattern), y no algo de solo lectura. La página de
+    /// un navegador también tiene TextPattern, pero escribir «en la página» no va a ningún sitio.
+    /// </summary>
     static bool Writable(AutomationElement? e)
     {
         if (e is null) return false;
@@ -140,9 +145,17 @@ static class Desktop
         {
             if (!e.Current.IsEnabled) return false;
             if (e.TryGetCurrentPattern(ValuePattern.Pattern, out var vp) && ((ValuePattern)vp).Current.IsReadOnly) return false;
-            return e.Current.ControlType == ControlType.Edit || e.TryGetCurrentPattern(TextPattern.Pattern, out _);
+            var type = e.Current.ControlType;
+            if (type == ControlType.Document && WindowsComputer.IsBrowser(ProcessOf(e.Current.ProcessId))) return false;
+            return type == ControlType.Edit || e.TryGetCurrentPattern(TextPattern.Pattern, out _);
         }
         catch (ElementNotAvailableException) { return false; }
+    }
+
+    static string ProcessOf(int pid)
+    {
+        try { using var p = System.Diagnostics.Process.GetProcessById(pid); return p.ProcessName.ToLowerInvariant(); }
+        catch { return ""; }
     }
 
     static readonly Condition TextFields = new AndCondition(
@@ -152,27 +165,100 @@ static class Desktop
             new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Edit),
             new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Document)));
 
+    /// <summary>Un sitio donde puede ir un dictado: la ventana y, si hace falta, dónde hacer clic.</summary>
+    public sealed record TextTarget(string Label, IntPtr Window, System.Drawing.Point? Click);
+
+    /// <summary>La última ventana donde se escribió un dictado (suele ser donde se sigue escribiendo).</summary>
+    static IntPtr _lastWindow;
+    static DateTime _lastAt;
+
     /// <summary>
-    /// Antes de escribir un dictado: si el foco ya está donde se escribe, nada. Si no (clic en un botón, la
-    /// ventana sin campo activo), el campo bajo el ratón; si no hay, el campo de la ventana activa más cercano
-    /// al ratón (en Teams, la caja de mensaje). Devuelve dónde va a escribir, para el registro.
+    /// Dónde escribir un dictado. Si el foco ya está en un campo, o el ratón encima de uno, eso (Done) y nada más.
+    /// Si no, los sitios posibles: el mejor campo de la ventana activa (nunca la barra de direcciones), el de la
+    /// ventana bajo el ratón (puede estar en el otro monitor), la última donde se dictó y las terminales abiertas.
+    /// Con más de uno, el modelo elige por lo que dijo (comando → terminal, mensaje → el chat).
     /// </summary>
-    public static string EnsureTextFocus()
+    public static (string? Done, List<TextTarget> Options) FindTextTargets()
     {
-        if (Writable(AutomationElement.FocusedElement)) return "el foco";
+        var focused = AutomationElement.FocusedElement;
+        var inAddress = Writable(focused) && AddressBar(focused);
+        if (Writable(focused) && !inAddress) return ("el foco", []);
         Native.GetCursorPos(out var m);
         var mouse = new System.Windows.Point(m.x, m.y);
         var under = AutomationElement.FromPoint(mouse);
         for (var i = 0; i < 4 && under is not null && !Writable(under); i++)
             under = TreeWalker.ControlViewWalker.GetParent(under);
-        if (Writable(under))
+        if (Writable(under) && !AddressBar(under))
         {
             // Clic donde está el ratón: el cursor de texto queda ahí.
             Input.ClickNow(new System.Drawing.Point(m.x, m.y));
-            return "bajo el ratón";
+            return ("bajo el ratón", []);
         }
-        var fg = Native.GetForegroundWindow();
-        if (fg == IntPtr.Zero) return "nada (sin ventana)";
+        var options = new List<TextTarget>();
+        var seen = new HashSet<IntPtr>();
+        // El foco en la barra de direcciones puede ser a propósito (va a dictar una dirección): una opción más.
+        if (inAddress) options.Add(new TextTarget($"barra de direcciones de «{Native.Title(Native.GetForegroundWindow())}»", Native.GetForegroundWindow(), null));
+        void Add(IntPtr h)
+        {
+            if (h == IntPtr.Zero || Native.IsOwnWindow(h) || Native.IsIconic(h) || !seen.Add(h) || options.Count >= 6) return;
+            var app = Native.ProcessName(h);
+            var title = Native.Title(h);
+            if (title.Length > 50) title = title[..50] + "…";
+            if (Terminal.Kind(app, title) != Shell.None)
+            {
+                options.Add(new TextTarget($"terminal «{title}» [{app}]", h, null));
+                return;
+            }
+            try
+            {
+                if (BestField(h, mouse) is { } f) options.Add(new TextTarget($"«{f.Name}» em «{title}» [{app}]", h, f.Center));
+            }
+            catch (Exception ex) when (ex is ElementNotAvailableException or InvalidOperationException or System.Runtime.InteropServices.COMException) { }
+        }
+        Add(Native.GetForegroundWindow());
+        Add(Native.GetAncestor(Native.WindowFromPoint(new Native.POINT { x = m.x, y = m.y }), 2)); // GA_ROOT
+        if (DateTime.Now - _lastAt < TimeSpan.FromMinutes(20) && Native.IsWindowVisible(_lastWindow)) Add(_lastWindow);
+        foreach (var h in Native.AppWindows())
+            if (Terminal.Kind(Native.ProcessName(h), Native.Title(h)) != Shell.None) Add(h);
+        return (null, options);
+    }
+
+    /// <summary>Lleva el foco al sitio elegido (trae su ventana y hace clic en el campo).</summary>
+    public static string Apply(TextTarget t)
+    {
+        if (Native.GetForegroundWindow() != t.Window) Native.Focus(t.Window);
+        if (t.Click is { } p)
+        {
+            System.Threading.Thread.Sleep(60);
+            Input.ClickNow(p);
+        }
+        _lastWindow = t.Window;
+        _lastAt = DateTime.Now;
+        return t.Label;
+    }
+
+    /// <summary>Para la herramienta dictate del modelo: el foco o el primer sitio posible.</summary>
+    public static string EnsureTextFocus()
+    {
+        var (done, options) = FindTextTargets();
+        if (done is not null) return done;
+        return options.Count == 0 ? "nada (no hay campo de texto)" : Apply(options[0]);
+    }
+
+    /// <summary>Barra de direcciones o buscador del propio navegador: un dictado ahí sería una búsqueda en internet.</summary>
+    static bool AddressBar(AutomationElement? e)
+    {
+        try { return e is not null && WindowsComputer.IsBrowser(ProcessOf(e.Current.ProcessId)) && WindowsComputer.IsAddressBar(e.Current.Name ?? ""); }
+        catch (ElementNotAvailableException) { return false; }
+    }
+
+    /// <summary>
+    /// El campo de esa ventana: el más cercano al ratón si el ratón está dentro; si no, el más grande (el cuerpo
+    /// de un correo, la caja del chat). Nunca la barra de direcciones.
+    /// </summary>
+    static (string Name, System.Drawing.Point Center)? BestField(IntPtr hwnd, System.Windows.Point mouse)
+    {
+        var browser = WindowsComputer.IsBrowser(Native.ProcessName(hwnd).ToLowerInvariant());
         // Todo lo que hace falta de cada campo viene en una sola ida (en Teams o un navegador el árbol es enorme).
         var cr = new CacheRequest();
         cr.Add(AutomationElement.BoundingRectangleProperty);
@@ -181,30 +267,38 @@ static class Desktop
         cr.Add(AutomationElement.IsTextPatternAvailableProperty);
         cr.Add(AutomationElement.IsValuePatternAvailableProperty);
         cr.Add(ValuePattern.IsReadOnlyProperty);
-        AutomationElement? best = null;
-        var bestDistance = double.MaxValue;
-        var root = AutomationElement.FromHandle(fg);
+        var root = AutomationElement.FromHandle(hwnd);
+        var win = root.Current.BoundingRectangle;
+        var inside = !win.IsEmpty && win.Contains(mouse);
         AutomationElementCollection found;
         using (cr.Activate()) found = root.FindAll(TreeScope.Descendants, TextFields);
+        AutomationElement? best = null;
+        var bestScore = double.MaxValue;
         foreach (AutomationElement e in found)
         {
             if (e.GetCachedPropertyValue(AutomationElement.IsValuePatternAvailableProperty) is true
                 && e.GetCachedPropertyValue(ValuePattern.IsReadOnlyProperty, true) is true) continue;
-            if (e.GetCachedPropertyValue(AutomationElement.ControlTypeProperty) != ControlType.Edit
-                && e.GetCachedPropertyValue(AutomationElement.IsTextPatternAvailableProperty) is not true) continue;
+            var type = e.GetCachedPropertyValue(AutomationElement.ControlTypeProperty);
+            if (type != ControlType.Edit && e.GetCachedPropertyValue(AutomationElement.IsTextPatternAvailableProperty) is not true) continue;
+            if (browser && (type == ControlType.Document || WindowsComputer.IsAddressBar(e.GetCachedPropertyValue(AutomationElement.NameProperty) as string ?? ""))) continue;
             if (e.GetCachedPropertyValue(AutomationElement.BoundingRectangleProperty) is not System.Windows.Rect r
                 || r.IsEmpty || r.Width < 8 || r.Height < 8) continue;
-            var dx = Math.Max(0, Math.Max(r.Left - mouse.X, mouse.X - r.Right));
-            var dy = Math.Max(0, Math.Max(r.Top - mouse.Y, mouse.Y - r.Bottom));
-            var d = dx * dx + dy * dy;
-            if (d < bestDistance) { best = e; bestDistance = d; }
+            double score;
+            if (inside)
+            {
+                var dx = Math.Max(0, Math.Max(r.Left - mouse.X, mouse.X - r.Right));
+                var dy = Math.Max(0, Math.Max(r.Top - mouse.Y, mouse.Y - r.Bottom));
+                score = dx * dx + dy * dy;
+            }
+            else score = -r.Width * r.Height;
+            if (score < bestScore) { best = e; bestScore = score; }
         }
-        if (best is null) return "nada (no hay campo de texto)";
+        if (best is null) return null;
         var box = (System.Windows.Rect)best.GetCachedPropertyValue(AutomationElement.BoundingRectangleProperty);
-        var name = best.GetCachedPropertyValue(AutomationElement.NameProperty) as string ?? "";
+        var name = (best.GetCachedPropertyValue(AutomationElement.NameProperty) as string ?? "").Trim();
+        if (name.Length > 40) name = name[..40] + "…";
         // Clic en el centro: así también se activa en las páginas web, donde SetFocus no siempre basta.
-        Input.ClickNow(new System.Drawing.Point((int)(box.Left + box.Width / 2), (int)(box.Top + box.Height / 2)));
-        return $"«{name}» (el campo más cercano)";
+        return (name.Length > 0 ? name : "campo de texto", new System.Drawing.Point((int)(box.Left + box.Width / 2), (int)(box.Top + box.Height / 2)));
     }
 
     /// <summary>

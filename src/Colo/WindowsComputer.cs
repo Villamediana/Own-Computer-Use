@@ -181,7 +181,7 @@ sealed class WindowsComputer : IComputer
         new OrCondition(Roles.Select(r => (Condition)new PropertyCondition(AutomationElement.ControlTypeProperty, r.Type)).ToArray()));
 
     /// <summary>La barra de direcciones del navegador se llama así en inglés, portugués y español (Chrome, Edge, Firefox).</summary>
-    static bool IsAddressBar(string name)
+    internal static bool IsAddressBar(string name)
     {
         var n = Fold(name);
         return n.Contains("address") || n.Contains("endereco") || n.Contains("direccion") || n.Contains("url");
@@ -529,6 +529,8 @@ sealed class WindowsComputer : IComputer
     static readonly string[] Browsers =
         ["chrome", "msedge", "firefox", "brave", "opera", "vivaldi", "chromium", "arc", "zen", "librewolf", "waterfox", "iexplore",
          "comet", "dia", "thorium", "yandex", "floorp", "sidekick", "opera_gx", "duckduckgo"];
+
+    internal static bool IsBrowser(string process) => Browsers.Contains(process.ToLowerInvariant());
 
     async Task<string> Browser(ToolCall c, CancellationToken ct)
     {
