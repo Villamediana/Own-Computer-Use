@@ -85,6 +85,9 @@ sealed class Widget : LayeredWindow
     readonly TokenMeter _tokens = new(System.IO.Path.Combine(Store.Dir, "usage.json"));
     readonly Memory _memory = new(System.IO.Path.Combine(Store.Dir, "memory.json"));
     readonly Vault _vault = Secrets.Open(System.IO.Path.Combine(Store.Dir, "vault.json"));
+    // ── agenda (1.17): tareas, listas, recordatorios y proyectos; los avisos van en su propio hilo.
+    readonly Agenda _agenda = new(System.IO.Path.Combine(Store.Dir, "agenda.json"));
+    Reminders? _reminders;
     long _orderTokens;
 
     // ── arrastre
@@ -97,9 +100,10 @@ sealed class Widget : LayeredWindow
     {
         _ai = new AiClient(_s);
         _eleven = new ElevenLabsStt(_s);
-        _agent = new Agent(_ai, _s, _pc) { Memory = _memory, Vault = _vault };
+        _agent = new Agent(_ai, _s, _pc) { Memory = _memory, Vault = _vault, Agenda = _agenda };
         _pc.Cursor = _cursor;
         _pc.Vault = _vault;
+        _pc.Agenda = _agenda;
         Text = "Colo";
         try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
 
@@ -128,6 +132,7 @@ sealed class Widget : LayeredWindow
         _frame.Start();
         Native.AddClipboardFormatListener(Handle);
         _watch = new System.Threading.Timer(_ => WatchWindow(), null, 2000, 2000);
+        _reminders = new Reminders(_agenda, due => Post(() => Remind(due)));
         RegisterHotkeys();
         SetupKeys();
         ApplyAutostart();
@@ -926,6 +931,17 @@ sealed class Widget : LayeredWindow
         Say(text, Theme.Danger, 600_000);
     }
 
+    /// <summary>Recordatorio que toca: en la onda, en la bandeja (por si la onda no se ve) y en voz si habla las respuestas.</summary>
+    void Remind(IReadOnlyList<AgendaItem> due)
+    {
+        if (_s.DisabledTools.Contains("agenda")) return;
+        var text = string.Join(" · ", due.Select(i => i.Text));
+        Say("⏰ " + text, Theme.Blue, 15_000);
+        System.Media.SystemSounds.Asterisk.Play();
+        try { _tray.ShowBalloonTip(10_000, "Colo · recordatorio", string.Join("\n", due.Select(i => $"#{i.Id} {i.Text}")), ToolTipIcon.Info); } catch { }
+        if (_s.SpeakReplies) _speaker?.Say(text);
+    }
+
     void Say(string text, Color color, int ms)
     {
         if (text != _caption && text.Length > 0) _captionAt = _clock.Elapsed.TotalMilliseconds;
@@ -945,7 +961,7 @@ sealed class Widget : LayeredWindow
         bool saved;
         try
         {
-            using var f = new SettingsWindow(_s, _memory, _tokens, _vault);
+            using var f = new SettingsWindow(_s, _memory, _tokens, _vault, _agenda);
             _settingsWindow = f;
             f.RecordTest += StartProbe;
             f.SayTest += TrySpeaking;
@@ -1237,6 +1253,7 @@ sealed class Widget : LayeredWindow
     {
         Native.RemoveClipboardFormatListener(Handle);
         _watch?.Dispose();
+        _reminders?.Dispose();
         Native.UnregisterHotKey(Handle, HotToggle);
         Native.UnregisterHotKey(Handle, HotStop);
         _keys?.Dispose();

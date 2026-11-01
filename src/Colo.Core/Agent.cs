@@ -36,6 +36,8 @@ public sealed class Agent
     public Memory? Memory { get; set; }
     /// <summary>Cofre de contraseñas: el modelo ve solo los nombres (null = sin cofre).</summary>
     public Vault? Vault { get; set; }
+    /// <summary>Agenda personal: el turno lleva la hora y los nombres de los proyectos (null = sin agenda).</summary>
+    public Agenda? Agenda { get; set; }
     public event Action<AgentEvent>? Event;
 
     public Agent(AiClient ai, Settings settings, IComputer pc)
@@ -420,6 +422,13 @@ dejar lo que está haciendo? Responde solo «sí» o «no».
             sb.AppendLine().AppendLine("Resultado completo de lo último:");
             foreach (var f in fresh) sb.AppendLine(f);
         }
+        // Agenda: la hora (para «recuérdame mañana a las 9») y los nombres de los proyectos. Solo con el grupo encendido.
+        if (Agenda is { } agenda && !(_s.DisabledTools?.Contains("agenda") ?? false))
+        {
+            sb.AppendLine().AppendLine("Ahora: " + DateTime.Now.ToString("dddd yyyy-MM-dd HH:mm", System.Globalization.CultureInfo.GetCultureInfo("es")));
+            if (agenda.ProjectsLine() is { } projects) sb.AppendLine(projects);
+            if (agenda.RecentNotice(DateTime.Now) is { } notice) sb.AppendLine(notice);
+        }
         var withImage = obs.Jpeg.Length > 0;
         sb.AppendLine().AppendLine($"Ventana activa: {obs.Window}");
         foreach (var d in obs.Details ?? []) sb.AppendLine(d);
@@ -455,7 +464,7 @@ dejar lo que está haciendo? Responde solo «sí» o «no».
         var body = new JsonObject
         {
             ["model"] = _s.Model,
-            ["instructions"] = SpeaksExpressively() ? Tools.System + Expressive.Note : Tools.System,
+            ["instructions"] = Tools.Instructions(_s.DisabledTools) + (SpeaksExpressively() ? Expressive.Note : ""),
             ["tools"] = tools,
             ["tool_choice"] = "auto",
             ["parallel_tool_calls"] = true,
@@ -543,6 +552,16 @@ dejar lo que está haciendo? Responde solo «sí» o «no».
                 _ => c.Int("n") is > 1 ? "Busca lo copiado antes" : "Lee el portapapeles",
             },
             "recent" => "Mira lo que hiciste",
+            "agenda" => c.Str("action") switch
+            {
+                "add" => $"Anota «{Trunc(c.Str("text"), 50)}»",
+                "edit" => "Cambia la agenda",
+                "done" => "Marca hecho",
+                "remove" => "Borra de la agenda",
+                "project" => $"Proyecto {Trunc(c.Str("project"), 40)}",
+                "search" => $"Busca «{Trunc(c.Str("text"), 40)}» en la agenda",
+                _ => "Mira la agenda",
+            },
             "vault" => c.Str("action") switch
             {
                 "save" => $"Guarda «{Trunc(c.Str("name"), 40)}» en el cofre",

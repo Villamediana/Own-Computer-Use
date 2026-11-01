@@ -195,5 +195,22 @@ const assert = (c, m) => { if (!c) { console.log('FAIL:', m); process.exitCode =
   const after = await sent();
   assert(after.filter(m => m.type === 'save').length === before + 1 && after.pop().type === 'close', 'Esc guarda lo pendiente y cierra');
   await page.screenshot({ path: process.argv[2] + '/after-mcp.png' });
+
+  // agenda
+  await page.click('nav button[data-page=agenda]');
+  await page.evaluate(() => window.__deliver({ type: 'agenda', agenda: {
+    items: [{ id: 1, text: 'Revisar contrato', project: 'Tower Lease', list: '', who: '', done: false, when: 'para ayer', late: true },
+            { id: 2, text: 'Fraldas', project: '', list: 'compras', who: '', done: false, when: '', late: false }],
+    projects: [{ name: 'Tower Lease', status: 'em teste', summary: 'Falta aditivos', open: 1 }] } }));
+  assert(await page.isVisible('#agItems .row small.late'), 'agenda: atrasada en rojo');
+  await page.click('[data-agdone="1"]');
+  assert((await last('agendaDone'))?.id === 1, 'agenda: marcar hecho');
+  await page.fill('#agText', 'Ligar pro pediatra');
+  await page.fill('#agRemind', '2026-11-03T09:00');
+  await page.press('#agText', 'Enter');
+  const add = await last('agendaAdd');
+  assert(add && add.text === 'Ligar pro pediatra' && add.remind === '2026-11-03 09:00', 'agenda: añadir con aviso');
+  assert(await page.inputValue('#agText') === '', 'agenda: limpia el campo');
+  await page.screenshot({ path: process.argv[2] + '/agenda.png' });
   await browser.close();
 })();

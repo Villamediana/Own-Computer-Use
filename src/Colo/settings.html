@@ -125,6 +125,18 @@
   .vault-grid .wide { grid-column: 1 / -1; }
   .vault-kind { font-size: 11.5px; font-weight: 600; color: var(--muted); background: var(--fill); border-radius: 99px; padding: 2px 8px; margin-left: 8px; }
   .hint { color: var(--muted); font-size: 12.5px; margin: 8px 2px 0; }
+  /* agenda */
+  #agItems + .group, #agProjects + .group { margin-top: 10px; }
+  .ag-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+  .ag-grid .wide { grid-column: 1 / -1; }
+  .ag-check { width: 22px; height: 22px; border-radius: 99px; border: 1.6px solid var(--line-2, #d4d4d8); background: #fff; flex: none; display: grid; place-items: center; cursor: pointer; padding: 0; }
+  .ag-check svg { width: 13px; height: 13px; stroke: #fff; opacity: 0; }
+  .ag-check:hover { border-color: var(--blue, #2563eb); }
+  .row.done .ag-check { background: var(--blue, #2563eb); border-color: var(--blue, #2563eb); }
+  .row.done .ag-check svg { opacity: 1; }
+  .row.done .label > span { color: var(--muted); text-decoration: line-through; }
+  .ag-tag { font-size: 11.5px; font-weight: 600; color: var(--muted); background: var(--fill); border-radius: 99px; padding: 2px 8px; margin-right: 6px; }
+  .label small.late { color: var(--red); }
   .cost-total { display: grid; grid-template-columns: 1fr 1fr; }
   .cost-total > div { padding: 16px 18px; }
   .cost-total > div + div { border-left: 1px solid var(--line); }
@@ -388,6 +400,7 @@
     <symbol id="i-edit" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/></symbol>
     <symbol id="i-memory" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3.5h10a1.5 1.5 0 0 1 1.5 1.5v15.5L12 16.5l-6.5 4V5A1.5 1.5 0 0 1 7 3.5z"/></symbol>
     <symbol id="i-lock" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6.5h11M9 12h11M9 17.5h11"/><path d="M4 6.5l1 1 2-2M4 12l1 1 2-2M4 17.5l1 1 2-2"/></symbol>
     <symbol id="i-trash" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 7h15M10 7V4.5h4V7M6.5 7l1 12.5h9l1-12.5"/></symbol>
     <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></symbol>
     <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
@@ -410,6 +423,7 @@
       <button data-page="voice"><svg><use href="#i-mic"/></svg>Voz</button>
       <button data-page="tools"><svg><use href="#i-tools"/></svg>Herramientas</button>
       <button data-page="mcp"><svg><use href="#i-plug"/></svg>MCP</button>
+      <button data-page="agenda"><svg><use href="#i-list"/></svg>Agenda</button>
       <button data-page="cost"><svg><use href="#i-coin"/></svg>Costo</button>
       <button data-page="general"><svg><use href="#i-gear"/></svg>General</button>
     </nav>
@@ -662,6 +676,28 @@
         <p class="hint">Precio en dólares: por millón de tokens o por minuto de audio. Cámbialo si tu contrato es otro.</p>
       </section>
 
+      <section class="page" id="p-agenda">
+        <h1>Agenda</h1>
+        <p class="lead">Tareas, listas, recordatorios y proyectos. Colo los anota cuando se lo pides y avisa a la hora.</p>
+        <h2>Pendiente</h2>
+        <div class="group" id="agItems"></div>
+        <div class="group">
+          <div class="row stack">
+            <div class="ag-grid">
+              <input class="input wide" id="agText" placeholder="Algo que hacer o recordar" autocomplete="off">
+              <input class="input" id="agProject" placeholder="Proyecto" list="agProjectNames" autocomplete="off">
+              <input class="input" id="agList" placeholder="Lista" autocomplete="off">
+              <input class="input" id="agRemind" type="datetime-local" title="Avisar">
+            </div>
+            <div><button class="btn" id="agAdd"><svg><use href="#i-plus"/></svg>Añadir</button></div>
+          </div>
+        </div>
+        <datalist id="agProjectNames"></datalist>
+        <h2>Proyectos</h2>
+        <div class="group" id="agProjects"></div>
+        <p class="hint">«¿Cómo va el proyecto X?», «apúntalo en X», «recuérdame mañana a las 9…»: Colo lo lleva aquí.</p>
+      </section>
+
       <section class="page" id="p-general">
         <h1>General</h1>
         <p class="lead">&nbsp;</p>
@@ -770,7 +806,7 @@ let voiceModels = [];   // los de la conexión de la voz (para la transcripción
 let groups = [];        // [{id, title, summary, icon}]
 let dirty = false;
 
-const GROUP_ICONS = { mouse: "i-mouse", keyboard: "i-keyboard", browser: "i-globe", windows: "i-window", read: "i-text", files: "i-folder", terminal: "i-terminal", office: "i-office", vault: "i-lock", print: "i-camera", memory: "i-memory" };
+const GROUP_ICONS = { mouse: "i-mouse", keyboard: "i-keyboard", browser: "i-globe", windows: "i-window", read: "i-text", files: "i-folder", terminal: "i-terminal", office: "i-office", vault: "i-lock", print: "i-camera", memory: "i-memory", agenda: "i-list" };
 
 // ── navegación
 function go(page) {
@@ -895,6 +931,27 @@ function addToVault() {
   if (!secret) { $("#vSecret").focus(); return; }
   host.send({ type: "vaultAdd", name, kind: $("#vKind").value, user: $("#vUser").value.trim(), host: $("#vHost").value.trim(), secret });
   for (const id of ["#vName", "#vUser", "#vHost", "#vSecret"]) $(id).value = "";
+}
+
+// ── agenda: cada cambio va directo a Colo, que devuelve la lista entera
+let agenda = { items: [], projects: [] };
+function renderAgenda() {
+  const items = agenda.items || [], projects = agenda.projects || [];
+  $("#agItems").innerHTML = items.length
+    ? items.map(i => `<div class="row${i.done ? " done" : ""}"><button class="ag-check" data-agdone="${i.id}" title="Hecho"${i.done ? " disabled" : ""}><svg><use href="#i-check"/></svg></button><div class="label"><span>${i.project ? `<span class="ag-tag">${esc(i.project)}</span>` : ""}${i.list ? `<span class="ag-tag">${esc(i.list)}</span>` : ""}${esc(i.text)}</span>${i.when || i.who ? `<small${i.late ? ' class="late"' : ""}>${esc([i.who, i.when].filter(Boolean).join(" · "))}</small>` : ""}</div><button class="icon-btn" data-agremove="${i.id}" title="Borrar"><svg><use href="#i-trash"/></svg></button></div>`).join("")
+    : '<div class="row"><div class="label"><small>Nada pendiente.</small></div></div>';
+  $("#agProjects").innerHTML = projects.length
+    ? projects.map(p => `<div class="row"><div class="label"><b>${esc(p.name)}${p.status ? ` <span class="ag-tag">${esc(p.status)}</span>` : ""}</b><small>${esc([p.open + " abiertas", p.summary].filter(Boolean).join(" · "))}</small></div></div>`).join("")
+    : '<div class="row"><div class="label"><small>Aún ninguno.</small></div></div>';
+  $("#agProjectNames").innerHTML = projects.map(p => `<option value="${esc(p.name)}">`).join("");
+  $$("[data-agdone]").forEach(b => b.onclick = () => host.send({ type: "agendaDone", id: +b.dataset.agdone }));
+  $$("[data-agremove]").forEach(b => b.onclick = () => host.send({ type: "agendaRemove", id: +b.dataset.agremove }));
+}
+function addToAgenda() {
+  const text = $("#agText").value.trim();
+  if (!text) { $("#agText").focus(); return; }
+  host.send({ type: "agendaAdd", text, project: $("#agProject").value.trim(), list: $("#agList").value.trim(), remind: $("#agRemind").value.replace("T", " ") });
+  for (const id of ["#agText", "#agRemind"]) $(id).value = "";
 }
 
 // ── atajos que se mantienen: se graban apretándolos (todas las teclas a la vez) y soltando
@@ -1055,6 +1112,10 @@ function init(msg) {
   vault = msg.vault || [];
   renderVault();
   $("#vAdd").onclick = addToVault;
+  agenda = msg.agenda || agenda;
+  renderAgenda();
+  $("#agAdd").onclick = addToAgenda;
+  $("#agText").onkeydown = e => { if (e.key === "Enter") addToAgenda(); };
   $("#vSecret").onkeydown = e => { if (e.key === "Enter") addToVault(); };
   usage = msg.usage || usage;
   S.Prices ||= {};
@@ -1458,6 +1519,7 @@ host.on(msg => {
   else if (msg.type === "models") onModels(msg);
   else if (msg.type === "mcpTools") onMcpTools(msg);
   else if (msg.type === "toast") toast(msg.text);
+  else if (msg.type === "agenda") { agenda = msg.agenda || agenda; renderAgenda(); }
   else if (msg.type === "vault") { vault = msg.items || []; renderVault(); if (msg.error) toast(msg.error); }
   else if (msg.type === "voiceStatus") voiceStatus(msg.text);
   else if (msg.type === "voiceLevel") voiceLevel(msg.v);
@@ -1472,6 +1534,13 @@ host.send({ type: "ready" });
 function demoHost() {
   let handler = () => {};
   const reply = m => setTimeout(() => handler(m), 350);
+  let demoAgenda = { items: [
+      { id: 1, text: "Revisar o contrato da torre SP-0123", project: "Tower Lease", list: "", who: "", done: false, when: "para hoy 17:00", late: false },
+      { id: 2, text: "Mandar ata para o comitê", project: "Qualifica", list: "", who: "Thais", done: false, when: "para ayer", late: true },
+      { id: 3, text: "Fraldas tamanho M", project: "", list: "compras", who: "", done: false, when: "", late: false },
+      { id: 4, text: "Ligar para o pediatra", project: "", list: "", who: "", done: true, when: "", late: false } ],
+    projects: [{ name: "Tower Lease", status: "em teste", summary: "Dossiê por site pronto; falta aditivos", open: 1 }, { name: "Qualifica", status: "produção", summary: "", open: 1 }] };
+  const demoReplyAgenda = () => reply({ type: "agenda", agenda: demoAgenda });
   let demoVault = [{ name: "ssh servidor", kind: "ssh", detail: "miguel@10.0.0.5" }, { name: "Freshservice", kind: "login", detail: "miguel@vertistorres.com.br · freshservice" }];
   const page = new URLSearchParams(location.hash.slice(1));
   if (page.has("still")) document.documentElement.classList.add("still");
@@ -1487,6 +1556,7 @@ function demoHost() {
               today: { "gpt-6-luna": { Input: 120000, Cached: 90000, Output: 4000, Seconds: 0, Calls: 31 }, "gpt-4o-mini-transcribe": { Input: 0, Cached: 0, Output: 0, Seconds: 410, Calls: 40 } },
               all: { "gpt-6-luna": { Input: 540000, Cached: 410000, Output: 21000, Seconds: 0, Calls: 160 }, "gpt-4o-mini-transcribe": { Input: 0, Cached: 0, Output: 0, Seconds: 1900, Calls: 210 }, "gpt-5.6-luna": { Input: 300000, Cached: 100000, Output: 9000, Seconds: 0, Calls: 50 } } },
             vault: demoVault,
+            agenda: demoAgenda,
             memory: ["Su navegador es Comet", "«El backlog» es la pestaña P&I · Backlog", "«Fresh» es Freshservice, el portal de tickets"],
             mics: [{ id: "{0.0.1.00000000}.{a}", name: "Micrófono (Realtek Audio)" }, { id: "{0.0.1.00000000}.{b}", name: "Microfone do Headset (Plantronics)" }],
             groups: [
@@ -1518,6 +1588,15 @@ function demoHost() {
       } else if (m.type === "vaultAdd") {
         demoVault = demoVault.filter(v => v.name !== m.name).concat([{ name: m.name, kind: m.kind, detail: [m.user, m.host].filter(Boolean).join("@") }]);
         reply({ type: "vault", items: demoVault });
+      } else if (m.type === "agendaAdd") {
+        demoAgenda.items.unshift({ id: Date.now(), text: m.text, project: m.project, list: m.list, who: "", done: false, when: m.remind ? "aviso " + m.remind : "", late: false });
+        demoReplyAgenda();
+      } else if (m.type === "agendaDone") {
+        demoAgenda.items = demoAgenda.items.map(i => i.id === m.id ? { ...i, done: true } : i);
+        demoReplyAgenda();
+      } else if (m.type === "agendaRemove") {
+        demoAgenda.items = demoAgenda.items.filter(i => i.id !== m.id);
+        demoReplyAgenda();
       } else if (m.type === "vaultForget") {
         demoVault = demoVault.filter(v => v.name !== m.name);
         reply({ type: "vault", items: demoVault });

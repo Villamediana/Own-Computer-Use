@@ -29,6 +29,7 @@ sealed class SettingsWindow : Form
     readonly Memory? _memory;
     readonly TokenMeter? _meter;
     readonly Vault? _vault;
+    readonly Agenda? _agenda;
     readonly WebView2 _web = new() { Dock = DockStyle.Fill, DefaultBackgroundColor = Color.White };
     readonly CancellationTokenSource _closing = new();
     string _voiceStatus = "";
@@ -67,12 +68,36 @@ sealed class SettingsWindow : Form
             + (e.Where.Length > 0 ? " · " + e.Where : ""),
     }).ToArray();
 
-    public SettingsWindow(Settings s, Memory? memory = null, TokenMeter? meter = null, Vault? vault = null)
+    /// <summary>Ajustes › Agenda: lo abierto, lo cerrado esta semana y los proyectos.</summary>
+    object AgendaData()
+    {
+        var now = DateTime.Now;
+        return new
+        {
+            items = (_agenda?.Items ?? []).Where(i => !i.Done || i.Closed >= now.AddDays(-7))
+                .OrderBy(i => i.Done).ThenBy(i => i.Due ?? i.Remind ?? DateTime.MaxValue).ThenBy(i => i.Id)
+                .Select(i => new { id = i.Id, text = i.Text, project = i.Project, list = i.List, who = i.Who, done = i.Done,
+                    when = Agenda.Line(i with { Text = "", Project = "", List = "", Who = "" }, now).TrimStart(' ', '·').Trim(),
+                    late = !i.Done && (i.Due ?? i.Remind) < now }),
+            projects = (_agenda?.Projects ?? []).Select(p => new { name = p.Name, status = p.Status, summary = p.Summary,
+                open = (_agenda?.Items ?? []).Count(i => !i.Done && i.Project == p.Name) }),
+        };
+    }
+
+    public SettingsWindow(Settings s, Memory? memory = null, TokenMeter? meter = null, Vault? vault = null, Agenda? agenda = null)
     {
         _s = s;
         _memory = memory;
         _meter = meter;
         _vault = vault;
+        _agenda = agenda;
+        // Lo que el modelo anote mientras Ajustes está abierto también se ve.
+        if (agenda is not null)
+        {
+            void Refresh() { try { BeginInvoke(() => Post(new { type = "agenda", agenda = AgendaData() })); } catch { } }
+            agenda.Changed += Refresh;
+            FormClosed += (_, _) => agenda.Changed -= Refresh;
+        }
         Text = "Colo · Ajustes";
         BackColor = Color.White;
         StartPosition = FormStartPosition.CenterScreen;
@@ -159,6 +184,7 @@ sealed class SettingsWindow : Form
                     logFile = Log.FilePath,
                     memory = _memory?.Facts ?? [],
                     vault = VaultList(),
+                    agenda = _agenda is null ? null : AgendaData(),
                     usage = Usage(),
                 });
                 if (_voiceStatus.Length > 0) Post(new { type = "voiceStatus", text = _voiceStatus });
@@ -205,6 +231,18 @@ sealed class SettingsWindow : Form
                 Post(new { type = "vault", items = VaultList() });
                 break;
             }
+
+            // Agenda a mano: las mismas operaciones que usa el modelo.
+            case "agendaAdd":
+                _agenda?.Add(msg["text"]?.GetValue<string>() ?? "", msg["project"]?.GetValue<string>() ?? "", msg["list"]?.GetValue<string>() ?? "",
+                    null, Agenda.Date(msg["remind"]?.GetValue<string>() ?? ""), "", "", "", DateTime.Now);
+                break;
+            case "agendaDone":
+                _agenda?.Done(msg["id"]?.ToString() ?? "", DateTime.Now);
+                break;
+            case "agendaRemove":
+                _agenda?.Remove(msg["id"]?.ToString() ?? "");
+                break;
 
             case "forgetFact":
                 var fact = msg["text"]?.GetValue<string>() ?? "";

@@ -2,7 +2,11 @@ using System.Text.Json.Nodes;
 
 namespace Colo.Core;
 
-public sealed record ToolGroup(string Id, string Title, string Summary, string[] Tools);
+/// <summary>
+/// Un grupo de herramientas que se apaga en Ajustes. Prompt = su trozo de instrucciones, que solo va cuando el grupo
+/// está encendido (los módulos nuevos traen el suyo; así quitarlos o apagarlos no deja reglas sueltas en el prompt).
+/// </summary>
+public sealed record ToolGroup(string Id, string Title, string Summary, string[] Tools, string Prompt = "");
 
 /// <summary>Instrucciones del modelo y herramientas propias, agrupadas para poder apagarlas en Ajustes.</summary>
 public static class Tools
@@ -107,7 +111,23 @@ Responder
         new("print", "Print", "Captura al portapapeles", ["screenshot"]),
         new("vault", "Cofre", "Contraseñas y accesos cifrados en este PC; Colo los escribe sin verlos", ["vault"]),
         new("memory", "Memoria", "Recordar lo que aprende de ti entre días y lo que hiciste hace un rato", ["remember", "forget", "recent"]),
+        // ── Módulos de asistente personal (1.17+): cada uno con su trozo de prompt.
+        new("agenda", "Agenda", "Tareas, listas, recordatorios y estado de proyectos", ["agenda"], """
+Agenda
+- Tareas, listas (compras, ideas…), recordatorios y proyectos van en agenda, no en remember. «Recuérdame…» =
+  add con remind (fecha y hora locales a partir de «Ahora»). Lo que tiene que hacer él o un proyecto = add (project
+  si se nota de cuál; uno de «Proyectos» si es ese). Cómo va un proyecto = project con status/summary.
+- Preguntas («¿qué tengo hoy?», «¿cómo va X?», «¿qué quedó de…?») = list o search; responde corto en done.
+- Al oír un aviso («¡ya!», «hecho», «avísame en 10 minutos») = done o edit remind del #número del aviso.
+"""),
     ];
+
+    /// <summary>Instrucciones del turno: las fijas más el trozo de cada módulo encendido (no cambian entre pasos: caché).</summary>
+    public static string Instructions(IEnumerable<string>? disabledGroups)
+    {
+        var parts = Groups.Where(g => g.Prompt.Length > 0 && disabledGroups?.Contains(g.Id) != true).Select(g => g.Prompt.Trim()).ToList();
+        return parts.Count == 0 ? System : System + "\n" + string.Join("\n\n", parts) + "\n";
+    }
 
     const string Defs = """
 [
@@ -177,6 +197,12 @@ Responder
   "parameters":{"type":"object","properties":{"minutes":{"type":"integer"}}}},
  {"type":"function","name":"forget","description":"Borra un recuerdo que ya no es cierto o que pidió olvidar (el texto o parte de él).",
   "parameters":{"type":"object","properties":{"fact":{"type":"string"}},"required":["fact"]}},
+ {"type":"function","name":"agenda","description":"Agenda del usuario. add: text (project, list, due, remind, repeat, who: quién la hace si no es él). edit: item (#número) y lo que cambia (remind \"\" quita el aviso). done/remove: item. list: what (open, today, overdue, done, projects) y/o project, list. project: crea o actualiza project (status, summary, aliases). search: text en tareas, proyectos y actas. Fechas: \"2026-11-02 09:00\".",
+  "parameters":{"type":"object","properties":{"action":{"type":"string","enum":["add","edit","done","remove","list","project","search"]},
+   "text":{"type":"string"},"item":{"type":"integer"},"project":{"type":"string"},"list":{"type":"string"},"due":{"type":"string"},
+   "remind":{"type":"string"},"repeat":{"type":"string","enum":["","daily","weekdays","weekly","monthly"]},"who":{"type":"string"},
+   "what":{"type":"string","enum":["open","today","overdue","done","projects"]},"status":{"type":"string"},"summary":{"type":"string"},
+   "aliases":{"type":"string"}},"required":["action"]}},
  {"type":"function","name":"plan","description":"Plan de un pedido con varias partes: steps lo fija (una frase por parte); done marca hecha la parte n (1, 2…). Va en cada turno.",
   "parameters":{"type":"object","properties":{"steps":{"type":"array","items":{"type":"string"}},"done":{"type":"integer"}}}},
  {"type":"function","name":"look","description":"Pide la captura de pantalla para el siguiente turno.",
@@ -193,7 +219,7 @@ Responder
 """;
 
     /// <summary>Acciones que pueden cerrar el pedido en la misma llamada (campo done): ahorra un turno entero.</summary>
-    public static readonly HashSet<string> Finishing = ["vault", "click", "type_text", "dictate", "edit_text", "press_keys", "browser", "open", "window", "scroll", "clipboard", "screenshot"];
+    public static readonly HashSet<string> Finishing = ["agenda", "vault", "click", "type_text", "dictate", "edit_text", "press_keys", "browser", "open", "window", "scroll", "clipboard", "screenshot"];
 
     /// <summary>Herramientas activas: todas menos los grupos apagados (plan, look, wait, done, stop e ignore van siempre).</summary>
     public static JsonArray Build(IEnumerable<string>? disabledGroups)

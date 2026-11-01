@@ -39,6 +39,7 @@ sealed class WindowsComputer : IComputer
     public ClipHistory Clips { get; } = new();
     /// <summary>Cofre de contraseñas (null = sin cofre).</summary>
     public Vault? Vault { get; set; }
+    public Agenda? Agenda { get; set; }
     Rectangle _screen;
     double _scale = 1;
     Dictionary<int, Rectangle> _marks = [];
@@ -392,6 +393,8 @@ sealed class WindowsComputer : IComputer
                 return await Secrets.RunAsync(Vault, c, Cursor, ct);
             case "recent":
                 return Activity.Summary(DateTime.Now, c.Int("minutes") ?? 60);
+            case "agenda":
+                return Agenda?.Run(c, DateTime.Now) ?? "error: agenda apagada";
             case "press_keys":
             {
                 var keys = Colo.Core.Keys.Parse(c.Str("keys"));
