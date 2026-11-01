@@ -99,7 +99,8 @@ public sealed class AgendaTests : IDisposable
         Assert.Equal(Tools.System, Tools.Instructions(newGroups));
         Assert.Contains("Agenda\n", Tools.Instructions([]));
         Assert.DoesNotContain(Tools.Build(["agenda"]), t => t!["name"]!.GetValue<string>() == "agenda");
-        // Lo que suman todos juntos se mantiene pequeño.
-        Assert.True(Tools.Instructions([]).Length - Tools.System.Length < 2500);
+        // Lo que suman todos juntos se mantiene pequeño (va en caché, pero cada carácter cuenta en el primer turno).
+        var extra = Tools.Instructions([]).Length - Tools.System.Length;
+        Assert.True(extra < 3200, $"los módulos suman {extra} caracteres");
     }
 }

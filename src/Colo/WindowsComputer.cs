@@ -41,6 +41,7 @@ sealed class WindowsComputer : IComputer
     /// <summary>Cofre de contraseñas (null = sin cofre).</summary>
     public Vault? Vault { get; set; }
     public Agenda? Agenda { get; set; }
+    public StageHost? Stage { get; set; }
     Rectangle _screen;
     double _scale = 1;
     Dictionary<int, Rectangle> _marks = [];
@@ -403,6 +404,10 @@ sealed class WindowsComputer : IComputer
             case "web":
                 Cursor?.Say(Agent.Describe(c, new Observation([], 0, 0, "", [])));
                 return await _web.RunAsync(c, FileOps.Resolve("~/Downloads", null), ct);
+            case "stage":
+                if (Stage is null) return "error: palco apagado";
+                if (c.Str("action") is "show" or "page") Cursor?.Say(Agent.Describe(c, new Observation([], 0, 0, "", [])));
+                return await Stage.RunAsync(c, ct);
             case "agenda":
                 return Agenda?.Run(c, DateTime.Now) ?? "error: agenda apagada";
             case "press_keys":

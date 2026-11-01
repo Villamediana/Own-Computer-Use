@@ -128,13 +128,23 @@ Internet
 - Bajar un archivo (un PDF, un formulario…): web download; queda en Descargas. Para adjuntarlo en un chat o un
   correo: clipboard set_files con la ruta, clic en el campo del mensaje y ctrl+v.
 """),
+        new("stage", "Palco", "Muestra lo que crea al momento: gráficos, mapas, explicaciones animadas, 3D, vídeos e imágenes", ["stage"], """
+Palco
+- Si la respuesta se entiende mejor viéndola (cifras con historia, comparar, un mapa, cómo funciona algo, vídeos o
+  imágenes, una calculadora) o pide verla, créala en el palco: stage show con HTML/CSS/JS hecho para este caso.
+  Antes, stage skill con la guía que encaje («palco» la primera vez en el pedido):
+{skills}
+- Lo que se ve sale de datos reales (web, pantalla, archivos). done va igual, corto, con lo esencial.
+- Una página tal cual (letra de una canción, un PDF, un artículo): stage page con la URL o la ruta. «Cierra el
+  palco» = stage close.
+"""),
     ];
 
     /// <summary>Instrucciones del turno: las fijas más el trozo de cada módulo encendido (no cambian entre pasos: caché).</summary>
     public static string Instructions(IEnumerable<string>? disabledGroups)
     {
         var parts = Groups.Where(g => g.Prompt.Length > 0 && disabledGroups?.Contains(g.Id) != true).Select(g => g.Prompt.Trim()).ToList();
-        return parts.Count == 0 ? System : System + "\n" + string.Join("\n\n", parts) + "\n";
+        return parts.Count == 0 ? System : System + "\n" + string.Join("\n\n", parts).Replace("{skills}", StageSkills.Index()) + "\n";
     }
 
     const string Defs = """
@@ -215,6 +225,9 @@ Internet
  {"type":"function","name":"web","description":"Internet sin el navegador. search: query → resultados (título, url, resumen). read: url → texto de la página (offset para seguir). download: url → archivo en Descargas (name opcional). videos: query → vídeos de YouTube. images: query → imágenes libres (Wikimedia).",
   "parameters":{"type":"object","properties":{"action":{"type":"string","enum":["search","read","download","videos","images"]},
    "query":{"type":"string"},"url":{"type":"string"},"name":{"type":"string"},"offset":{"type":"integer"}},"required":["action"]}},
+ {"type":"function","name":"stage","description":"Palco (ventana al lado). skill: lee la guía name. show: muestra la página que creas (title, css, html, js = módulo ES con import de three, gsap, d3, chart.js/auto, maplibre-gl, leaflet); devuelve si falló. page: abre url o ruta tal cual. close. bigger/smaller: tamaño.",
+  "parameters":{"type":"object","properties":{"action":{"type":"string","enum":["skill","show","page","close","bigger","smaller"]},
+   "name":{"type":"string"},"title":{"type":"string"},"css":{"type":"string"},"html":{"type":"string"},"js":{"type":"string"},"url":{"type":"string"}},"required":["action"]}},
  {"type":"function","name":"plan","description":"Plan de un pedido con varias partes: steps lo fija (una frase por parte); done marca hecha la parte n (1, 2…). Va en cada turno.",
   "parameters":{"type":"object","properties":{"steps":{"type":"array","items":{"type":"string"}},"done":{"type":"integer"}}}},
  {"type":"function","name":"look","description":"Pide la captura de pantalla para el siguiente turno.",
@@ -231,7 +244,7 @@ Internet
 """;
 
     /// <summary>Acciones que pueden cerrar el pedido en la misma llamada (campo done): ahorra un turno entero.</summary>
-    public static readonly HashSet<string> Finishing = ["agenda", "vault", "click", "type_text", "dictate", "edit_text", "press_keys", "browser", "open", "window", "scroll", "clipboard", "screenshot"];
+    public static readonly HashSet<string> Finishing = ["stage", "agenda", "vault", "click", "type_text", "dictate", "edit_text", "press_keys", "browser", "open", "window", "scroll", "clipboard", "screenshot"];
 
     /// <summary>Herramientas activas: todas menos los grupos apagados (plan, look, wait, done, stop e ignore van siempre).</summary>
     public static JsonArray Build(IEnumerable<string>? disabledGroups)

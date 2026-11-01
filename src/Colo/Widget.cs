@@ -88,6 +88,8 @@ sealed class Widget : LayeredWindow
     // ── agenda (1.17): tareas, listas, recordatorios y proyectos; los avisos van en su propio hilo.
     readonly Agenda _agenda = new(System.IO.Path.Combine(Store.Dir, "agenda.json"));
     Reminders? _reminders;
+    // ── palco (1.19): la ventana se crea la primera vez que el modelo muestra algo.
+    readonly StageHost _stage;
     long _orderTokens;
 
     // ── arrastre
@@ -104,6 +106,12 @@ sealed class Widget : LayeredWindow
         _pc.Cursor = _cursor;
         _pc.Vault = _vault;
         _pc.Agenda = _agenda;
+        StageSkills.Load(System.IO.Path.Combine(Store.Dir, "skills"));
+        _stage = new StageHost(this);
+        _pc.Stage = _stage;
+        // Una pregunta que propone la página (con clic del usuario) es como si la dijera.
+        _stage.Ask += q => Post(() => Command(q));
+        _stage.Speak += text => Post(() => { _speaker ??= TryCreateSpeaker(); _speaker?.Say(text); });
         Text = "Colo";
         try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
 
