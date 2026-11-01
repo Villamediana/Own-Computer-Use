@@ -32,6 +32,7 @@ sealed class WindowsComputer : IComputer
 
     readonly object _lock = new();
     readonly FileOps _files = new(new WindowsRecycleBin());
+    readonly Web _web = new();
 
     /// <summary>Qué tuvo delante el usuario (lo alimenta el vigía de ventanas del Widget).</summary>
     public Colo.Core.Activity Activity { get; } = new();
@@ -383,6 +384,12 @@ sealed class WindowsComputer : IComputer
                 {
                     case "set": return Desktop.SetClipboard(c.Str("text"));
                     case "history": return Clips.List(DateTime.Now);
+                    case "set_files":
+                    {
+                        var folder = await Task.Run(() => Files.Explorer(Native.GetForegroundWindow())?.Folder, ct);
+                        try { return Desktop.SetClipboardFiles(FileOps.Expand(Strings(c, "paths"), folder)); }
+                        catch (Exception e) when (e is ArgumentException or IOException) { return "error: " + e.Message; }
+                    }
                     default:
                         if (c.Int("n") is not (> 1 and var n)) return Desktop.GetClipboard();
                         return Clips.Get(n) is { } old ? "ok:\n" + (old.Length > 8000 ? old[..8000] + "\n…(cortado)" : old)
@@ -393,6 +400,9 @@ sealed class WindowsComputer : IComputer
                 return await Secrets.RunAsync(Vault, c, Cursor, ct);
             case "recent":
                 return Activity.Summary(DateTime.Now, c.Int("minutes") ?? 60);
+            case "web":
+                Cursor?.Say(Agent.Describe(c, new Observation([], 0, 0, "", [])));
+                return await _web.RunAsync(c, FileOps.Resolve("~/Downloads", null), ct);
             case "agenda":
                 return Agenda?.Run(c, DateTime.Now) ?? "error: agenda apagada";
             case "press_keys":

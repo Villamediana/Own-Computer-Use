@@ -365,6 +365,17 @@ static class Desktop
         return "ok";
     }
 
+    /// <summary>Archivos al portapapeles (como «Copiar» en el Explorador): se pegan con ctrl+v en WhatsApp, Teams, Outlook…</summary>
+    public static string SetClipboardFiles(IReadOnlyList<string> paths)
+    {
+        var missing = paths.Where(p => !System.IO.File.Exists(p) && !System.IO.Directory.Exists(p)).ToList();
+        if (missing.Count > 0) return "error: no existe " + string.Join(", ", missing);
+        var list = new System.Collections.Specialized.StringCollection();
+        list.AddRange(paths.ToArray());
+        Sta(() => { Clipboard.SetFileDropList(list); return 0; });
+        return $"ok: {paths.Count} archivo(s) en el portapapeles; ctrl+v donde quieras adjuntarlos";
+    }
+
     /// <summary>El portapapeles exige un hilo STA.</summary>
     public static T Sta<T>(Func<T> f)
     {

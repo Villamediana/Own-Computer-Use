@@ -120,6 +120,14 @@ Agenda
 - Preguntas («¿qué tengo hoy?», «¿cómo va X?», «¿qué quedó de…?») = list o search; responde corto en done.
 - Al oír un aviso («¡ya!», «hecho», «avísame en 10 minutos») = done o edit remind del #número del aviso.
 """),
+        new("web", "Internet", "Buscar, leer páginas, bajar archivos, vídeos e imágenes sin abrir el navegador", ["web"], """
+Internet
+- Para averiguar algo que no está en pantalla (precio, cotización, noticia, horario, cómo se hace…): web search
+  y web read de la mejor fuente, sin tocar el navegador; responde con el dato y de dónde sale. Nunca lo inventes.
+  Si pide verlo o abrirlo, browser.
+- Bajar un archivo (un PDF, un formulario…): web download; queda en Descargas. Para adjuntarlo en un chat o un
+  correo: clipboard set_files con la ruta, clic en el campo del mensaje y ctrl+v.
+"""),
     ];
 
     /// <summary>Instrucciones del turno: las fijas más el trozo de cada módulo encendido (no cambian entre pasos: caché).</summary>
@@ -163,8 +171,9 @@ Agenda
   "parameters":{"type":"object","properties":{"text":{"type":"string"},"n":{"type":"integer"},"up":{"type":"boolean"}},"required":["text"]}},
  {"type":"function","name":"extract","description":"Saca datos de toda la ventana activa (también lo que no se ve): email, phone, url, date, id (CPF, CNPJ, protocolo, pedido), money. near: solo los que están cerca de ese texto (un nombre, «factura»…).",
   "parameters":{"type":"object","properties":{"kind":{"type":"string","enum":["email","phone","url","date","id","money"]},"near":{"type":"string"}},"required":["kind"]}},
- {"type":"function","name":"clipboard","description":"Portapapeles de texto: get lo lee (n=2: lo copiado antes de eso, n=3…), set pone text, history lista lo último copiado.",
-  "parameters":{"type":"object","properties":{"action":{"type":"string","enum":["get","set","history"]},"text":{"type":"string"},"n":{"type":"integer"}},"required":["action"]}},
+ {"type":"function","name":"clipboard","description":"Portapapeles: get lee el texto (n=2: lo copiado antes de eso, n=3…), set pone text, history lista lo último copiado, set_files pone archivos (paths) para pegarlos con ctrl+v en un chat, un correo o una carpeta.",
+  "parameters":{"type":"object","properties":{"action":{"type":"string","enum":["get","set","history","set_files"]},"text":{"type":"string"},"n":{"type":"integer"},
+   "paths":{"type":"array","items":{"type":"string"}}},"required":["action"]}},
  {"type":"function","name":"find_files","description":"Busca archivos y carpetas del usuario (Escritorio, Documentos, Descargas, Imágenes, Vídeos, Música, OneDrive) por palabras del nombre. content: busca dentro de los documentos (índice de Windows). Más recientes primero.",
   "parameters":{"type":"object","properties":{"query":{"type":"string"},"content":{"type":"boolean"}},"required":["query"]}},
  {"type":"function","name":"files","description":"Archivos y carpetas sin tocar la pantalla. Rutas completas, relativas a la carpeta abierta en el Explorador o con ~ (~/Descargas, ~/Documentos, ~/Escritorio); comodines en el nombre (*.pdf). list: contenido de una carpeta (pattern). rename: paths y names (uno por archivo; sin extensión conserva la suya). move/copy: paths a la carpeta to (se crea si no existe). new_folder: paths[0]. delete: a la papelera. zip: paths a to (.zip). unzip: paths[0] a to. open_with: paths[0] con app. undo: deshace la última. Nunca sobrescribe.",
@@ -203,6 +212,9 @@ Agenda
    "remind":{"type":"string"},"repeat":{"type":"string","enum":["","daily","weekdays","weekly","monthly"]},"who":{"type":"string"},
    "what":{"type":"string","enum":["open","today","overdue","done","projects"]},"status":{"type":"string"},"summary":{"type":"string"},
    "aliases":{"type":"string"}},"required":["action"]}},
+ {"type":"function","name":"web","description":"Internet sin el navegador. search: query → resultados (título, url, resumen). read: url → texto de la página (offset para seguir). download: url → archivo en Descargas (name opcional). videos: query → vídeos de YouTube. images: query → imágenes libres (Wikimedia).",
+  "parameters":{"type":"object","properties":{"action":{"type":"string","enum":["search","read","download","videos","images"]},
+   "query":{"type":"string"},"url":{"type":"string"},"name":{"type":"string"},"offset":{"type":"integer"}},"required":["action"]}},
  {"type":"function","name":"plan","description":"Plan de un pedido con varias partes: steps lo fija (una frase por parte); done marca hecha la parte n (1, 2…). Va en cada turno.",
   "parameters":{"type":"object","properties":{"steps":{"type":"array","items":{"type":"string"}},"done":{"type":"integer"}}}},
  {"type":"function","name":"look","description":"Pide la captura de pantalla para el siguiente turno.",

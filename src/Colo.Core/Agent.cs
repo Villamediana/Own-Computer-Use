@@ -548,6 +548,7 @@ dejar lo que está haciendo? Responde solo «sí» o «no».
             "clipboard" => c.Str("action") switch
             {
                 "set" => "Copia al portapapeles",
+                "set_files" => "Copia los archivos",
                 "history" => "Mira lo copiado",
                 _ => c.Int("n") is > 1 ? "Busca lo copiado antes" : "Lee el portapapeles",
             },
@@ -561,6 +562,14 @@ dejar lo que está haciendo? Responde solo «sí» o «no».
                 "project" => $"Proyecto {Trunc(c.Str("project"), 40)}",
                 "search" => $"Busca «{Trunc(c.Str("text"), 40)}» en la agenda",
                 _ => "Mira la agenda",
+            },
+            "web" => c.Str("action") switch
+            {
+                "read" => "Lee " + Host(c.Str("url")),
+                "download" => "Baja de " + Host(c.Str("url")),
+                "videos" => $"Busca vídeos «{Trunc(c.Str("query"), 40)}»",
+                "images" => $"Busca imágenes «{Trunc(c.Str("query"), 40)}»",
+                _ => $"Busca en internet «{Trunc(c.Str("query"), 40)}»",
             },
             "vault" => c.Str("action") switch
             {
@@ -617,4 +626,6 @@ dejar lo que está haciendo? Responde solo «sí» o «no».
     }
 
     static string Trunc(string s, int n) => s.Length <= n ? s : s[..n] + "…";
+
+    static string Host(string url) => Uri.TryCreate(url.Contains("://") ? url : "https://" + url, UriKind.Absolute, out var u) ? u.Host.Replace("www.", "") : Trunc(url, 40);
 }

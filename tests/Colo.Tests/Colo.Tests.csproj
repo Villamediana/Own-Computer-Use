@@ -12,6 +12,7 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="mcp_echo.py" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="fixtures/**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Colo.Core\Colo.Core.csproj" />
