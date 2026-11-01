@@ -224,6 +224,14 @@ sealed class StageHost(Control ui)
 
     Rectangle Near() => ui.IsDisposed ? Screen.PrimaryScreen!.Bounds : ui.Bounds;
 
+    /// <summary>Si el palco tapa ese punto, se oculta (el agente va a hacer clic ahí, en la ventana de debajo).</summary>
+    public void Uncover(Point p)
+    {
+        if (_stage is not { IsDisposed: false } s) return;
+        try { ui.Invoke(() => { if (s.Visible && s.Bounds.Contains(p)) s.Hide(); }); }
+        catch (Exception ex) when (ex is ObjectDisposedException or InvalidOperationException) { }
+    }
+
     public async Task<string> RunAsync(ToolCall c, CancellationToken ct)
     {
         try

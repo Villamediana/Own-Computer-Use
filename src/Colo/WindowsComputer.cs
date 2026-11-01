@@ -265,6 +265,14 @@ sealed class WindowsComputer : IComputer
 
     bool Target(ToolCall c, out Point p, out string error, string prefix = "")
     {
+        if (!TargetCore(c, out p, out error, prefix)) return false;
+        // El palco va por encima: si tapa el punto, se aparta para que el clic llegue a la ventana de debajo.
+        Stage?.Uncover(p);
+        return true;
+    }
+
+    bool TargetCore(ToolCall c, out Point p, out string error, string prefix)
+    {
         lock (_lock)
         {
             error = "";
