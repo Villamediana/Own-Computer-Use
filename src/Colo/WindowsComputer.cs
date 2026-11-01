@@ -42,6 +42,8 @@ sealed class WindowsComputer : IComputer
     public Vault? Vault { get; set; }
     public Agenda? Agenda { get; set; }
     public StageHost? Stage { get; set; }
+    /// <summary>Grabar reuniones (lo lleva la onda, que tiene la pastilla y el atajo).</summary>
+    public Func<ToolCall, string>? Meeting { get; set; }
     Rectangle _screen;
     double _scale = 1;
     Dictionary<int, Rectangle> _marks = [];
@@ -416,6 +418,8 @@ sealed class WindowsComputer : IComputer
                 if (Stage is null) return "error: palco apagado";
                 if (c.Str("action") is "show" or "page") Cursor?.Say(Agent.Describe(c, new Observation([], 0, 0, "", [])));
                 return await Stage.RunAsync(c, ct);
+            case "meeting":
+                return Meeting?.Invoke(c) ?? "error: grabación apagada";
             case "agenda":
                 return Agenda?.Run(c, DateTime.Now) ?? "error: agenda apagada";
             case "press_keys":

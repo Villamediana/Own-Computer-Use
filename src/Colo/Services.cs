@@ -62,6 +62,8 @@ static class Store
         if (!Colo.Core.Keys.Hold(s.TalkHotkey ?? "", out _)) s.TalkHotkey = "Ctrl+Win";
         if (!string.IsNullOrEmpty(s.DictateHotkey) && !Colo.Core.Keys.Hold(s.DictateHotkey, out _)) s.DictateHotkey = "";
         s.DictateHotkey ??= "";
+        if (!string.IsNullOrEmpty(s.RecordHotkey) && !Colo.Core.Keys.Hold(s.RecordHotkey, out _)) s.RecordHotkey = "";
+        s.RecordHotkey ??= "";
         // Si una key no se puede descifrar (otro usuario de Windows), se pierde solo esa key, no los ajustes.
         s.ApiKey = Unprotect(saved?.Key);
         s.ElevenLabsKey = Unprotect(saved?.ElevenKey);

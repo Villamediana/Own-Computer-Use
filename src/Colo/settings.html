@@ -589,6 +589,12 @@
             <button class="btn" id="recordDictate">Cambiar</button>
             <label class="switch"><input type="checkbox" id="dictateOn"><span></span></label>
           </div>
+          <div class="row">
+            <div class="label"><b>Grabar reunión</b><small id="meetingKeyHint">Toca: graba, pausa, sigue · dos toques: para y saca el acta</small></div>
+            <div class="keys" id="meetingKeys"></div>
+            <button class="btn" id="recordMeeting">Cambiar</button>
+            <label class="switch"><input type="checkbox" id="meetingOn"><span></span></label>
+          </div>
         </div>
 
         <div id="replySection">
@@ -806,7 +812,7 @@ let voiceModels = [];   // los de la conexión de la voz (para la transcripción
 let groups = [];        // [{id, title, summary, icon}]
 let dirty = false;
 
-const GROUP_ICONS = { mouse: "i-mouse", keyboard: "i-keyboard", browser: "i-globe", windows: "i-window", read: "i-text", files: "i-folder", terminal: "i-terminal", office: "i-office", vault: "i-lock", print: "i-camera", memory: "i-memory", agenda: "i-list", web: "i-link", stage: "i-eye" };
+const GROUP_ICONS = { mouse: "i-mouse", keyboard: "i-keyboard", browser: "i-globe", windows: "i-window", read: "i-text", files: "i-folder", terminal: "i-terminal", office: "i-office", vault: "i-lock", print: "i-camera", memory: "i-memory", agenda: "i-list", web: "i-link", stage: "i-eye", meeting: "i-mic" };
 
 // ── navegación
 function go(page) {
@@ -974,6 +980,9 @@ function kbd(combo) {
 function showKeys() {
   $("#talkKeys").innerHTML = kbd(S.TalkHotkey);
   $("#dictateKeys").innerHTML = kbd(S.DictateHotkey);
+  $("#meetingKeys").innerHTML = kbd(S.RecordHotkey);
+  $("#meetingOn").checked = !!S.RecordHotkey;
+  $("#meetingKeys").hidden = $("#recordMeeting").hidden = !S.RecordHotkey;
   syncVoice();
 }
 function recordHold(field, btn, hint) {
@@ -1005,8 +1014,8 @@ function recordHold(field, btn, hint) {
     if (!held.length) return;
     if (held.length < 2) { held.length = 0; hint.textContent = "Tienen que ser dos teclas o más, apretadas a la vez."; btn.textContent = "Aprieta las teclas…"; return; }
     const combo = held.slice().sort((a, b) => (ORDER.indexOf(a) + 1 || 9) - (ORDER.indexOf(b) + 1 || 9)).join("+");
-    const other = field === "TalkHotkey" ? S.DictateHotkey : S.TalkHotkey;
-    if (other && other === combo) { held.length = 0; hint.textContent = "Ese ya es el otro atajo."; btn.textContent = "Aprieta las teclas…"; return; }
+    const others = ["TalkHotkey", "DictateHotkey", "RecordHotkey"].filter(f => f !== field).map(f => S[f]);
+    if (others.includes(combo)) { held.length = 0; hint.textContent = "Ese ya es otro atajo de Colo."; btn.textContent = "Aprieta las teclas…"; return; }
     S[field] = combo;
     touch();
     done();
@@ -1160,6 +1169,18 @@ function init(msg) {
   showKeys();
   $("#recordTalk").onclick = () => recordHold("TalkHotkey", $("#recordTalk"), $("#talkKeyHint"));
   $("#recordDictate").onclick = () => recordHold("DictateHotkey", $("#recordDictate"), $("#dictateKeyHint"));
+  S.RecordHotkey ??= "";
+  $("#recordMeeting").onclick = () => recordHold("RecordHotkey", $("#recordMeeting"), $("#meetingKeyHint"));
+  $("#meetingOn").onchange = e => {
+    if (e.target.checked) {
+      $("#recordMeeting").hidden = false;
+      recordHold("RecordHotkey", $("#recordMeeting"), $("#meetingKeyHint"));
+      return;
+    }
+    S.RecordHotkey = "";
+    touch();
+    showKeys();
+  };
   $("#dictateOn").onchange = e => {
     if (e.target.checked) {
       // Se enciende grabando el atajo; con Esc queda apagado.
@@ -1571,7 +1592,7 @@ function demoHost() {
             settings: {
               Provider: "Azure", Endpoint: "https://latamfoundryai.openai.azure.com", ApiKey: "sk-demo-123", Model: "gpt-5.6-luna",
               ReasoningEffort: "low", SpeechEngine: page.get("engine") || "Local", LocalModel: "base", Language: "es", TranscribeModel: "", ElevenLabsKey: page.has("speak") ? "sk_demo" : "", ElevenLabsModel: "scribe_v2", MicId: "", Sensitivity: 6,
-              TalkHotkey: "Ctrl+Win", DictateHotkey: "", Live: page.has("live"), LiveModel: "gpt-live-1", LiveVoice: "marin", VoiceOwn: false, VoiceProvider: "Azure", VoiceEndpoint: "", VoiceKey: "", SpeakReplies: page.has("speak"), ReplyVoice: "ElevenLabs", ElevenVoiceId: "", ElevenVoiceName: "", ElevenTtsModel: "eleven_v4",
+              TalkHotkey: "Ctrl+Win", DictateHotkey: "", RecordHotkey: "Alt+Win", Live: page.has("live"), LiveModel: "gpt-live-1", LiveVoice: "marin", VoiceOwn: false, VoiceProvider: "Azure", VoiceEndpoint: "", VoiceKey: "", SpeakReplies: page.has("speak"), ReplyVoice: "ElevenLabs", ElevenVoiceId: "", ElevenVoiceName: "", ElevenTtsModel: "eleven_v4",
               StartWithWindows: true, Vision: "Auto", DisabledTools: ["files"],
               McpServers: [
                 { Name: "Archivos", Kind: "Command", Command: "npx -y @modelcontextprotocol/server-filesystem C:\\Users\\miguel", Env: "", Url: "", Headers: "", Enabled: true, Tools: ["read_file", "list_directory"] },

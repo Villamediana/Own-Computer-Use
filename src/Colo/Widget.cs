@@ -90,6 +90,13 @@ sealed class Widget : LayeredWindow
     Reminders? _reminders;
     // ── palco (1.19): la ventana se crea la primera vez que el modelo muestra algo.
     readonly StageHost _stage;
+    // ── reuniones (1.20): un atajo por toques graba mic + sonido del PC; el acta sale después, en segundo plano.
+    const string Record = "record";
+    readonly Meetings _meetings = new(System.IO.Path.Combine(Store.Dir, "meetings.json"));
+    readonly RecordKey _recKey = new();
+    readonly MeetingWork _meetingWork;
+    Recorder? _recorder;
+    RecordPill? _pill;
     long _orderTokens;
 
     // ── arrastre
@@ -112,6 +119,23 @@ sealed class Widget : LayeredWindow
         // Una pregunta que propone la página (con clic del usuario) es como si la dijera.
         _stage.Ask += q => Post(() => Command(q));
         _stage.Speak += text => Post(() => { _speaker ??= TryCreateSpeaker(); _speaker?.Say(text); });
+        _agenda.MoreSearch = _meetings.Search;
+        _meetingWork = new MeetingWork(_meetings, _s, _ai, _agenda)
+        {
+            Encode = Recorder.Encode,
+            LocalTranscribe = samples => _stt?.Transcribe(samples) ?? "",
+        };
+        _meetingWork.Notice += (text, error) => Post(() =>
+        {
+            Say(text, error ? Theme.Danger : Theme.Blue, 10_000);
+            try { _tray.ShowBalloonTip(8_000, "Colo · reunión", text, error ? ToolTipIcon.Warning : ToolTipIcon.Info); } catch { }
+        });
+        _pc.Meeting = c =>
+        {
+            var r = "error: Colo se está cerrando";
+            try { Invoke(() => r = MeetingTool(c)); } catch (Exception ex) when (ex is ObjectDisposedException or InvalidOperationException) { }
+            return r;
+        };
         Text = "Colo";
         try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
 
@@ -145,6 +169,8 @@ sealed class Widget : LayeredWindow
         SetupKeys();
         ApplyAutostart();
         _ = StartAsync();
+        // Reuniones que quedaron a medias (Colo cerrado mientras transcribía): siguen, sin estorbar el arranque.
+        _ = Task.Run(async () => { await Task.Delay(20_000); await RunMeetingsAsync(); });
     }
 
     static bool OnScreen(Rectangle r)
@@ -431,12 +457,114 @@ sealed class Widget : LayeredWindow
         k.Cancelled += OnCancelled;
         if (!k.Set(Talk, _s.TalkHotkey)) Log.Write($"atajo: «{_s.TalkHotkey}» no vale");
         if (!k.Set(Dictate, _s.DictateHotkey)) Log.Write($"atajo: «{_s.DictateHotkey}» no vale");
+        if (!k.Set(Record, _s.RecordHotkey)) Log.Write($"atajo: «{_s.RecordHotkey}» no vale");
     }
 
     // Llegan desde el gancho de teclado: se contesta al momento y lo demás va por la cola de la interfaz.
-    void OnPressed(string id) => Post(() => Press(id));
-    void OnReleased(string id) => Post(() => Release(id));
-    void OnCancelled(string id) => Post(() => Cancel(id));
+    void OnPressed(string id) => Post(() => { if (id == Record) RecordTap(); else Press(id); });
+    void OnReleased(string id) { if (id != Record) Post(() => Release(id)); }
+    void OnCancelled(string id) { if (id != Record) Post(() => Cancel(id)); }
+
+    // ───────────────────────── reuniones
+
+    void RecordTap() => Meeting(_recKey.Tap(_recorder?.State ?? RecState.Idle, DateTime.Now));
+
+    string Meeting(RecAction a)
+    {
+        switch (a)
+        {
+            case RecAction.Start:
+                if (_recorder is not null) return "ok: ya estaba grabando";
+                try
+                {
+                    _recorder = new Recorder();
+                    _recorder.Start(_s.MicId);
+                }
+                catch (Exception ex)
+                {
+                    Log.Write("reunión: no pude grabar " + ex.Message);
+                    _recorder = null;
+                    Say("No pude grabar: " + ex.Message, Theme.Danger, 6000);
+                    return "error: no pude grabar: " + ex.Message;
+                }
+                _pill ??= NewPill();
+                _pill.ShowNear(Bounds);
+                Say("● Grabando la reunión", Theme.Danger, 2500);
+                return $"ok: grabando (se guarda en {_recorder.Dir})";
+            case RecAction.Pause:
+                if (_recorder?.State != RecState.Recording) return "error: no está grabando";
+                _recorder.Pause();
+                _pill?.Invalidate();
+                Say("Grabación en pausa", Theme.Muted, 2500);
+                return "ok: en pausa";
+            case RecAction.Resume:
+                if (_recorder?.State != RecState.Paused) return "error: no está en pausa";
+                _recorder.Resume();
+                _pill?.Invalidate();
+                Say("● Grabando otra vez", Theme.Danger, 2000);
+                return "ok: grabando otra vez";
+            case RecAction.Stop:
+                return StopRecording();
+            default:
+                return "ok";
+        }
+    }
+
+    RecordPill NewPill()
+    {
+        var p = new RecordPill(() => (_recorder?.State ?? RecState.Idle, _recorder?.Elapsed ?? TimeSpan.Zero));
+        p.Toggle += () => Meeting(_recorder?.State == RecState.Paused ? RecAction.Resume : RecAction.Pause);
+        p.StopAsked += () => Meeting(RecAction.Stop);
+        return p;
+    }
+
+    string StopRecording()
+    {
+        if (_recorder is not { } rec) return "error: no está grabando";
+        _recorder = null;
+        _pill?.Hide();
+        var seconds = rec.Stop();
+        if (seconds < 3)
+        {
+            try { System.IO.Directory.Delete(rec.Dir, true); } catch { }
+            Say("Grabación descartada (muy corta)", Theme.Muted, 2500);
+            return "ok: descartada (muy corta)";
+        }
+        _meetings.Add(rec.Dir, rec.Started, seconds);
+        _ = Task.Run(RunMeetingsAsync);
+        Say("Reunión guardada · la transcribo en segundo plano", Theme.Blue, 4000);
+        return $"ok: guardada ({(int)(seconds / 60)} min) en {rec.Dir}; el acta sale sola en unos minutos";
+    }
+
+    async Task RunMeetingsAsync()
+    {
+        try { await _meetingWork.RunAsync(); }
+        catch (Exception ex) { Log.Write("reunión: " + ex.Message); }
+    }
+
+    /// <summary>La herramienta meeting (en el hilo de la interfaz).</summary>
+    string MeetingTool(ToolCall c)
+    {
+        switch (c.Str("action"))
+        {
+            case "start": return Meeting(RecAction.Start);
+            case "pause": return Meeting(RecAction.Pause);
+            case "resume": return Meeting(RecAction.Resume);
+            case "stop": return Meeting(RecAction.Stop);
+            case "list": return _meetings.List(DateTime.Now);
+            case "retry":
+                foreach (var j in _meetings.All.Where(j => j.Status != "done" && j.Attempts >= 3))
+                    _meetings.Update(j with { Attempts = 0, Error = "" });
+                _ = Task.Run(RunMeetingsAsync);
+                return "ok: reintentando las que fallaron";
+            default:
+                var pending = _meetings.Pending().Count;
+                var now = _recorder is { } r
+                    ? $"{(r.State == RecState.Paused ? "en pausa" : "grabando")} ({r.Elapsed:h\\:mm\\:ss})"
+                    : "sin grabar";
+                return $"ok: {now}" + (pending > 0 ? $"; {pending} reunión(es) procesándose" : "");
+        }
+    }
 
     void Press(string id)
     {
@@ -1262,6 +1390,13 @@ sealed class Widget : LayeredWindow
         Native.RemoveClipboardFormatListener(Handle);
         _watch?.Dispose();
         _reminders?.Dispose();
+        // Cerrar Colo grabando no pierde la reunión: se guarda y se procesa al volver.
+        if (_recorder is { } rec)
+        {
+            _recorder = null;
+            var seconds = rec.Stop();
+            if (seconds >= 3) _meetings.Add(rec.Dir, rec.Started, seconds);
+        }
         Native.UnregisterHotKey(Handle, HotToggle);
         Native.UnregisterHotKey(Handle, HotStop);
         _keys?.Dispose();

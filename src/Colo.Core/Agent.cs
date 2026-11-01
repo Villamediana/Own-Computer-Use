@@ -563,6 +563,16 @@ dejar lo que está haciendo? Responde solo «sí» o «no».
                 "search" => $"Busca «{Trunc(c.Str("text"), 40)}» en la agenda",
                 _ => "Mira la agenda",
             },
+            "meeting" => c.Str("action") switch
+            {
+                "start" => "Graba la reunión",
+                "pause" => "Pausa la grabación",
+                "resume" => "Sigue grabando",
+                "stop" => "Para y guarda la reunión",
+                "list" => "Mira las reuniones",
+                "retry" => "Reintenta las reuniones",
+                _ => "Mira la grabación",
+            },
             "stage" => c.Str("action") switch
             {
                 "skill" => $"Lee la guía «{c.Str("name")}»",

@@ -128,6 +128,11 @@ Internet
 - Bajar un archivo (un PDF, un formulario…): web download; queda en Descargas. Para adjuntarlo en un chat o un
   correo: clipboard set_files con la ruta, clic en el campo del mensaje y ctrl+v.
 """),
+        new("meeting", "Reuniones", "Grabar una reunión (micrófono y sonido del PC) y sacar el acta y las tareas solo", ["meeting"], """
+Reuniones
+- «Graba la reunión», «pausa», «sigue», «para de grabar» = meeting. Al parar, Colo transcribe y hace el acta solo y
+  lleva las tareas a la agenda: no hagas nada más. «¿Qué quedó de la reunión de…?» = agenda search.
+"""),
         new("stage", "Palco", "Muestra lo que crea al momento: gráficos, mapas, explicaciones animadas, 3D, vídeos e imágenes", ["stage"], """
 Palco
 - Si la respuesta se entiende mejor viéndola (cifras con historia, comparar, un mapa, cómo funciona algo, vídeos o
@@ -228,6 +233,8 @@ Palco
  {"type":"function","name":"stage","description":"Palco (ventana al lado). skill: lee la guía name. show: muestra la página que creas (title, css, html, js = módulo ES con import de three, gsap, d3, chart.js/auto, maplibre-gl, leaflet); devuelve si falló. page: abre url o ruta tal cual. close. bigger/smaller: tamaño.",
   "parameters":{"type":"object","properties":{"action":{"type":"string","enum":["skill","show","page","close","bigger","smaller"]},
    "name":{"type":"string"},"title":{"type":"string"},"css":{"type":"string"},"html":{"type":"string"},"js":{"type":"string"},"url":{"type":"string"}},"required":["action"]}},
+ {"type":"function","name":"meeting","description":"Grabar reuniones (micrófono + sonido del PC). start, pause, resume, stop (guarda; transcripción y acta salen solas). status. list: las grabadas con su estado. retry: reintenta las que fallaron.",
+  "parameters":{"type":"object","properties":{"action":{"type":"string","enum":["start","pause","resume","stop","status","list","retry"]}},"required":["action"]}},
  {"type":"function","name":"plan","description":"Plan de un pedido con varias partes: steps lo fija (una frase por parte); done marca hecha la parte n (1, 2…). Va en cada turno.",
   "parameters":{"type":"object","properties":{"steps":{"type":"array","items":{"type":"string"}},"done":{"type":"integer"}}}},
  {"type":"function","name":"look","description":"Pide la captura de pantalla para el siguiente turno.",
@@ -244,7 +251,7 @@ Palco
 """;
 
     /// <summary>Acciones que pueden cerrar el pedido en la misma llamada (campo done): ahorra un turno entero.</summary>
-    public static readonly HashSet<string> Finishing = ["stage", "agenda", "vault", "click", "type_text", "dictate", "edit_text", "press_keys", "browser", "open", "window", "scroll", "clipboard", "screenshot"];
+    public static readonly HashSet<string> Finishing = ["meeting", "stage", "agenda", "vault", "click", "type_text", "dictate", "edit_text", "press_keys", "browser", "open", "window", "scroll", "clipboard", "screenshot"];
 
     /// <summary>Herramientas activas: todas menos los grupos apagados (plan, look, wait, done, stop e ignore van siempre).</summary>
     public static JsonArray Build(IEnumerable<string>? disabledGroups)

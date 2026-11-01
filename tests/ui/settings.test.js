@@ -196,6 +196,14 @@ const assert = (c, m) => { if (!c) { console.log('FAIL:', m); process.exitCode =
   assert(after.filter(m => m.type === 'save').length === before + 1 && after.pop().type === 'close', 'Esc guarda lo pendiente y cierra');
   await page.screenshot({ path: process.argv[2] + '/after-mcp.png' });
 
+  // atajo de grabar reunión: apagado → se enciende grabando el atajo
+  await page.click('nav button[data-page=voice]');
+  assert(!(await page.isChecked('#meetingOn')), 'grabar reunión: apagado sin atajo');
+  await page.click('label.switch:has(#meetingOn)');
+  await page.keyboard.down('Alt'); await page.keyboard.down('Shift'); await page.keyboard.up('Shift'); await page.keyboard.up('Alt');
+  assert(await page.isChecked('#meetingOn') && (await page.textContent('#meetingKeys')).includes('Mayús'), 'grabar reunión: atajo nuevo');
+  await page.screenshot({ path: process.argv[2] + '/atajo-reunion.png' });
+
   // agenda
   await page.click('nav button[data-page=agenda]');
   await page.evaluate(() => window.__deliver({ type: 'agenda', agenda: {

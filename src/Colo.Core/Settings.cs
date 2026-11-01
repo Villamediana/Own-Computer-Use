@@ -49,6 +49,8 @@ public sealed class Settings
     public string TalkHotkey { get; set; } = "Ctrl+Win";
     /// <summary>Atajo para dictar: transcribe, el modelo lo pule con tu tono y lo escribe donde está el cursor. Vacío = apagado.</summary>
     public string DictateHotkey { get; set; } = "";
+    /// <summary>Atajo de grabar reuniones, por toques: graba, pausa, sigue; dos toques = parar. Vacío = apagado.</summary>
+    public string RecordHotkey { get; set; } = "Alt+Win";
     public bool SpeakReplies { get; set; }
     public ReplyVoice ReplyVoice { get; set; } = ReplyVoice.ElevenLabs;
     public string ElevenVoiceId { get; set; } = "";

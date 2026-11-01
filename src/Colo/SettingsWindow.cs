@@ -360,6 +360,8 @@ sealed class SettingsWindow : Form
         to.TalkHotkey = Colo.Core.Keys.Hold(from.TalkHotkey ?? "", out _) ? from.TalkHotkey!.Trim() : to.TalkHotkey;
         to.DictateHotkey = string.IsNullOrWhiteSpace(from.DictateHotkey) ? ""
             : Colo.Core.Keys.Hold(from.DictateHotkey, out _) ? from.DictateHotkey.Trim() : to.DictateHotkey;
+        to.RecordHotkey = string.IsNullOrWhiteSpace(from.RecordHotkey) ? ""
+            : Colo.Core.Keys.Hold(from.RecordHotkey, out _) ? from.RecordHotkey.Trim() : to.RecordHotkey;
         to.VoiceOwn = from.VoiceOwn;
         to.VoiceProvider = from.VoiceProvider;
         to.VoiceEndpoint = from.VoiceEndpoint?.Trim() ?? "";
