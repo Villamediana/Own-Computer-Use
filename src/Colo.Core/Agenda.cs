@@ -138,7 +138,8 @@ public sealed class Agenda
                 it = it with
                 {
                     Due = it.Due is { } d ? After(d, it.Repeat, now) : null,
-                    Remind = it.Remind is { } r ? After(r, it.Repeat, now) : null,
+                    // Si el aviso ya pasó a la vez siguiente (sonó antes de hacerla), no se salta otra.
+                    Remind = it.Remind is { } r ? (it.Due is { } d0 && r > d0 ? r : After(r, it.Repeat, now)) : null,
                 };
                 _d.Items[i] = it;
                 Save();
@@ -178,6 +179,7 @@ public sealed class Agenda
                 return $"ok: proyecto «{name}» creado";
             }
             var p = _d.Projects[i];
+            var names = new[] { p.Name }.Concat(p.Aliases ?? []).Concat(alias).Select(Extract.Fold).ToHashSet();
             p = p with
             {
                 Status = status.Length > 0 ? status.Trim() : p.Status,
@@ -186,6 +188,10 @@ public sealed class Agenda
                 Updated = now,
             };
             _d.Projects[i] = p;
+            // Lo apuntado con un alias antes de saberse que lo era pasa al nombre del proyecto.
+            for (var k = 0; k < _d.Items.Count; k++)
+                if (_d.Items[k].Project.Length > 0 && _d.Items[k].Project != p.Name && names.Contains(Extract.Fold(_d.Items[k].Project.Trim())))
+                    _d.Items[k] = _d.Items[k] with { Project = p.Name };
             Save();
             return $"ok: «{p.Name}» actualizado";
         }

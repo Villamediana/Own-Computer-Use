@@ -77,6 +77,8 @@ public sealed class WebTests : IDisposable
         Assert.Contains("Cotação", Web.Decode(latin, "ISO-8859-1"));
         Assert.Contains("Cotação", Web.Decode(Encoding.UTF8.GetBytes("<p>Cotação</p>"), null));
         Assert.Contains("Cotação", Web.Decode(Encoding.UTF8.GetBytes("<p>Cotação</p>"), "bogus-charset"));
+        // Lo que dicen ISO-8859-1 suele ser windows-1252: el euro y las comillas también.
+        Assert.Contains("“5 €”", Web.Decode([0x93, 0x35, 0x20, 0x80, 0x94], "iso-8859-1"));
     }
 
     [Fact]

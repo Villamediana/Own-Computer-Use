@@ -254,19 +254,26 @@ public sealed class Meetings
     /// Carpetas con audio.wav que no están en la lista (Colo cerrado a la fuerza grabando): se arregla la cabecera del
     /// WAV y se añaden. Devuelve las recuperadas.
     /// </summary>
-    public List<string> Recover(string root)
+    public List<string> Recover(string root, string? recording = null)
     {
         var found = new List<string>();
         if (!Directory.Exists(root)) return found;
+        static bool Same(string a, string b) => string.Equals(Path.GetFullPath(a), Path.GetFullPath(b), StringComparison.OrdinalIgnoreCase);
         foreach (var dir in Directory.EnumerateDirectories(root))
         {
             var wav = Path.Combine(dir, "audio.wav");
             if (!File.Exists(wav) || File.Exists(Path.Combine(dir, "ata.md"))) continue;
-            if (All.Any(j => string.Equals(Path.GetFullPath(j.Dir), Path.GetFullPath(dir), StringComparison.OrdinalIgnoreCase))) continue;
-            var seconds = MeetingAudio.RepairHeader(wav) / (MeetingAudio.Rate * 4.0);
-            if (seconds < 3) continue;
-            Add(dir, File.GetCreationTime(wav), seconds);
-            found.Add(dir);
+            // La que se está grabando ahora no es una perdida.
+            if (recording is { Length: > 0 } && Same(dir, recording)) continue;
+            if (All.Any(j => Same(j.Dir, dir))) continue;
+            try
+            {
+                var seconds = MeetingAudio.RepairHeader(wav) / (MeetingAudio.Rate * 4.0);
+                if (seconds < 3) continue;
+                Add(dir, File.GetCreationTime(wav), seconds);
+                found.Add(dir);
+            }
+            catch (IOException) { } // abierto por otro proceso: se mira la próxima vez
         }
         return found;
     }
@@ -321,7 +328,7 @@ public sealed class Meetings
             if (!words.All(fold.Contains)) continue;
             n++;
             var at = fold.IndexOf(words[0], StringComparison.Ordinal);
-            var from = Math.Max(0, at - 120);
+            var from = Math.Clamp(at - 120, 0, text.Length);
             yield return $"{head}, en la transcripción: …{text.Substring(from, Math.Min(280, text.Length - from)).Replace('\n', ' ')}…";
         }
     }
@@ -518,6 +525,7 @@ concretas, una frase cada una, sin repetir.
 public sealed class MeetingWork(Meetings meetings, Settings settings, AiClient ai, Agenda agenda)
 {
     readonly SemaphoreSlim _one = new(1, 1);
+    int _again;
     static readonly Lazy<HttpClient> LongHttp = new(() => new HttpClient { Timeout = TimeSpan.FromMinutes(60) });
 
     /// <summary>Comprime audio.wav → audio.m4a (en Windows con Media Foundation). null = no se comprime.</summary>
@@ -529,18 +537,24 @@ public sealed class MeetingWork(Meetings meetings, Settings settings, AiClient a
 
     public async Task RunAsync(CancellationToken ct = default)
     {
+        // Pedido mientras ya trabaja: lo recoge esa misma vuelta (sin quedarse esperando hasta el próximo arranque).
+        Volatile.Write(ref _again, 1);
         if (!await _one.WaitAsync(0, ct)) return;
         try
         {
-            // Una a una hasta que no quede nada nuevo (también lo que se grabó mientras procesaba otra).
-            var seen = new HashSet<string>();
-            while (meetings.Pending().FirstOrDefault(j => seen.Add(j.Id)) is { } job)
+            while (Interlocked.Exchange(ref _again, 0) == 1)
             {
-                ct.ThrowIfCancellationRequested();
-                await ProcessAsync(job, ct);
+                // Una a una hasta que no quede nada nuevo (también lo que se grabó mientras procesaba otra).
+                var seen = new HashSet<string>();
+                while (meetings.Pending().FirstOrDefault(j => seen.Add(j.Id)) is { } job)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    await ProcessAsync(job, ct);
+                }
             }
         }
         finally { _one.Release(); }
+        if (Volatile.Read(ref _again) == 1) await RunAsync(ct);
     }
 
     async Task ProcessAsync(MeetingJob job, CancellationToken ct)
@@ -551,8 +565,19 @@ public sealed class MeetingWork(Meetings meetings, Settings settings, AiClient a
         {
             if (job.Status == "recorded")
             {
+                // A un nombre provisional: si Colo se cierra a medias, un .m4a cortado no pasa por bueno (y luego se
+                // borraría el WAV).
                 if (Encode is { } enc && File.Exists(wav) && !File.Exists(m4a))
-                    try { enc(wav, m4a); } catch { try { File.Delete(m4a); } catch { } }
+                {
+                    var part = Path.Combine(job.Dir, "audio.part.m4a");
+                    try
+                    {
+                        File.Delete(part);
+                        if (enc(wav, part)) File.Move(part, m4a);
+                    }
+                    catch { } // sin comprimir: se transcribe del WAV
+                    finally { try { File.Delete(part); } catch { } }
+                }
                 job = meetings.Update(job with { Status = "encoded", Error = "" });
             }
             if (job.Status == "encoded")

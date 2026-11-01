@@ -31,6 +31,9 @@ public sealed class Web(HttpClient? http = null)
 
     readonly HttpClient _http = http ?? Shared.Value;
 
+    // windows-1252 y otras páginas de códigos (sin esto, «€» y las comillas “ ” de webs antiguas salían rotas).
+    static Web() => Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
     /// <summary>La herramienta web. downloads = carpeta donde bajar los archivos.</summary>
     public async Task<string> RunAsync(ToolCall c, string downloads, CancellationToken ct)
     {
@@ -48,6 +51,7 @@ public sealed class Web(HttpClient? http = null)
         catch (HttpRequestException e) { return $"error: {(e.StatusCode is { } s ? $"HTTP {(int)s}" : e.Message)}"; }
         catch (TaskCanceledException) when (!ct.IsCancellationRequested) { return "error: la página tardó demasiado"; }
         catch (ArgumentException e) { return "error: " + e.Message; }
+        catch (IOException e) { return "error: " + e.Message; }
     }
 
     // ───────────────────────── buscar
@@ -187,7 +191,8 @@ public sealed class Web(HttpClient? http = null)
         {
             name = name?.Trim().Trim('"', '\'').ToLowerInvariant();
             if (string.IsNullOrEmpty(name)) return null;
-            if (name is "iso-8859-1" or "latin1" or "windows-1252" or "cp1252") return Encoding.Latin1;
+            // Las webs que dicen ISO-8859-1 en realidad escriben windows-1252 (como hacen los navegadores).
+            if (name is "iso-8859-1" or "latin1" or "windows-1252" or "cp1252" or "us-ascii") name = "windows-1252";
             try { return Encoding.GetEncoding(name); } catch { return null; }
         }
         var enc = Named(charset);
@@ -218,7 +223,16 @@ public sealed class Web(HttpClient? http = null)
         {
             await using (var src = await r.Content.ReadAsStreamAsync(ct))
             await using (var dst = File.Create(tmp))
-                await src.CopyToAsync(dst, ct);
+            {
+                // Sin Content-Length el tope se mira mientras baja.
+                var buf = new byte[81920];
+                int n;
+                while ((n = await src.ReadAsync(buf, ct)) > 0)
+                {
+                    if (dst.Length + n > MaxDownload) throw new IOException("el archivo pasa de 500 MB");
+                    await dst.WriteAsync(buf.AsMemory(0, n), ct);
+                }
+            }
             if (Mismatch(tmp, Path.GetExtension(path)) is { } why) { File.Delete(tmp); return "error: " + why; }
             File.Move(tmp, path);
         }

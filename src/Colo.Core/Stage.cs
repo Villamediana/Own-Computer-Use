@@ -49,9 +49,9 @@ public static class StageDoc
             + $"<script type=\"importmap\">{map}</script><script>{Bridge}</script>";
         // Un importmap propio rompería el nuestro (solo vale el primero, antes de los módulos): fuera.
         doc = Regex.Replace(doc, @"<script[^>]*type\s*=\s*[""']importmap[""'][^>]*>.*?</script>", "", RegexOptions.Singleline | RegexOptions.IgnoreCase);
-        var h = Regex.Match(doc, @"<head[^>]*>", RegexOptions.IgnoreCase);
+        var h = Regex.Match(doc, @"<head(\s[^>]*)?>", RegexOptions.IgnoreCase);
         if (h.Success) return doc.Insert(h.Index + h.Length, head);
-        var html = Regex.Match(doc, @"<html[^>]*>", RegexOptions.IgnoreCase);
+        var html = Regex.Match(doc, @"<html(\s[^>]*)?>", RegexOptions.IgnoreCase);
         if (html.Success) return doc.Insert(html.Index + html.Length, "<head>" + head + "</head>");
         return "<!doctype html><html><head>" + head + "</head><body>" + doc + "</body></html>";
     }

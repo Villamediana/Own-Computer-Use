@@ -173,7 +173,7 @@ sealed class Widget : LayeredWindow
         _ = Task.Run(async () =>
         {
             await Task.Delay(20_000);
-            try { foreach (var dir in _meetings.Recover(Recorder.Root)) Log.Write("reunión: recuperada " + dir); }
+            try { foreach (var dir in _meetings.Recover(Recorder.Root, _recorder?.Dir)) Log.Write("reunión: recuperada " + dir); }
             catch (Exception ex) { Log.Write("reunión: recuperar · " + ex.Message); }
             await RunMeetingsAsync();
         });
@@ -1082,7 +1082,7 @@ sealed class Widget : LayeredWindow
         Say("⏰ " + text, Theme.Blue, 15_000);
         System.Media.SystemSounds.Asterisk.Play();
         try { _tray.ShowBalloonTip(10_000, "Colo · recordatorio", string.Join("\n", due.Select(i => $"#{i.Id} {i.Text}")), ToolTipIcon.Info); } catch { }
-        if (_s.SpeakReplies) _speaker?.Say(text);
+        if (_s.SpeakReplies) { _speaker ??= TryCreateSpeaker(); _speaker?.Say(text); }
     }
 
     void Say(string text, Color color, int ms)
@@ -1403,6 +1403,7 @@ sealed class Widget : LayeredWindow
             _recorder = null;
             var seconds = rec.Stop();
             if (seconds >= 3) _meetings.Add(rec.Dir, rec.Started, seconds);
+            else try { System.IO.Directory.Delete(rec.Dir, true); } catch { }
         }
         Native.UnregisterHotKey(Handle, HotToggle);
         Native.UnregisterHotKey(Handle, HotStop);

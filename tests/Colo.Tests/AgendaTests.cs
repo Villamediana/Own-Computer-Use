@@ -104,4 +104,26 @@ public sealed class AgendaTests : IDisposable
         var extra = Tools.Instructions([]).Length - Tools.System.Length;
         Assert.True(extra < 3200, $"los módulos suman {extra} caracteres");
     }
+
+    [Fact]
+    public void Doing_a_repeating_task_after_its_reminder_rang_keeps_the_next_reminder()
+    {
+        var a = new Agenda(_path);
+        a.Run(Call("""{"action":"add","text":"Remédio","due":"2026-11-02 09:00","remind":"2026-11-02 09:00","repeat":"daily"}"""), Now);
+        Assert.Single(a.Fire(Now)); // sonó a las 9; el aviso pasa a mañana
+        a.Done("1", Now);
+        var it = a.Items.Single();
+        Assert.Equal(new DateTime(2026, 11, 3, 9, 0, 0), it.Due);
+        Assert.Equal(new DateTime(2026, 11, 3, 9, 0, 0), it.Remind); // no pasado mañana
+    }
+
+    [Fact]
+    public void An_alias_added_later_brings_its_tasks_to_the_project()
+    {
+        var a = new Agenda(_path);
+        a.Run(Call("""{"action":"add","text":"Subir o índice","project":"TF"}"""), Now);
+        a.Project("Tower Finder", "", "", "", Now);
+        a.Project("Tower Finder", "", "", "TF, torre", Now);
+        Assert.Equal("Tower Finder", a.Items.Single().Project);
+    }
 }

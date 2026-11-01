@@ -185,6 +185,7 @@ Aqui está: {"title":"Migração do Tower Finder","summary":"Decidimos migrar o 
         File.WriteAllText(Path.Combine(root, "ya-con-acta", "audio.wav"), "x");
         File.WriteAllText(Path.Combine(root, "ya-con-acta", "ata.md"), "x");
         var meetings = new Meetings(Path.Combine(_dir, "meetings.json"));
+        Assert.Empty(meetings.Recover(root, dir)); // la que se está grabando ahora no se toca
         Assert.Equal([dir], meetings.Recover(root));
         Assert.Equal(5, meetings.All.Single().Seconds, 1);
         using (var r = new WaveFileReader(wav)) Assert.Equal(5, r.TotalTime.TotalSeconds, 1);

@@ -29,6 +29,8 @@ Espero que te guste.
         // Un fragmento suelto también vale.
         Assert.StartsWith("<!doctype html><html><head><meta", StageDoc.Wrap("<div>hola</div>"));
         Assert.Contains("<html lang=\"es\"><head><meta", StageDoc.Wrap("<html lang=\"es\"><body>x</body></html>"));
+        // <header> no es <head>.
+        Assert.StartsWith("<!doctype html><html><head><meta", StageDoc.Wrap("<header>Dólar</header><main>5,40</main>"));
     }
 
     [Fact]

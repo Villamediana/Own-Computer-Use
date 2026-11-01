@@ -38,6 +38,10 @@ sealed class Stage : Form
     [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr h, int msg, IntPtr w, IntPtr l);
 
     readonly WebView2 _web = new() { Dock = DockStyle.Fill };
+    // Con una página de fuera (page) la barra del host no está: esta tira propia deja arrastrar, abrir y cerrar.
+    readonly Panel _strip = new() { Dock = DockStyle.Top, Visible = false };
+    readonly Label _where = new() { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, AutoEllipsis = true };
+    string _pageUrl = "";
     TaskCompletionSource? _hostReady;
     TaskCompletionSource<JsonNode>? _rendered;
     int _n;
@@ -67,6 +71,59 @@ sealed class Stage : Form
         Padding = new Padding(Edge);
         MinimumSize = new Size(380, 320);
         Controls.Add(_web);
+        BuildStrip();
+    }
+
+    void BuildStrip()
+    {
+        var dark = Dark();
+        Color ink = dark ? Color.FromArgb(242, 242, 244) : Color.FromArgb(20, 20, 22), muted = dark ? Color.FromArgb(141, 141, 151) : Color.FromArgb(138, 138, 147);
+        Color hover = dark ? Color.FromArgb(32, 32, 37) : Color.FromArgb(236, 235, 232);
+        var s = DeviceDpi / 96f;
+        _strip.Height = (int)(34 * s);
+        _strip.BackColor = BackColor;
+        _where.ForeColor = muted;
+        _where.Font = new Font("Segoe UI", 9f);
+        _where.Padding = new Padding((int)(8 * s), 0, 0, 0);
+        _strip.Controls.Add(_where);
+        Label Button(string glyph, string tip, Action click)
+        {
+            var b = new Label
+            {
+                Text = glyph, Dock = DockStyle.Right, Width = (int)(34 * s), TextAlign = ContentAlignment.MiddleCenter,
+                ForeColor = ink, Font = new Font("Segoe UI Symbol", 10f), Cursor = Cursors.Hand,
+            };
+            new ToolTip().SetToolTip(b, tip);
+            b.MouseEnter += (_, _) => b.BackColor = hover;
+            b.MouseLeave += (_, _) => b.BackColor = Color.Transparent;
+            b.Click += (_, _) => click();
+            _strip.Controls.Add(b);
+            return b;
+        }
+        Button("↗", "Abrir en el navegador", () => OpenExternal(_pageUrl));
+        Button("✕", "Cerrar", HideStage);
+        void Drag(object? _, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left) return;
+            if (e.Clicks == 2) { Maximize(WindowState != FormWindowState.Maximized); return; }
+            ReleaseCapture();
+            SendMessage(Handle, 0xA1, (IntPtr)2, IntPtr.Zero); // WM_NCLBUTTONDOWN, HTCAPTION
+        }
+        _strip.MouseDown += Drag;
+        _where.MouseDown += Drag;
+        Controls.Add(_strip);
+    }
+
+    /// <summary>Maximizado sin bordes taparía la barra de tareas: se limita al área de trabajo de su pantalla.</summary>
+    void Maximize(bool on)
+    {
+        if (on)
+        {
+            var sc = Screen.FromHandle(Handle);
+            var wa = sc.WorkingArea;
+            MaximizedBounds = new Rectangle(wa.X - sc.Bounds.X, wa.Y - sc.Bounds.Y, wa.Width, wa.Height);
+        }
+        WindowState = on ? FormWindowState.Maximized : FormWindowState.Normal;
     }
 
     // Aparece sin robar el foco a la ventana donde está trabajando.
@@ -145,6 +202,7 @@ sealed class Stage : Form
         await InitAsync();
         if (!_page && _web.Source?.ToString() == HostUrl && _hostReady?.Task.IsCompleted == true) return;
         _page = false;
+        _strip.Visible = false;
         _hostReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
         _web.CoreWebView2.Navigate(HostUrl);
         await Task.WhenAny(_hostReady.Task, Task.Delay(5000));
@@ -161,7 +219,7 @@ sealed class Stage : Form
             case "ready": _hostReady?.TrySetResult(); break;
             case "rendered": _rendered?.TrySetResult(m); break;
             case "close": HideStage(); break;
-            case "big": WindowState = WindowState == FormWindowState.Maximized ? FormWindowState.Normal : FormWindowState.Maximized; break;
+            case "big": Maximize(WindowState != FormWindowState.Maximized); break;
             case "drag":
                 ReleaseCapture();
                 SendMessage(Handle, 0xA1, (IntPtr)2, IntPtr.Zero); // WM_NCLBUTTONDOWN, HTCAPTION
@@ -238,6 +296,9 @@ sealed class Stage : Form
             return "error: url no válida";
         await InitAsync();
         _page = true;
+        _pageUrl = uri.Scheme == "file" ? "" : uri.AbsoluteUri;
+        _where.Text = uri.Scheme == "file" ? Path.GetFileName(uri.LocalPath) : uri.Host.Replace("www.", "") + uri.AbsolutePath.TrimEnd('/');
+        _strip.Visible = true;
         Place(near);
         if (!Visible) Show();
         _web.CoreWebView2.Navigate(uri.AbsoluteUri);
@@ -246,7 +307,7 @@ sealed class Stage : Form
 
     public void Toggle(bool big)
     {
-        if (Visible) WindowState = big ? FormWindowState.Maximized : FormWindowState.Normal;
+        if (Visible) Maximize(big);
     }
 
     /// <summary>Guarda las últimas 30 creaciones (se pueden volver a abrir desde la carpeta).</summary>
