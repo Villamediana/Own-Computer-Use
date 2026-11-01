@@ -133,15 +133,14 @@ Reuniones
 - «Graba la reunión», «pausa», «sigue», «para de grabar» = meeting. Al parar, Colo transcribe y hace el acta solo y
   lleva las tareas a la agenda: no hagas nada más. «¿Qué quedó de la reunión de…?» = agenda search.
 """),
-        new("stage", "Palco", "Muestra lo que crea al momento: gráficos, mapas, explicaciones animadas, 3D, vídeos e imágenes", ["stage"], """
+        new("stage", "Palco", "Un diseñador crea al momento lo que ayuda a ver: gráficos, explicaciones animadas, 3D, mapas, vídeos…", ["stage"], """
 Palco
-- Si la respuesta se entiende mejor viéndola (cifras con historia, comparar, un mapa, cómo funciona algo, vídeos o
-  imágenes, una calculadora) o pide verla, créala en el palco: stage show con HTML/CSS/JS hecho para este caso.
-  Antes, stage skill con la guía que encaje («palco» la primera vez en el pedido):
-{skills}
-- Lo que se ve sale de datos reales (web, pantalla, archivos). done va igual, corto, con lo esencial.
-- Una página tal cual (letra de una canción, un PDF, un artículo): stage page con la URL o la ruta. «Cierra el
-  palco» = stage close.
+- Si verlo ayuda (cifras con historia, comparar, un mapa, cómo funciona algo, vídeos o imágenes, una calculadora) o
+  lo pide: stage show. Un diseñador lo crea en el palco mientras tú terminas con done (corto, con lo esencial).
+  brief: qué contar y para quién, en una o dos frases. data: TODO lo real que reuniste antes (web, pantalla,
+  archivos): cifras con fecha y fuente, series, URLs de imágenes y vídeos. Nada inventado.
+- «Cámbialo, ponlo en barras, más grande…» = stage edit con el cambio en brief. Página tal cual (letra de una
+  canción, un PDF, un artículo) = stage page. «Cierra el palco» = stage close.
 """),
     ];
 
@@ -149,7 +148,7 @@ Palco
     public static string Instructions(IEnumerable<string>? disabledGroups)
     {
         var parts = Groups.Where(g => g.Prompt.Length > 0 && disabledGroups?.Contains(g.Id) != true).Select(g => g.Prompt.Trim()).ToList();
-        return parts.Count == 0 ? System : System + "\n" + string.Join("\n\n", parts).Replace("{skills}", StageSkills.Index()) + "\n";
+        return parts.Count == 0 ? System : System + "\n" + string.Join("\n\n", parts) + "\n";
     }
 
     const string Defs = """
@@ -230,9 +229,9 @@ Palco
  {"type":"function","name":"web","description":"Internet sin el navegador. search: query → resultados (título, url, resumen). read: url → texto de la página (offset para seguir). download: url → archivo en Descargas (name opcional). videos: query → vídeos de YouTube. images: query → imágenes libres (Wikimedia).",
   "parameters":{"type":"object","properties":{"action":{"type":"string","enum":["search","read","download","videos","images"]},
    "query":{"type":"string"},"url":{"type":"string"},"name":{"type":"string"},"offset":{"type":"integer"}},"required":["action"]}},
- {"type":"function","name":"stage","description":"Palco (ventana al lado). skill: lee la guía name. show: muestra la página que creas (title, css, html, js = módulo ES con import de three, gsap, d3, chart.js/auto, maplibre-gl, leaflet); devuelve si falló. page: abre url o ruta tal cual. close. bigger/smaller: tamaño.",
-  "parameters":{"type":"object","properties":{"action":{"type":"string","enum":["skill","show","page","close","bigger","smaller"]},
-   "name":{"type":"string"},"title":{"type":"string"},"css":{"type":"string"},"html":{"type":"string"},"js":{"type":"string"},"url":{"type":"string"}},"required":["action"]}},
+ {"type":"function","name":"stage","description":"Palco (ventana al lado). show: un diseñador crea la pieza con brief (qué contar) y data (los datos reales); sale en unos segundos, sin esperar. edit: cambia la pieza actual según brief. page: abre url o ruta tal cual. close. bigger/smaller: tamaño.",
+  "parameters":{"type":"object","properties":{"action":{"type":"string","enum":["show","edit","page","close","bigger","smaller"]},
+   "title":{"type":"string"},"brief":{"type":"string"},"data":{"type":"string"},"url":{"type":"string"}},"required":["action"]}},
  {"type":"function","name":"meeting","description":"Grabar reuniones (micrófono + sonido del PC). start, pause, resume, stop (guarda; transcripción y acta salen solas). status. list: las grabadas con su estado. retry: reintenta las que fallaron.",
   "parameters":{"type":"object","properties":{"action":{"type":"string","enum":["start","pause","resume","stop","status","list","retry"]}},"required":["action"]}},
  {"type":"function","name":"plan","description":"Plan de un pedido con varias partes: steps lo fija (una frase por parte); done marca hecha la parte n (1, 2…). Va en cada turno.",

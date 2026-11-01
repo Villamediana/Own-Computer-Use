@@ -47,8 +47,20 @@ sealed class Recorder : IDisposable
         Dir = Path.Combine(Root, Started.ToString("yyyy-MM-dd HHmm"));
         if (Directory.Exists(Dir)) Dir += Started.ToString("ss");
         Directory.CreateDirectory(Dir);
-        _writer = new WaveFileWriter(Path.Combine(Dir, "audio.wav"), new WaveFormat(Rate, 16, 2));
+        try { Open(micId); }
+        catch
+        {
+            _mic?.Dispose(); _mic = null;
+            _pc?.Dispose(); _pc = null;
+            _writer?.Dispose(); _writer = null;
+            try { Directory.Delete(Dir, true); } catch { }
+            throw;
+        }
+    }
 
+    void Open(string micId)
+    {
+        _writer = new WaveFileWriter(Path.Combine(Dir, "audio.wav"), new WaveFormat(Rate, 16, 2));
         using var en = new MMDeviceEnumerator();
         MMDevice? mic = null;
         if (micId.Length > 0) try { mic = en.GetDevice(micId); } catch { }

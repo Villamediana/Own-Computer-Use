@@ -113,12 +113,12 @@ sealed class Widget : LayeredWindow
         _pc.Cursor = _cursor;
         _pc.Vault = _vault;
         _pc.Agenda = _agenda;
-        StageSkills.Load(System.IO.Path.Combine(Store.Dir, "skills"));
-        _stage = new StageHost(this);
+        _stage = new StageHost(this, _ai, _s);
         _pc.Stage = _stage;
         // Una pregunta que propone la página (con clic del usuario) es como si la dijera.
         _stage.Ask += q => Post(() => Command(q));
         _stage.Speak += text => Post(() => { _speaker ??= TryCreateSpeaker(); _speaker?.Say(text); });
+        _stage.Problem += text => Post(() => Say(text, Theme.Danger, 6000));
         _agenda.MoreSearch = _meetings.Search;
         _meetingWork = new MeetingWork(_meetings, _s, _ai, _agenda)
         {
@@ -164,13 +164,19 @@ sealed class Widget : LayeredWindow
         _frame.Start();
         Native.AddClipboardFormatListener(Handle);
         _watch = new System.Threading.Timer(_ => WatchWindow(), null, 2000, 2000);
-        _reminders = new Reminders(_agenda, due => Post(() => Remind(due)));
+        _reminders = new Reminders(_agenda, due => Post(() => Remind(due)), () => !_s.DisabledTools.Contains("agenda"));
         RegisterHotkeys();
         SetupKeys();
         ApplyAutostart();
         _ = StartAsync();
         // Reuniones que quedaron a medias (Colo cerrado mientras transcribía): siguen, sin estorbar el arranque.
-        _ = Task.Run(async () => { await Task.Delay(20_000); await RunMeetingsAsync(); });
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(20_000);
+            try { foreach (var dir in _meetings.Recover(Recorder.Root)) Log.Write("reunión: recuperada " + dir); }
+            catch (Exception ex) { Log.Write("reunión: recuperar · " + ex.Message); }
+            await RunMeetingsAsync();
+        });
     }
 
     static bool OnScreen(Rectangle r)
@@ -461,8 +467,10 @@ sealed class Widget : LayeredWindow
     }
 
     // Llegan desde el gancho de teclado: se contesta al momento y lo demás va por la cola de la interfaz.
-    void OnPressed(string id) => Post(() => { if (id == Record) RecordTap(); else Press(id); });
-    void OnReleased(string id) { if (id != Record) Post(() => Release(id)); }
+    // Grabar cuenta al soltar: si con el atajo abajo llega otra tecla (Win+Alt+R de la Game Bar…), era otro atajo
+    // y se cancela sin tocar la grabación.
+    void OnPressed(string id) { if (id != Record) Post(() => Press(id)); }
+    void OnReleased(string id) => Post(() => { if (id == Record) RecordTap(); else Release(id); });
     void OnCancelled(string id) { if (id != Record) Post(() => Cancel(id)); }
 
     // ───────────────────────── reuniones
@@ -1070,7 +1078,6 @@ sealed class Widget : LayeredWindow
     /// <summary>Recordatorio que toca: en la onda, en la bandeja (por si la onda no se ve) y en voz si habla las respuestas.</summary>
     void Remind(IReadOnlyList<AgendaItem> due)
     {
-        if (_s.DisabledTools.Contains("agenda")) return;
         var text = string.Join(" · ", due.Select(i => i.Text));
         Say("⏰ " + text, Theme.Blue, 15_000);
         System.Media.SystemSounds.Asterisk.Play();

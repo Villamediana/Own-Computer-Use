@@ -1,55 +1,63 @@
-using System.Text.Json.Nodes;
 using Colo.Core;
 using Xunit;
 
 namespace Colo.Tests;
 
-public sealed class StageTests : IDisposable
+public sealed class StageTests
 {
-    readonly string _dir = Path.Combine(Path.GetTempPath(), $"colo-skills-{Guid.NewGuid():N}");
-
-    public void Dispose() { StageSkills.Load(null); try { Directory.Delete(_dir, true); } catch { } }
-
     [Fact]
-    public void Builtin_skills_load_with_descriptions()
+    public void Designer_output_is_cleaned_and_gets_the_toolbox()
     {
-        StageSkills.Load(null);
-        var names = StageSkills.All.Select(s => s.Name).ToList();
-        foreach (var n in new[] { "palco", "graficos", "diagramas", "lousa", "3d", "mapas", "media", "calculadora" })
-            Assert.Contains(n, names);
-        Assert.All(StageSkills.All, s => Assert.True(s.Description.Length is > 10 and < 140, s.Name));
-        Assert.StartsWith("ok:\n# El palco", StageSkills.Read("Palco"));
-        Assert.Contains("maplibre", StageSkills.Read("mapas"));
-        Assert.StartsWith("error: no hay la guía «nada»; hay: 3d,", StageSkills.Read("nada"));
+        const string reply = """
+Claro, aquí está:
+```html
+<!doctype html><html lang="pt"><head><title>Dólar</title><script type="importmap">{"imports":{"x":"y"}}</script></head>
+<body><h1>R$ 5,43</h1><script type="module">import * as THREE from 'three';</script></body></html>
+```
+Espero que te guste.
+""";
+        var clean = StageDoc.Clean(reply);
+        Assert.StartsWith("<!doctype html>", clean);
+        Assert.EndsWith("</html>", clean);
+        var doc = StageDoc.Wrap(reply);
+        Assert.Contains("<head><meta charset=\"utf-8\">", doc);
+        Assert.Contains("\"three\":\"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js\"", doc);
+        Assert.Contains("\"roughjs\":", doc);
+        Assert.Contains("window.colo=", doc);
+        Assert.DoesNotContain("\"x\":\"y\"", doc); // su importmap fuera: rompería el nuestro
+        Assert.Equal(1, doc.Split("type=\"importmap\"").Length - 1);
+        // Un fragmento suelto también vale.
+        Assert.StartsWith("<!doctype html><html><head><meta", StageDoc.Wrap("<div>hola</div>"));
+        Assert.Contains("<html lang=\"es\"><head><meta", StageDoc.Wrap("<html lang=\"es\"><body>x</body></html>"));
     }
 
     [Fact]
-    public void User_folder_adds_and_replaces()
+    public void Designer_request_new_edit_and_repair()
     {
-        Directory.CreateDirectory(_dir);
-        File.WriteAllText(Path.Combine(_dir, "receitas.md"), "# Receitas passo a passo com timer\nIngredientes à esquerda…");
-        File.WriteAllText(Path.Combine(_dir, "mapas.md"), "---\nname: mapas\ndescription: mapas da Vértis com as torres\n---\nUse o tile da Vértis.");
-        StageSkills.Load(_dir);
-        Assert.Contains("receitas: Receitas passo a passo com timer", StageSkills.Index());
-        Assert.Contains("mapas: mapas da Vértis com as torres", StageSkills.Index());
-        Assert.Equal("ok:\nUse o tile da Vértis.", StageSkills.Read("mapas"));
+        var s = new Settings { Model = "gpt-6-luna", ReasoningEffort = "low" };
+        var r = StageDesigner.Request(s, "Dólar hoje", "cotação com a história do mês", "5,43 em 01/11 (BCB)", 740, 860);
+        var text = r["input"]![0]!["content"]![0]!["text"]!.GetValue<string>();
+        Assert.Contains("Ventana: 740×860 px.", text);
+        Assert.Contains("Pedido: cotação com a história do mês", text);
+        Assert.Contains("5,43 em 01/11 (BCB)", text);
+        Assert.Equal("medium", r["reasoning"]!["effort"]!.GetValue<string>());
+        Assert.Equal("colo-palco", r["prompt_cache_key"]!.GetValue<string>());
+        Assert.Equal(StageDesigner.Prompt, r["instructions"]!.GetValue<string>());
+
+        var edit = StageDesigner.Request(s, "", "em barras", "", 740, 860, "<html>antes</html>")["input"]![0]!["content"]![0]!["text"]!.GetValue<string>();
+        Assert.Contains("Pieza actual:\n<html>antes</html>", edit.Replace("\r", ""));
+        Assert.Contains("Cambio pedido: em barras", edit);
+
+        var fix = StageDesigner.Request(s, "", "", "", 740, 860, "<html>x</html>", ["promesa: boom"])["input"]![0]!["content"]![0]!["text"]!.GetValue<string>();
+        Assert.Contains("- promesa: boom", fix);
+        Assert.Null(StageDesigner.Request(new Settings { Model = "m", ReasoningEffort = "" }, "", "x", "", 1, 1)["reasoning"]);
     }
 
     [Fact]
-    public void Prompt_lists_the_skills_and_document_wraps_the_page()
+    public void Agent_prompt_stays_short()
     {
-        StageSkills.Load(null);
-        var all = Tools.Instructions([]);
-        Assert.DoesNotContain("{skills}", all);
-        Assert.Contains("· lousa: ", all);
         Assert.Contains(Tools.Build([]), t => t!["name"]!.GetValue<string>() == "stage");
-
-        var doc = StageDoc.Build("Dólar <hoje>", ".x{color:red}", "<h1>5,43</h1>", "import Chart from 'chart.js/auto';\nnew Chart(1);");
-        Assert.Contains("&lt;hoje&gt;</title>", doc);
-        Assert.Contains("\"chart.js/auto\":\"https://cdn.jsdelivr.net/npm/chart.js@4.4.6/auto/+esm\"", doc);
-        Assert.Contains("<script type=\"module\">\nimport Chart", doc);
-        Assert.Contains("window.__coloRan = true;</script>", doc);
-        Assert.True(doc.IndexOf(".x{color:red}") > doc.IndexOf("--accent"), "lo propio va después de la base");
-        Assert.Contains("window.__coloRan = true;", StageDoc.Build("", "", "<p>x</p>", ""));
+        Assert.Contains("stage show", Tools.Instructions([]));
+        Assert.DoesNotContain("importmap", Tools.Instructions([]));
     }
 }

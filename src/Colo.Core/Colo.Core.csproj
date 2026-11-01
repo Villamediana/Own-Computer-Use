@@ -10,8 +10,4 @@
     <PackageReference Include="Whisper.net.Runtime" Version="1.9.1" />
     <PackageReference Include="NAudio.Core" Version="2.2.1" />
   </ItemGroup>
-  <ItemGroup>
-    <!-- Guías del palco (stage skill): se leen por nombre; la carpeta del usuario puede añadir o reemplazar. -->
-    <EmbeddedResource Include="skills/*.md" LogicalName="skills/%(Filename)%(Extension)" />
-  </ItemGroup>
 </Project>

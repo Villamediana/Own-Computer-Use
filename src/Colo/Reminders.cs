@@ -14,19 +14,22 @@ sealed class Reminders : IDisposable
 {
     readonly Agenda _agenda;
     readonly Action<IReadOnlyList<AgendaItem>> _notify;
+    readonly Func<bool> _enabled;
     readonly Timer _timer;
     int _busy;
 
-    public Reminders(Agenda agenda, Action<IReadOnlyList<AgendaItem>> notify)
+    public Reminders(Agenda agenda, Action<IReadOnlyList<AgendaItem>> notify, Func<bool> enabled)
     {
         _agenda = agenda;
         _notify = notify;
+        _enabled = enabled;
         _timer = new Timer(_ => Tick(), null, 5_000, 30_000);
     }
 
     void Tick()
     {
-        if (Interlocked.Exchange(ref _busy, 1) == 1) return;
+        // Apagada en Ajustes: los avisos esperan (no se dan por avisados sin avisar).
+        if (!_enabled() || Interlocked.Exchange(ref _busy, 1) == 1) return;
         try
         {
             var due = _agenda.Fire(DateTime.Now);

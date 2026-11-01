@@ -575,10 +575,10 @@ dejar lo que está haciendo? Responde solo «sí» o «no».
             },
             "stage" => c.Str("action") switch
             {
-                "skill" => $"Lee la guía «{c.Str("name")}»",
                 "page" => "Abre en el palco " + Host(c.Str("url")),
                 "close" => "Cierra el palco",
                 "bigger" or "smaller" => "Cambia el palco de tamaño",
+                "edit" => "Cambia el palco",
                 _ => "Monta en el palco" + (c.Str("title").Length > 0 ? $" «{Trunc(c.Str("title"), 40)}»" : ""),
             },
             "web" => c.Str("action") switch

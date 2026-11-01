@@ -88,10 +88,11 @@ public sealed class Agenda
         lock (_lock)
         {
             if (_d.Items.Count(i => !i.Done) >= MaxOpen) return $"error: hay {MaxOpen} cosas abiertas; cierra o borra algunas";
-            var same = _d.Items.FirstOrDefault(i => !i.Done && Extract.Fold(i.Text) == Extract.Fold(text)
-                && Extract.Fold(i.Project) == Extract.Fold(project.Trim()));
-            if (same is not null) return $"ok: ya estaba (#{same.Id})";
+            // Con el nombre ya guardado del proyecto: «TF» y «Tower Finder» son el mismo.
             project = Canonical(project);
+            var same = _d.Items.FirstOrDefault(i => !i.Done && Extract.Fold(i.Text) == Extract.Fold(text)
+                && Extract.Fold(i.Project) == Extract.Fold(project));
+            if (same is not null) return $"ok: ya estaba (#{same.Id})";
             var item = new AgendaItem(_d.Next++, text, project, list.Trim(), due, remind, repeat, Who: who.Trim(),
                 Source: source.Trim(), Created: now);
             _d.Items.Add(item);

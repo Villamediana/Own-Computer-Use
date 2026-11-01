@@ -160,6 +160,38 @@ Aqui está: {"title":"Migração do Tower Finder","summary":"Decidimos migrar o 
     }
 
     [Fact]
+    public void Killed_recording_is_recovered_with_its_real_length()
+    {
+        var root = Path.Combine(_dir, "Reuniões");
+        var dir = Path.Combine(root, "2026-11-03 1500");
+        Directory.CreateDirectory(dir);
+        var wav = Path.Combine(dir, "audio.wav");
+        using (var w = new WaveFileWriter(wav, new WaveFormat(16000, 16, 2)))
+        {
+            w.Write(new byte[64000 * 2], 0, 64000 * 2);
+            w.Flush();
+            w.Write(new byte[64000 * 3], 0, 64000 * 3); // 3 s más que la cabecera no sabe (sin Flush)
+            // Como si el proceso muriera aquí: se copia el archivo tal cual está antes de cerrar.
+            w.Flush();
+        }
+        // Cabecera vieja (2 s) sobre 5 s de datos.
+        var bytes = File.ReadAllBytes(wav);
+        var at = System.Text.Encoding.ASCII.GetString(bytes, 0, 100).IndexOf("data") + 4;
+        using (var f = new FileStream(wav, FileMode.Open))
+        {
+            f.Position = at; f.Write(BitConverter.GetBytes(64000 * 2));
+        }
+        Directory.CreateDirectory(Path.Combine(root, "ya-con-acta"));
+        File.WriteAllText(Path.Combine(root, "ya-con-acta", "audio.wav"), "x");
+        File.WriteAllText(Path.Combine(root, "ya-con-acta", "ata.md"), "x");
+        var meetings = new Meetings(Path.Combine(_dir, "meetings.json"));
+        Assert.Equal([dir], meetings.Recover(root));
+        Assert.Equal(5, meetings.All.Single().Seconds, 1);
+        using (var r = new WaveFileReader(wav)) Assert.Equal(5, r.TotalTime.TotalSeconds, 1);
+        Assert.Empty(meetings.Recover(root)); // no se añade dos veces
+    }
+
+    [Fact]
     public async Task Failure_is_saved_and_retried_later()
     {
         StereoWav();

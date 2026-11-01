@@ -70,6 +70,16 @@ public sealed class WebTests : IDisposable
     }
 
     [Fact]
+    public void Old_pages_in_latin1_decode_right()
+    {
+        var latin = Encoding.Latin1.GetBytes("<html><head><meta charset=\"iso-8859-1\"></head><body>Cotação</body></html>");
+        Assert.Contains("Cotação", Web.Decode(latin, null));
+        Assert.Contains("Cotação", Web.Decode(latin, "ISO-8859-1"));
+        Assert.Contains("Cotação", Web.Decode(Encoding.UTF8.GetBytes("<p>Cotação</p>"), null));
+        Assert.Contains("Cotação", Web.Decode(Encoding.UTF8.GetBytes("<p>Cotação</p>"), "bogus-charset"));
+    }
+
+    [Fact]
     public void Long_pages_come_in_slices()
     {
         var text = new string('a', Web.PageChars + 100);

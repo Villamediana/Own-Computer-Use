@@ -1,8 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading;
@@ -11,13 +13,14 @@ using System.Windows.Forms;
 using Colo.Core;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
+using Microsoft.Win32;
 
 namespace Colo;
 
 /// <summary>
-/// El palco: ventana al lado de la pantalla donde el modelo muestra lo que crea (gráficos, lousa animada, 3D,
-/// mapas, vídeos…) o una página (una letra, un PDF). Aparece sin quitar el foco, así el dictado y los clics siguen
-/// donde estaban. Se crea la primera vez que hace falta y se queda caliente, oculta.
+/// El palco: ventana sin bordes al lado de la pantalla donde se ve lo que el diseñador crea (gráficos, explicaciones
+/// animadas, 3D, mapas, vídeos…) o una página tal cual (una letra, un PDF). Aparece sin quitar el foco, así el dictado y
+/// los clics siguen donde estaban. Se crea la primera vez que hace falta y se queda caliente, oculta.
 ///
 /// Seguridad: el host vive en https://colo.stage y lo creado en https://palco.colo (otra carpeta, otro origen) dentro
 /// de un iframe; solo se aceptan mensajes del host, y una pregunta de vuelta al modelo pide un clic.
@@ -26,41 +29,92 @@ namespace Colo;
 sealed class Stage : Form
 {
     const string HostUrl = "https://colo.stage/stage.html";
+    const int Edge = 6;
     static readonly string Root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Colo", "stage");
     static readonly string HostDir = Path.Combine(Root, "host");
     static readonly string DocsDir = Path.Combine(Root, "docs");
 
-    readonly WebView2 _web = new() { Dock = DockStyle.Fill, DefaultBackgroundColor = Color.White };
+    [DllImport("user32.dll")] static extern bool ReleaseCapture();
+    [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr h, int msg, IntPtr w, IntPtr l);
+
+    readonly WebView2 _web = new() { Dock = DockStyle.Fill };
     TaskCompletionSource? _hostReady;
     TaskCompletionSource<JsonNode>? _rendered;
     int _n;
     bool _page;
 
-    /// <summary>La persona confirmó una pregunta que propuso la página.</summary>
     public event Action<string>? Ask;
-    /// <summary>La página pide leer algo en voz alta (narrar una explicación).</summary>
     public event Action<string>? Speak;
+    public event Action? Retry;
+    public event Action? Closed;
+
+    static bool Dark()
+    {
+        try { return Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "AppsUseLightTheme", 1) is 0; }
+        catch { return false; }
+    }
 
     public Stage()
     {
         Text = "Colo · Palco";
-        FormBorderStyle = FormBorderStyle.SizableToolWindow;
+        FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
         TopMost = true;
         StartPosition = FormStartPosition.Manual;
-        BackColor = Color.White;
-        MinimumSize = new Size(360, 300);
+        BackColor = Dark() ? Color.FromArgb(14, 14, 17) : Color.FromArgb(251, 250, 248);
+        _web.DefaultBackgroundColor = BackColor;
+        // Un borde fino de la ventana queda fuera del WebView: por ahí se agarra para cambiar el tamaño.
+        Padding = new Padding(Edge);
+        MinimumSize = new Size(380, 320);
         Controls.Add(_web);
     }
 
     // Aparece sin robar el foco a la ventana donde está trabajando.
     protected override bool ShowWithoutActivation => true;
 
+    protected override CreateParams CreateParams
+    {
+        get
+        {
+            var cp = base.CreateParams;
+            cp.ClassStyle |= 0x20000; // CS_DROPSHADOW
+            return cp;
+        }
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        Native.RoundCorners(Handle);
+    }
+
+    protected override void WndProc(ref Message m)
+    {
+        const int WM_NCHITTEST = 0x84;
+        base.WndProc(ref m);
+        if (m.Msg != WM_NCHITTEST || WindowState == FormWindowState.Maximized) return;
+        var p = PointToClient(new Point((short)(m.LParam.ToInt64() & 0xFFFF), (short)((m.LParam.ToInt64() >> 16) & 0xFFFF)));
+        int e = Edge + 2;
+        bool l = p.X < e, r = p.X >= ClientSize.Width - e, t = p.Y < e, b = p.Y >= ClientSize.Height - e;
+        m.Result = (l, r, t, b) switch
+        {
+            (true, _, true, _) => 13, (_, true, true, _) => 14, (true, _, _, true) => 16, (_, true, _, true) => 17,
+            (true, _, _, _) => 10, (_, true, _, _) => 11, (_, _, true, _) => 12, (_, _, _, true) => 15,
+            _ => m.Result,
+        };
+    }
+
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
         // Cerrar = ocultar: la próxima vez abre al instante.
-        if (e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; Hide(); }
+        if (e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; HideStage(); }
         base.OnFormClosing(e);
+    }
+
+    void HideStage()
+    {
+        Hide();
+        Closed?.Invoke();
     }
 
     async Task InitAsync()
@@ -83,8 +137,17 @@ sealed class Stage : Form
         cw.SetVirtualHostNameToFolderMapping("palco.colo", DocsDir, CoreWebView2HostResourceAccessKind.Allow);
         // Enlaces que abren otra ventana: al navegador de siempre.
         cw.NewWindowRequested += (_, e) => { e.Handled = true; OpenExternal(e.Uri); };
-        cw.DocumentTitleChanged += (_, _) => { if (_page) Text = "Colo · " + cw.DocumentTitle; };
         cw.WebMessageReceived += (_, e) => OnMessage(e);
+    }
+
+    async Task EnsureHostAsync()
+    {
+        await InitAsync();
+        if (!_page && _web.Source?.ToString() == HostUrl && _hostReady?.Task.IsCompleted == true) return;
+        _page = false;
+        _hostReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        _web.CoreWebView2.Navigate(HostUrl);
+        await Task.WhenAny(_hostReady.Task, Task.Delay(5000));
     }
 
     void OnMessage(CoreWebView2WebMessageReceivedEventArgs e)
@@ -97,7 +160,13 @@ sealed class Stage : Form
         {
             case "ready": _hostReady?.TrySetResult(); break;
             case "rendered": _rendered?.TrySetResult(m); break;
-            case "close": Hide(); break;
+            case "close": HideStage(); break;
+            case "big": WindowState = WindowState == FormWindowState.Maximized ? FormWindowState.Normal : FormWindowState.Maximized; break;
+            case "drag":
+                ReleaseCapture();
+                SendMessage(Handle, 0xA1, (IntPtr)2, IntPtr.Zero); // WM_NCLBUTTONDOWN, HTCAPTION
+                break;
+            case "retry": Retry?.Invoke(); break;
             case "open": OpenExternal(m["url"]?.GetValue<string>() ?? ""); break;
             case "say": if (m["text"]?.GetValue<string>() is { Length: > 0 } s) Speak?.Invoke(s); break;
             case "ask": if (m["text"]?.GetValue<string>() is { Length: > 0 } q) Ask?.Invoke(q); break;
@@ -114,46 +183,49 @@ sealed class Stage : Form
     {
         if (Visible) return;
         var wa = Screen.FromRectangle(near).WorkingArea;
-        var w = Math.Min((int)(720 * DeviceDpi / 96f), (int)(wa.Width * 0.46));
-        var h = (int)(wa.Height * 0.88);
-        Bounds = new Rectangle(wa.Right - w - 16, wa.Top + (wa.Height - h) / 2, w, h);
+        var w = Math.Min((int)(760 * DeviceDpi / 96f), (int)(wa.Width * 0.48));
+        var h = (int)(wa.Height * 0.9);
+        Bounds = new Rectangle(wa.Right - w - 14, wa.Top + (wa.Height - h) / 2, w, h);
     }
 
-    /// <summary>Muestra lo creado y espera a que la página cuente cómo fue (errores, si corrió, si quedó vacía).</summary>
-    public async Task<string> ShowDocAsync(string title, string doc, Rectangle near, CancellationToken ct)
+    /// <summary>Tamaño útil en px CSS (para decírselo al diseñador).</summary>
+    public (int W, int H) ContentSize()
     {
-        await InitAsync();
+        var s = DeviceDpi / 96f;
+        return ((int)((Width - 2 * Edge) / s), (int)((Height - 2 * Edge) / s));
+    }
+
+    void Post(object m) => _web.CoreWebView2?.PostWebMessageAsJson(JsonSerializer.Serialize(m));
+
+    /// <summary>Abre el palco con la pantalla de «creando»: el título y qué va a contar.</summary>
+    public async Task LoadingAsync(string title, string brief, Rectangle near)
+    {
+        await EnsureHostAsync();
+        Place(near);
+        if (!Visible) Show();
+        Post(new { type = "loading", title, brief });
+    }
+
+    public void Progress(int chars, string? note = null) => Post(new { type = "progress", chars, note });
+
+    public void Failed(string text) => Post(new { type = "failed", text });
+
+    /// <summary>Muestra la pieza y espera a que cuente cómo fue: los errores (vacío = bien).</summary>
+    public async Task<List<string>> ShowDocAsync(string title, string doc, CancellationToken ct)
+    {
+        await EnsureHostAsync();
         var name = $"{++_n}-{DateTime.Now:HHmmss}.html";
         await File.WriteAllTextAsync(Path.Combine(DocsDir, name), doc, ct);
         Prune();
-        if (_page || _web.Source?.ToString() != HostUrl)
-        {
-            _page = false;
-            _hostReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
-            _web.CoreWebView2.Navigate(HostUrl);
-            await Task.WhenAny(_hostReady.Task, Task.Delay(5000, ct));
-        }
-        Text = "Colo · " + (title.Length > 0 ? title : "Palco");
-        Place(near);
         if (!Visible) Show();
         _rendered = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        _web.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new { type = "show", src = $"https://palco.colo/{name}" }));
-        var done = await Task.WhenAny(_rendered.Task, Task.Delay(12_000, ct));
-        if (done != _rendered.Task) return "ok: en el palco (la página tardó en cargar; no sé si quedó bien)";
-        return Report(await _rendered.Task);
-    }
-
-    /// <summary>El resultado para el modelo: con error, el agente sigue y lo corrige en el siguiente paso.</summary>
-    public static string Report(JsonNode r)
-    {
+        Post(new { type = "show", src = $"https://palco.colo/{name}", title });
+        var done = await Task.WhenAny(_rendered.Task, Task.Delay(15_000, ct));
+        if (done != _rendered.Task) return [];
+        var r = await _rendered.Task;
         var errors = (r["errors"] as JsonArray ?? []).Select(e => e?.GetValue<string>() ?? "").Where(e => e.Length > 0).ToList();
-        var ran = r["ran"]?.GetValue<bool>() == true;
-        var blank = r["blank"]?.GetValue<bool>() == true;
-        if (errors.Count == 0 && ran && !blank) return "ok: en el palco";
-        var why = string.Join("; ", errors);
-        if (!ran) why = (why.Length > 0 ? why + "; " : "") + "el js no llegó a ejecutarse entero (¿un import que no existe?)";
-        if (blank) why = (why.Length > 0 ? why + "; " : "") + "la página quedó en blanco";
-        return $"error: se ve en el palco pero falla: {why}. Corrige y vuelve a llamar show con la página entera.";
+        if (r["blank"]?.GetValue<bool>() == true) errors.Add("la página quedó en blanco");
+        return errors;
     }
 
     /// <summary>Una página tal cual (una letra, un PDF, un artículo): se navega a ella.</summary>
@@ -166,7 +238,6 @@ sealed class Stage : Form
             return "error: url no válida";
         await InitAsync();
         _page = true;
-        Text = "Colo · " + uri.Host;
         Place(near);
         if (!Visible) Show();
         _web.CoreWebView2.Navigate(uri.AbsoluteUri);
@@ -175,8 +246,7 @@ sealed class Stage : Form
 
     public void Toggle(bool big)
     {
-        if (!Visible) return;
-        WindowState = big ? FormWindowState.Maximized : FormWindowState.Normal;
+        if (Visible) WindowState = big ? FormWindowState.Maximized : FormWindowState.Normal;
     }
 
     /// <summary>Guarda las últimas 30 creaciones (se pueden volver a abrir desde la carpeta).</summary>
@@ -192,26 +262,38 @@ sealed class Stage : Form
 }
 
 /// <summary>
-/// Puerta al palco desde el agente (otro hilo): crea la ventana en el hilo de la interfaz la primera vez y le pasa
-/// las órdenes. stage skill no toca la ventana.
+/// Puerta al palco desde el agente (otro hilo). stage show no espera al diseñador: abre el palco con «creando», lanza
+/// el diseño en segundo plano y responde al momento, así el agente termina su respuesta. Si la pieza falla al cargar,
+/// el diseñador la arregla una vez solo.
 /// </summary>
-sealed class StageHost(Control ui)
+sealed class StageHost(Control ui, AiClient ai, Settings settings)
 {
     Stage? _stage;
+    CancellationTokenSource? _work;
+    string? _lastHtml;
+    (string Title, string Brief, string Data, string? Previous)? _lastAsk;
 
     public event Action<string>? Ask;
     public event Action<string>? Speak;
+    /// <summary>Aviso para la onda (el palco no salió).</summary>
+    public event Action<string>? Problem;
 
     Task<T> OnUi<T>(Func<Task<T>> f)
     {
         var tcs = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
-        ui.BeginInvoke(async () =>
+        try
         {
-            try { tcs.TrySetResult(await f()); }
-            catch (Exception ex) { tcs.TrySetException(ex); }
-        });
+            ui.BeginInvoke(async () =>
+            {
+                try { tcs.TrySetResult(await f()); }
+                catch (Exception ex) { tcs.TrySetException(ex); }
+            });
+        }
+        catch (Exception ex) { tcs.TrySetException(ex); }
         return tcs.Task;
     }
+
+    Task OnUi(Action a) => OnUi(() => { a(); return Task.FromResult(0); });
 
     Stage Window()
     {
@@ -219,6 +301,9 @@ sealed class StageHost(Control ui)
         _stage = new Stage();
         _stage.Ask += q => Ask?.Invoke(q);
         _stage.Speak += s => Speak?.Invoke(s);
+        _stage.Retry += () => { if (_lastAsk is { } a) Start(a.Title, a.Brief, a.Data, a.Previous); };
+        // Cerrar el palco también para el diseño en curso.
+        _stage.Closed += () => _work?.Cancel();
         return _stage;
     }
 
@@ -238,21 +323,24 @@ sealed class StageHost(Control ui)
         {
             switch (c.Str("action"))
             {
-                case "skill":
-                    return StageSkills.Read(c.Str("name"));
                 case "page":
+                    _work?.Cancel();
                     return await OnUi(() => Window().ShowPageAsync(c.Str("url"), Near()));
                 case "close":
-                    return await OnUi(() => { if (_stage is { IsDisposed: false }) _stage.Hide(); return Task.FromResult("ok"); });
+                    _work?.Cancel();
+                    await OnUi(() => { if (_stage is { IsDisposed: false }) _stage.Hide(); });
+                    return "ok";
                 case "bigger":
                 case "smaller":
                     var big = c.Str("action") == "bigger";
-                    return await OnUi(() => { _stage?.Toggle(big); return Task.FromResult("ok"); });
+                    await OnUi(() => _stage?.Toggle(big));
+                    return "ok";
                 default:
-                    var html = c.Str("html");
-                    if (html.Trim().Length == 0 && c.Str("js").Trim().Length == 0) return "error: falta html";
-                    var doc = StageDoc.Build(c.Str("title"), c.Str("css"), html, c.Str("js"));
-                    return await OnUi(() => Window().ShowDocAsync(c.Str("title"), doc, Near(), ct));
+                    var brief = c.Str("brief").Trim();
+                    if (brief.Length == 0) return "error: falta brief (qué contar)";
+                    var edit = c.Str("action") == "edit" && _lastHtml is not null;
+                    Start(c.Str("title").Trim(), brief, c.Str("data"), edit ? _lastHtml : null);
+                    return "ok: el palco se está creando (sale en unos segundos); termina tú ya con done";
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -260,6 +348,50 @@ sealed class StageHost(Control ui)
             // Sin WebView2 (raro en Windows 10/11) el palco no puede abrir.
             Log.Write("palco: " + ex.Message);
             return "error: no pude abrir el palco: " + ex.Message;
+        }
+    }
+
+    void Start(string title, string brief, string data, string? previous)
+    {
+        _work?.Cancel();
+        var cts = _work = new CancellationTokenSource();
+        _lastAsk = (title, brief, data, previous);
+        _ = Task.Run(() => DesignAsync(title, brief, data, previous, cts.Token));
+    }
+
+    async Task DesignAsync(string title, string brief, string data, string? previous, CancellationToken ct)
+    {
+        var sw = Stopwatch.StartNew();
+        try
+        {
+            await OnUi(async () => { await Window().LoadingAsync(title, previous is null ? brief : "Cambio: " + brief, Near()); return 0; });
+            var (w, h) = await OnUi(() => Task.FromResult(Window().ContentSize()));
+            var last = DateTime.MinValue;
+            void Progress(int n)
+            {
+                if ((DateTime.Now - last).TotalMilliseconds < 200) return;
+                last = DateTime.Now;
+                _ = OnUi(() => _stage?.Progress(n));
+            }
+            var html = await StageDesigner.CreateAsync(ai, StageDesigner.Request(settings, title, brief, data, w, h, previous), Progress, ct);
+            var errors = await OnUi(() => Window().ShowDocAsync(title, StageDoc.Wrap(html), ct));
+            if (errors.Count > 0 && !ct.IsCancellationRequested)
+            {
+                // Falló al cargar: el diseñador lo arregla una vez, sin que el agente tenga que hacer nada.
+                Log.Write("palco: errores, arreglando · " + string.Join(" | ", errors));
+                await OnUi(async () => { await Window().LoadingAsync(title, "Ajustando un detalle…", Near()); return 0; });
+                html = await StageDesigner.CreateAsync(ai, StageDesigner.Request(settings, title, "", "", w, h, html, errors), Progress, ct);
+                errors = await OnUi(() => Window().ShowDocAsync(title, StageDoc.Wrap(html), ct));
+            }
+            _lastHtml = html;
+            Log.Write($"palco: «{title}» en {sw.Elapsed.TotalSeconds:0.0} s, {html.Length} caracteres" + (errors.Count > 0 ? " · aún con errores: " + string.Join(" | ", errors) : ""));
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            Log.Write("palco: no salió · " + ex.Message);
+            try { await OnUi(() => _stage?.Failed("No salió: " + ex.Message)); } catch { }
+            Problem?.Invoke("El palco no salió: " + ex.Message);
         }
     }
 }

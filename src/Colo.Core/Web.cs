@@ -136,7 +136,7 @@ public sealed class Web(HttpClient? http = null)
             var kb = (r.Content.Headers.ContentLength ?? 0) / 1024;
             return $"ok: es un archivo {type}{(kb > 0 ? $" ({kb} KB)" : "")}, no una página: web download para guardarlo";
         }
-        var body = await r.Content.ReadAsStringAsync(ct);
+        var body = Decode(await r.Content.ReadAsByteArrayAsync(ct), r.Content.Headers.ContentType?.CharSet);
         var text = type.Contains("html") || body.TrimStart().StartsWith('<') ? PageText(body) : body;
         return Slice($"{r.RequestMessage?.RequestUri ?? uri}\n{text}", offset);
     }
@@ -175,6 +175,29 @@ public sealed class Web(HttpClient? http = null)
         h = Regex.Replace(h, @" *\n[ \n]*", "\n").Trim();
         sb.Append(h);
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Texto con su codificación: la de la cabecera, o la del &lt;meta charset&gt; (sitios del gobierno en
+    /// ISO-8859-1 salían con «Ã§»), o UTF-8.
+    /// </summary>
+    public static string Decode(byte[] bytes, string? charset)
+    {
+        static Encoding? Named(string? name)
+        {
+            name = name?.Trim().Trim('"', '\'').ToLowerInvariant();
+            if (string.IsNullOrEmpty(name)) return null;
+            if (name is "iso-8859-1" or "latin1" or "windows-1252" or "cp1252") return Encoding.Latin1;
+            try { return Encoding.GetEncoding(name); } catch { return null; }
+        }
+        var enc = Named(charset);
+        if (enc is null)
+        {
+            var head = Encoding.ASCII.GetString(bytes, 0, Math.Min(bytes.Length, 2048));
+            var m = Regex.Match(head, @"charset\s*=\s*[""']?([\w-]+)", RegexOptions.IgnoreCase);
+            enc = m.Success ? Named(m.Groups[1].Value) : null;
+        }
+        return (enc ?? Encoding.UTF8).GetString(bytes);
     }
 
     // ───────────────────────── bajar

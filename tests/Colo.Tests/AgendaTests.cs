@@ -64,6 +64,7 @@ public sealed class AgendaTests : IDisposable
         var a = new Agenda(_path);
         Assert.Equal("ok: proyecto «Tower Finder» creado", a.Run(Call("""{"action":"project","project":"Tower Finder","status":"produção","aliases":"TF, finder"}"""), Now));
         a.Run(Call("""{"action":"add","text":"Migração para o Postgres","project":"tf"}"""), Now);
+        Assert.StartsWith("ok: ya estaba", a.Run(Call("""{"action":"add","text":"Migração para o Postgres","project":"Tower Finder"}"""), Now));
         Assert.Equal("Tower Finder", a.Items[0].Project);
         Assert.Equal("Proyectos: Tower Finder (TF, finder)", a.ProjectsLine());
         a.MoreSearch = q => q.Contains("postgres") ? ["Acta 01/11: decidimos migrar al Postgres"] : [];

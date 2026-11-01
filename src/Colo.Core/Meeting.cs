@@ -121,6 +121,40 @@ public static class MeetingAudio
 {
     public const int Rate = 16000, Frame = 1600; // 100 ms
 
+    /// <summary>
+    /// Un WAV que no se cerró bien (proceso matado) dice en la cabecera menos datos de los que tiene: se corrige con
+    /// el tamaño real. Devuelve los bytes de audio.
+    /// </summary>
+    public static long RepairHeader(string wav)
+    {
+        using var f = new FileStream(wav, FileMode.Open, FileAccess.ReadWrite);
+        using var r = new BinaryReader(f);
+        using var w = new BinaryWriter(f);
+        string Id() => Encoding.ASCII.GetString(r.ReadBytes(4));
+        if (f.Length < 44 || Id() != "RIFF") return 0;
+        f.Position = 12;
+        while (f.Position + 8 <= f.Length)
+        {
+            var id = Id();
+            var len = r.ReadInt32();
+            if (id == "data")
+            {
+                var real = f.Length - f.Position;
+                real -= real % 4;
+                if (len != real)
+                {
+                    f.Position -= 4;
+                    w.Write((int)real);
+                    f.Position = 4;
+                    w.Write((int)(f.Length - 8));
+                }
+                return real;
+            }
+            f.Position += len + (len & 1);
+        }
+        return 0;
+    }
+
     /// <summary>Volumen (RMS) de cada canal cada 100 ms, leyendo el archivo por partes.</summary>
     public static (float[] Mic, float[] Pc) Envelope(string wav)
     {
@@ -214,6 +248,27 @@ public sealed class Meetings
             Save();
         }
         return job;
+    }
+
+    /// <summary>
+    /// Carpetas con audio.wav que no están en la lista (Colo cerrado a la fuerza grabando): se arregla la cabecera del
+    /// WAV y se añaden. Devuelve las recuperadas.
+    /// </summary>
+    public List<string> Recover(string root)
+    {
+        var found = new List<string>();
+        if (!Directory.Exists(root)) return found;
+        foreach (var dir in Directory.EnumerateDirectories(root))
+        {
+            var wav = Path.Combine(dir, "audio.wav");
+            if (!File.Exists(wav) || File.Exists(Path.Combine(dir, "ata.md"))) continue;
+            if (All.Any(j => string.Equals(Path.GetFullPath(j.Dir), Path.GetFullPath(dir), StringComparison.OrdinalIgnoreCase))) continue;
+            var seconds = MeetingAudio.RepairHeader(wav) / (MeetingAudio.Rate * 4.0);
+            if (seconds < 3) continue;
+            Add(dir, File.GetCreationTime(wav), seconds);
+            found.Add(dir);
+        }
+        return found;
     }
 
     /// <summary>Lo que falta procesar (los fallidos, hasta 3 intentos).</summary>
@@ -477,7 +532,9 @@ public sealed class MeetingWork(Meetings meetings, Settings settings, AiClient a
         if (!await _one.WaitAsync(0, ct)) return;
         try
         {
-            foreach (var job in meetings.Pending())
+            // Una a una hasta que no quede nada nuevo (también lo que se grabó mientras procesaba otra).
+            var seen = new HashSet<string>();
+            while (meetings.Pending().FirstOrDefault(j => seen.Add(j.Id)) is { } job)
             {
                 ct.ThrowIfCancellationRequested();
                 await ProcessAsync(job, ct);
