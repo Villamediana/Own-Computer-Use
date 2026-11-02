@@ -42,6 +42,14 @@ const assert = (c, m) => { if (!c) { console.log('FAIL:', m); process.exitCode =
     let { r } = await show('ok.html');
     assert(r && r.errors.length === 0 && !r.blank, 'gsap + roughjs + echarts por nombre: sin errores ' + JSON.stringify(r));
     assert(await page.isVisible('#making.off'), 'lo creado reemplaza a «creando»');
+    // cambiar lo que se ve: la pieza se queda y aparece una pastilla abajo
+    await deliver({ type: 'editing', text: 'Buscando «.bar» · 3 s' });
+    await page.waitForTimeout(450);
+    assert(await page.isVisible('#editing.on') && await page.isVisible('#making.off') && (await page.textContent('#editingText')).includes('.bar'), 'editando: pastilla con la pieza a la vista');
+    await page.screenshot({ path: `${out}/palco-editando.png` });
+    await deliver({ type: 'editing', text: null });
+    await page.waitForTimeout(350);
+    assert(!(await page.$('#editing.on')), 'editando: la pastilla se va');
     ({ r } = await show('throws.html'));
     assert(r && r.errors.some(e => /null|reading/.test(e)), 'error de JS llega al host ' + JSON.stringify(r));
     ({ r } = await show('blank.html'));

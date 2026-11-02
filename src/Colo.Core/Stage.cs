@@ -183,3 +183,219 @@ localStorage ni cookies; sin importmap propio. Todo el texto visible en el idiom
         return html;
     }
 }
+
+/// <summary>
+/// Cambiar una pieza del palco como un agente de código (Claude Code, Aider, SWE-agent): el diseñador no la reescribe;
+/// busca (search) y lee (read) solo lo que necesita, cambia trozos exactos (replace, insert), y al terminar (done) Colo
+/// recarga el palco; si al cargar hay errores, se los devuelve y sigue hasta arreglarlos. rewrite queda para cuando
+/// el cambio es la pieza entera. Un cambio pequeño cuesta y tarda una fracción de rehacerla.
+/// </summary>
+public static class StageEditor
+{
+    public const int MaxSteps = 16, MaxReloads = 3;
+
+    public const string Prompt = """
+Eres el diseñador del palco de Colo y cambias una pieza HTML que ya está en pantalla, como un agente de código: no
+la reescribas. Busca (search) y lee (read) lo que necesites, cambia lo justo con replace (old exacto y único: añade
+líneas de alrededor si se repite) o insert, y termina con done. Colo recarga la pieza: si al cargar hay errores te
+los devuelve y los arreglas igual. Varias llamadas a la vez cuando no dependen una de otra.
+rewrite (el documento entero) solo si el cambio es otra pieza distinta, no para retocar.
+Mantén el nivel de diseño, el idioma y los datos reales; nada inventado. La caja de herramientas (three, gsap, d3,
+chart.js/auto, echarts, maplibre-gl, leaflet, roughjs, animejs, motion, matter-js, tone, katex, marked, mermaid,
+canvas-confetti; esm.sh para otros) y el puente colo.say/open/ask/theme ya están puestos: no añadas importmap.
+""";
+
+    public static readonly JsonArray Tools = (JsonArray)JsonNode.Parse("""
+[{"type":"function","name":"search","description":"Líneas de la pieza que contienen query (sin distinguir mayúsculas; regex=true para expresión regular), con su número.",
+  "parameters":{"type":"object","properties":{"query":{"type":"string"},"regex":{"type":"boolean"}},"required":["query"]}},
+ {"type":"function","name":"read","description":"Las líneas from..to (hasta 200), con su número.",
+  "parameters":{"type":"object","properties":{"from":{"type":"integer"},"to":{"type":"integer"}},"required":["from","to"]}},
+ {"type":"function","name":"replace","description":"Cambia el texto old (exacto, espacios incluidos, y que aparezca una sola vez) por new.",
+  "parameters":{"type":"object","properties":{"old":{"type":"string"},"new":{"type":"string"}},"required":["old","new"]}},
+ {"type":"function","name":"insert","description":"Inserta text después de la línea after (0 = al principio).",
+  "parameters":{"type":"object","properties":{"after":{"type":"integer"},"text":{"type":"string"}},"required":["after","text"]}},
+ {"type":"function","name":"rewrite","description":"Sustituye la pieza entera por html (solo si el cambio es otra pieza).",
+  "parameters":{"type":"object","properties":{"html":{"type":"string"}},"required":["html"]}},
+ {"type":"function","name":"done","description":"Terminado: Colo recarga el palco y te dice si hubo errores.",
+  "parameters":{"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"]}}]
+""")!;
+
+    /// <summary>La pieza como líneas que se editan.</summary>
+    public sealed class Doc(string html)
+    {
+        public string Text { get; private set; } = html.Replace("\r\n", "\n");
+        public bool Changed { get; private set; }
+        string[] Lines => Text.Split('\n');
+
+        static string Cut(string s) => s.Length > 220 ? s[..220] + "…" : s;
+
+        public string Search(string query, bool regex)
+        {
+            if (query.Length == 0) return "error: falta query";
+            Regex? re = null;
+            if (regex)
+                try { re = new Regex(query, RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1)); }
+                catch (ArgumentException e) { return "error: regex no válida: " + e.Message; }
+            var hits = Lines.Select((l, i) => (l, n: i + 1))
+                .Where(x => re?.IsMatch(x.l) ?? x.l.Contains(query, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (hits.Count == 0) return "nada";
+            return string.Join("\n", hits.Take(40).Select(x => $"{x.n}: {Cut(x.l.Trim())}")) + (hits.Count > 40 ? $"\n…({hits.Count} en total)" : "");
+        }
+
+        public string Read(int from, int to)
+        {
+            var lines = Lines;
+            from = Math.Clamp(from, 1, lines.Length);
+            to = Math.Clamp(Math.Min(to, from + 199), from, lines.Length);
+            return string.Join("\n", Enumerable.Range(from, to - from + 1).Select(n => $"{n}: {lines[n - 1]}"))
+                + (to < lines.Length ? $"\n…(la pieza sigue hasta la línea {lines.Length})" : "");
+        }
+
+        public string Replace(string old, string @new)
+        {
+            old = old.Replace("\r\n", "\n");
+            @new = @new.Replace("\r\n", "\n");
+            if (old.Length == 0) return "error: old vacío";
+            var at = Text.IndexOf(old, StringComparison.Ordinal);
+            if (at < 0)
+            {
+                // Lo más típico: espacios distintos. Se dice dónde está su primera línea (sin mirar espacios), para leerla.
+                static string Squash(string x) => Regex.Replace(x, @"\s+", " ").Trim();
+                var first = Squash(old.Split('\n')[0]);
+                var where = first.Length == 0 ? [] : Lines.Select((l, i) => (l, n: i + 1)).Where(x => Squash(x.l).Contains(first, StringComparison.Ordinal))
+                    .Take(8).Select(x => $"{x.n}: {Cut(x.l.Trim())}").ToList();
+                return "error: old no está tal cual" + (where.Count > 0 ? $" (su primera línea aparece en:\n{string.Join("\n", where)}\nléela con read y copia exacto)" : "");
+            }
+            var again = Text.IndexOf(old, at + 1, StringComparison.Ordinal);
+            if (again >= 0)
+            {
+                var lines = new List<int>();
+                for (var i = at; i >= 0 && lines.Count < 8; i = Text.IndexOf(old, i + 1, StringComparison.Ordinal)) lines.Add(LineOf(i));
+                return $"error: old aparece más de una vez (líneas {string.Join(", ", lines)}): añade líneas de alrededor para que sea único";
+            }
+            Text = Text[..at] + @new + Text[(at + old.Length)..];
+            Changed = true;
+            var start = LineOf(at);
+            return $"ok: cambiado en las líneas {start}–{start + @new.Count(c => c == '\n')}";
+        }
+
+        public string Insert(int after, string text)
+        {
+            var lines = Lines.ToList();
+            after = Math.Clamp(after, 0, lines.Count);
+            lines.InsertRange(after, text.Replace("\r\n", "\n").Split('\n'));
+            Text = string.Join("\n", lines);
+            Changed = true;
+            return $"ok: insertado después de la línea {after}";
+        }
+
+        public string Rewrite(string html)
+        {
+            var clean = StageDoc.Clean(html);
+            if (!Regex.IsMatch(clean, @"<(body|div|canvas|svg|main|section)\b", RegexOptions.IgnoreCase)) return "error: eso no es una página";
+            Text = clean.Replace("\r\n", "\n");
+            Changed = true;
+            return "ok: pieza sustituida";
+        }
+
+        int LineOf(int index) => Text.AsSpan(0, index).Count('\n') + 1;
+
+        /// <summary>
+        /// Índice para empezar sin leerlo todo: dónde están el estilo, los scripts, las secciones, los títulos, los ids y
+        /// las funciones.
+        /// </summary>
+        public string Outline()
+        {
+            var marks = new Regex(@"<(style|/style|script|/script|header|main|section|article|footer|nav|h1|h2|h3|canvas|svg|figure)\b|\sid=""|function\s+\w+|new\s+(Chart|THREE\.\w+|maplibregl\.Map|L\.map)\b|echarts\.init|gsap\.timeline|d3\.select",
+                RegexOptions.IgnoreCase);
+            var lines = Lines;
+            var picked = lines.Select((l, i) => (l, n: i + 1)).Where(x => marks.IsMatch(x.l)).Take(70).Select(x => $"{x.n}: {Cut(x.l.Trim())}");
+            return $"{lines.Length} líneas, {Text.Length} caracteres. Índice:\n" + string.Join("\n", picked);
+        }
+    }
+
+    /// <summary>
+    /// Cambia la pieza html según ask. reload carga el resultado en el palco y devuelve los errores (vacío = bien).
+    /// Devuelve la pieza final (y si la recargó con éxito).
+    /// </summary>
+    public static async Task<(string Html, bool Shown)> EditAsync(AiClient ai, Settings s, string html, string title, string ask, string data,
+        int width, int height, Func<string, CancellationToken, Task<List<string>>> reload, Action<string>? progress, CancellationToken ct)
+    {
+        var doc = new Doc(html);
+        var first = new StringBuilder();
+        first.AppendLine($"Ventana: {width}×{height} px.");
+        if (title.Length > 0) first.AppendLine($"Título: {title}");
+        first.AppendLine().AppendLine("Cambio pedido: " + ask);
+        if (data.Trim().Length > 0) first.AppendLine().AppendLine("Datos:").AppendLine(data.Trim());
+        first.AppendLine().AppendLine("Pieza actual: " + doc.Outline());
+        var input = new JsonArray(new JsonObject
+        {
+            ["role"] = "user",
+            ["content"] = new JsonArray(new JsonObject { ["type"] = "input_text", ["text"] = first.ToString() }),
+        });
+        var reloads = 0;
+        var shown = false;
+        for (var step = 0; step < MaxSteps; step++)
+        {
+            var body = new JsonObject
+            {
+                ["model"] = s.Model,
+                ["instructions"] = Prompt,
+                ["input"] = input.DeepClone(),
+                ["tools"] = Tools.DeepClone(),
+                ["store"] = false,
+                // Todo lo anterior de la conversación se repite tal cual en cada paso: el proveedor lo cachea.
+                ["prompt_cache_key"] = "colo-palco-edit",
+            };
+            if (!string.IsNullOrEmpty(s.ReasoningEffort)) body["reasoning"] = new JsonObject { ["effort"] = "low" };
+            var calls = new List<JsonNode>();
+            await foreach (var item in ai.StreamAsync(body, ct))
+                if (item["type"]?.GetValue<string>() == "function_call") calls.Add(item);
+            if (calls.Count == 0) break;
+            foreach (var call in calls)
+            {
+                var name = call["name"]?.GetValue<string>() ?? "";
+                var id = call["call_id"]?.GetValue<string>() ?? $"c{step}";
+                JsonObject args;
+                try { args = JsonNode.Parse(call["arguments"]?.GetValue<string>() ?? "{}") as JsonObject ?? []; }
+                catch { args = []; }
+                var c = new ToolCall(name, args);
+                string output;
+                if (name == "done")
+                {
+                    progress?.Invoke("Recargando…");
+                    var errors = await reload(doc.Text, ct);
+                    shown = errors.Count == 0;
+                    if (shown) return (doc.Text, true);
+                    if (++reloads >= MaxReloads) return (doc.Text, false);
+                    output = "Al recargar dio estos errores; arréglalos y vuelve a llamar done:\n" + string.Join("\n", errors.Select(e => "- " + e));
+                }
+                else
+                {
+                    output = name switch
+                    {
+                        "search" => doc.Search(c.Str("query"), c.Bool("regex")),
+                        "read" => doc.Read(c.Int("from") ?? 1, c.Int("to") ?? 200),
+                        "replace" => doc.Replace(c.Str("old"), c.Str("new")),
+                        "insert" => doc.Insert(c.Int("after") ?? 0, c.Str("text")),
+                        "rewrite" => doc.Rewrite(c.Str("html")),
+                        _ => "error: herramienta desconocida",
+                    };
+                    progress?.Invoke(name switch
+                    {
+                        "search" => $"Buscando «{(c.Str("query").Length > 30 ? c.Str("query")[..30] + "…" : c.Str("query"))}»",
+                        "read" => "Leyendo",
+                        "rewrite" => "Rehaciendo la pieza",
+                        _ => "Cambiando",
+                    });
+                }
+                // La conversación se reenvía entera (store=false): la llamada y su resultado, sin ids del servidor.
+                input.Add(new JsonObject { ["type"] = "function_call", ["call_id"] = id, ["name"] = name, ["arguments"] = call["arguments"]?.GetValue<string>() ?? "{}" });
+                input.Add(new JsonObject { ["type"] = "function_call_output", ["call_id"] = id, ["output"] = output });
+            }
+        }
+        // Se acabaron los pasos (o el modelo dejó de llamar herramientas): se muestra lo que haya.
+        if (doc.Changed && !shown) shown = (await reload(doc.Text, ct)).Count == 0;
+        return (doc.Text, shown);
+    }
+}

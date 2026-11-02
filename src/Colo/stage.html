@@ -64,6 +64,15 @@
   .btn { font: 600 13px var(--text); border: 0; border-radius: 10px; padding: 9px 16px; cursor: pointer; background: var(--accent); color: #fff; }
   .btn.ghost { background: var(--chip); color: var(--ink); }
 
+  /* cambiando la pieza que se ve: pastilla discreta abajo, la pieza sigue a la vista */
+  .editing { position: absolute; z-index: 6; left: 50%; bottom: 16px; transform: translate(-50%, 12px); display: flex; align-items: center; gap: 9px;
+    max-width: calc(100% - 32px); padding: 8px 14px 8px 12px; border-radius: 99px; background: var(--bg); border: 1px solid var(--line);
+    box-shadow: 0 10px 30px rgba(0,0,0,.14); color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums;
+    opacity: 0; pointer-events: none; transition: opacity .25s var(--ease), transform .35s var(--ease); }
+  .editing.on { opacity: 1; transform: translate(-50%, 0); }
+  .editing span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .editing i { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; animation: breathe 1.6s var(--ease) infinite; }
+
   /* pregunta de vuelta: solo con clic */
   .ask { position: absolute; z-index: 6; left: 50%; bottom: 18px; transform: translate(-50%, 20px); width: min(560px, calc(100% - 28px));
     display: flex; align-items: center; gap: 10px; padding: 10px 10px 10px 16px; border-radius: 16px;
@@ -94,6 +103,8 @@
   <button id="big" title="Más grande"><svg viewBox="0 0 24 24"><path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/></svg></button>
   <button id="close" title="Cerrar (Esc)"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
 </div>
+
+<div class="editing" id="editing"><i></i><span id="editingText"></span></div>
 
 <div class="ask" id="ask"><p><small>Preguntar a Colo</small><span id="askText"></span></p><button class="btn ghost" id="askNo">No</button><button class="btn" id="askGo">Preguntar</button></div>
 
@@ -130,6 +141,9 @@ window.chrome?.webview?.addEventListener("message", e => {
     frame.classList.remove("on");
     setTitle(m.title);
     frame.src = m.src;
+  } else if (m.type === "editing") {
+    if (m.text) $("#editingText").textContent = m.text;
+    $("#editing").classList.toggle("on", !!m.text);
   } else if (m.type === "failed") {
     clearInterval(tick);
     making.classList.remove("off");

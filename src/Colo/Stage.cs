@@ -268,6 +268,9 @@ sealed class Stage : Form
 
     public void Failed(string text) => Post(new { type = "failed", text });
 
+    /// <summary>Se está cambiando la pieza que se ve: una pastilla discreta (null la quita); la pieza sigue visible.</summary>
+    public void Editing(string? text) => Post(new { type = "editing", text });
+
     /// <summary>Muestra la pieza y espera a que cuente cómo fue: los errores (vacío = bien).</summary>
     public async Task<List<string>> ShowDocAsync(string title, string doc, CancellationToken ct)
     {
@@ -434,12 +437,30 @@ sealed class StageHost(Control ui, AiClient ai, Settings settings)
         _ = Task.Run(() => DesignAsync(title, brief, data, previous, cts.Token));
     }
 
+    /// <summary>StageEditor sobre la pieza: cada done recarga el palco y devuelve sus errores.</summary>
+    async Task<(string Html, List<string> Errors)> EditAsync(string title, string html, string ask, string data, int w, int h, CancellationToken ct)
+    {
+        var last = new List<string>();
+        var sw = Stopwatch.StartNew();
+        await OnUi(() => _stage?.Editing("Cambiando · " + (ask.Length > 60 ? ask[..60] + "…" : ask)));
+        try
+        {
+            var (result, _) = await StageEditor.EditAsync(ai, settings, html, title, ask, data, w, h,
+                async (doc, token) => last = await OnUi(() => Window().ShowDocAsync(title, StageDoc.Wrap(doc), token)),
+                note => _ = OnUi(() => _stage?.Editing($"{note} · {sw.Elapsed.TotalSeconds:0} s")), ct);
+            return (result, last);
+        }
+        finally { _ = OnUi(() => _stage?.Editing(null)); }
+    }
+
     async Task DesignAsync(string title, string brief, string data, string? previous, CancellationToken ct)
     {
         var sw = Stopwatch.StartNew();
         try
         {
-            await OnUi(async () => { await Window().LoadingAsync(title, previous is null ? brief : "Cambio: " + brief, Near()); return 0; });
+            // Pieza nueva: pantalla de «creando». Un cambio: la pieza se queda a la vista con una pastilla.
+            if (previous is null) await OnUi(async () => { await Window().LoadingAsync(title, brief, Near()); return 0; });
+            else await OnUi(() => { var win = Window(); if (!win.Visible) win.Show(); });
             var (w, h) = await OnUi(() => Task.FromResult(Window().ContentSize()));
             var last = DateTime.MinValue;
             void Progress(int n)
@@ -448,15 +469,24 @@ sealed class StageHost(Control ui, AiClient ai, Settings settings)
                 last = DateTime.Now;
                 _ = OnUi(() => _stage?.Progress(n));
             }
-            var html = await StageDesigner.CreateAsync(ai, StageDesigner.Request(settings, title, brief, data, w, h, previous), Progress, ct);
-            var errors = await OnUi(() => Window().ShowDocAsync(title, StageDoc.Wrap(html), ct));
-            if (errors.Count > 0 && !ct.IsCancellationRequested)
+            string html;
+            List<string> errors;
+            if (previous is not null)
             {
-                // Falló al cargar: el diseñador lo arregla una vez, sin que el agente tenga que hacer nada.
-                Log.Write("palco: errores, arreglando · " + string.Join(" | ", errors));
-                await OnUi(async () => { await Window().LoadingAsync(title, "Ajustando un detalle…", Near()); return 0; });
-                html = await StageDesigner.CreateAsync(ai, StageDesigner.Request(settings, title, "", "", w, h, html, errors), Progress, ct);
+                // Cambiar lo que ya se ve: como un agente de código, por trozos, y la pieza no desaparece mientras tanto.
+                (html, errors) = await EditAsync(title, previous, brief, data, w, h, ct);
+            }
+            else
+            {
+                html = await StageDesigner.CreateAsync(ai, StageDesigner.Request(settings, title, brief, data, w, h, previous), Progress, ct);
                 errors = await OnUi(() => Window().ShowDocAsync(title, StageDoc.Wrap(html), ct));
+                if (errors.Count > 0 && !ct.IsCancellationRequested)
+                {
+                    // Falló al cargar: el diseñador la arregla por trozos, sin que el agente tenga que hacer nada.
+                    Log.Write("palco: errores, arreglando · " + string.Join(" | ", errors));
+                    (html, errors) = await EditAsync(title, html, "Al cargarla dio estos errores; arréglalos sin cambiar el diseño:\n"
+                        + string.Join("\n", errors.Select(e => "- " + e)), "", w, h, ct);
+                }
             }
             _lastHtml = html;
             if (previous is null) _shown = $"«{title}» ({(brief.Length > 160 ? brief[..160] + "…" : brief)})";
