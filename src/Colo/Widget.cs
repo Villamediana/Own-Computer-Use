@@ -472,9 +472,30 @@ sealed class Widget : LayeredWindow
     // Llegan desde el gancho de teclado: se contesta al momento y lo demás va por la cola de la interfaz.
     // Grabar cuenta al soltar: si con el atajo abajo llega otra tecla (Win+Alt+R de la Game Bar…), era otro atajo
     // y se cancela sin tocar la grabación.
-    void OnPressed(string id) { if (id != Record) Post(() => Press(id)); }
-    void OnReleased(string id) => Post(() => { if (id == Record) RecordTap(); else Release(id); });
-    void OnCancelled(string id) { if (id != Record) Post(() => Cancel(id)); }
+    // Modo prueba «escribir en vez de hablar»: el micrófono no se toca; al soltar sale la caja.
+    void OnPressed(string id) { if (id != Record && !_s.TypeInstead) Post(() => Press(id)); }
+    void OnReleased(string id) => Post(() => { if (id == Record) RecordTap(); else if (_s.TypeInstead) TypeIt(id == Dictate); else Release(id); });
+    void OnCancelled(string id) { if (id != Record && !_s.TypeInstead) Post(() => Cancel(id)); }
+
+    TypeBox? _typeBox;
+    bool _typeDictate;
+
+    /// <summary>La caja del modo prueba: lo escrito sigue el mismo camino que lo transcrito.</summary>
+    void TypeIt(bool dictate)
+    {
+        if (_typeBox is null)
+        {
+            _typeBox = new TypeBox();
+            _typeBox.Sent += text => Post(async () =>
+            {
+                Log.Write($"escrito ({(_typeDictate ? "dictar" : "hablar")}): «{text}»");
+                await Task.Delay(150); // que el foco termine de volver a la ventana de antes
+                await Heard(text, 0, _typeDictate);
+            });
+        }
+        _typeDictate = dictate;
+        _typeBox.Open(dictate, Bounds);
+    }
 
     // ───────────────────────── reuniones
 
@@ -740,12 +761,7 @@ sealed class Widget : LayeredWindow
             var ms = sw.ElapsedMilliseconds;
             Log.Write($"voz: {parts.Count} trozo(s) → «{text}» · espera al soltar {ms} ms");
             if (_caption == "Transcribiendo…") Say("", Theme.Muted, 0);
-            // Con Ajustes abierto es la prueba del micrófono: se muestra, no se ejecuta.
-            if (_settingsWindow is not null) { _settingsWindow.VoiceHeard(text, ms); return; }
-            // Una letra suelta («¡Y!», «Eh.») es ruido: ni se manda al modelo. «Sí» o «no» sí pasan.
-            if (text.Count(char.IsLetter) < 2) { if (text.Length > 0) Log.Write($"voz: descartado «{text}» (sin palabras)"); return; }
-            if (dictate) { await DictateNow(text, ms); return; }
-            Command(text);
+            await Heard(text, ms, dictate);
         }
         catch (Exception ex)
         {
@@ -753,6 +769,17 @@ sealed class Widget : LayeredWindow
             Say(ex.Message, Theme.Danger, 5000);
         }
         finally { _thinking--; }
+    }
+
+    /// <summary>Lo que se hace con el texto oído (o escrito en el modo prueba).</summary>
+    async Task Heard(string text, long ms, bool dictate)
+    {
+        // Con Ajustes abierto es la prueba del micrófono: se muestra, no se ejecuta.
+        if (_settingsWindow is not null) { _settingsWindow.VoiceHeard(text, ms); return; }
+        // Una letra suelta («¡Y!», «Eh.») es ruido: ni se manda al modelo. «Sí» o «no» sí pasan.
+        if (text.Count(char.IsLetter) < 2) { if (text.Length > 0) Log.Write($"voz: descartado «{text}» (sin palabras)"); return; }
+        if (dictate) { await DictateNow(text, ms); return; }
+        Command(text);
     }
 
     // ───────────────────────── GPT-Live

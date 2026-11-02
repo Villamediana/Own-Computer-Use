@@ -51,6 +51,8 @@ public sealed class Settings
     public string DictateHotkey { get; set; } = "";
     /// <summary>Atajo de grabar reuniones, por toques: graba, pausa, sigue; dos toques = parar. Vacío = apagado.</summary>
     public string RecordHotkey { get; set; } = "Alt+Win";
+    /// <summary>Prueba sin micrófono: al soltar el atajo de hablar o dictar sale una caja; lo escrito hace de transcripción.</summary>
+    public bool TypeInstead { get; set; }
     public bool SpeakReplies { get; set; }
     public ReplyVoice ReplyVoice { get; set; } = ReplyVoice.ElevenLabs;
     public string ElevenVoiceId { get; set; } = "";

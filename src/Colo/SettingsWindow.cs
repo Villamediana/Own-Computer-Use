@@ -375,6 +375,7 @@ sealed class SettingsWindow : Form
         to.ElevenVoiceName = from.ElevenVoiceName?.Trim() ?? "";
         to.ElevenTtsModel = string.IsNullOrWhiteSpace(from.ElevenTtsModel) ? ElevenLabsTts.Models[0] : from.ElevenTtsModel.Trim();
         to.StartWithWindows = from.StartWithWindows;
+        to.TypeInstead = from.TypeInstead;
         to.Vision = from.Vision;
         to.DisabledTools = from.DisabledTools ?? [];
         to.McpServers = from.McpServers ?? [];
