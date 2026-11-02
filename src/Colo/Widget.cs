@@ -97,6 +97,11 @@ sealed class Widget : LayeredWindow
     readonly MeetingWork _meetingWork;
     Recorder? _recorder;
     RecordPill? _pill;
+    // Quién habla (1.24): huellas de voz de las personas ya nombradas y el reconocedor, bajado la primera vez que se graba.
+    readonly People _people = new(System.IO.Path.Combine(Store.Dir, "people.json"));
+    readonly VoiceKit _voiceKit = new(System.IO.Path.Combine(Store.ModelsDir, "voces"));
+    SherpaVoices? _voices;
+    System.Threading.Timer? _liveTimer;
     long _orderTokens;
 
     // ── arrastre
@@ -124,6 +129,8 @@ sealed class Widget : LayeredWindow
         {
             Encode = Recorder.Encode,
             LocalTranscribe = samples => _stt?.Transcribe(samples) ?? "",
+            Voices = VoicesAsync,
+            People = _people,
         };
         _meetingWork.Notice += (text, error) => Post(() =>
         {
@@ -521,6 +528,9 @@ sealed class Widget : LayeredWindow
                 }
                 _pill ??= NewPill();
                 _pill.ShowNear(Bounds);
+                StartLiveTranscript(_recorder);
+                // Los modelos de voces se bajan ya (la primera vez), mientras la reunión empieza.
+                _ = Task.Run(() => VoicesAsync(CancellationToken.None));
                 Say("● Grabando la reunión", Theme.Danger, 2500);
                 return $"ok: grabando (se guarda en {_recorder.Dir})";
             case RecAction.Pause:
@@ -554,6 +564,8 @@ sealed class Widget : LayeredWindow
     {
         if (_recorder is not { } rec) return "error: no está grabando";
         _recorder = null;
+        _liveTimer?.Dispose();
+        _liveTimer = null;
         _pill?.Hide();
         var seconds = rec.Stop();
         if (seconds < 3)
@@ -566,6 +578,38 @@ sealed class Widget : LayeredWindow
         _ = Task.Run(RunMeetingsAsync);
         Say("Reunión guardada · la transcribo en segundo plano", Theme.Blue, 4000);
         return $"ok: guardada ({(int)(seconds / 60)} min) en {rec.Dir}; el acta sale sola en unos minutos";
+    }
+
+    /// <summary>El reconocedor de voces; null si no se pudo bajar o cargar (la reunión sigue por canales).</summary>
+    async Task<IVoices?> VoicesAsync(CancellationToken ct)
+    {
+        if (_voices is not null) return _voices;
+        try
+        {
+            if (!await _voiceKit.EnsureAsync(ct)) return null;
+            SherpaNative.Prepare();
+            return _voices ??= new SherpaVoices(_voiceKit, Math.Clamp(Environment.ProcessorCount / 4, 1, 4));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Log.Write("voces: no disponibles · " + ex.Message);
+            return null;
+        }
+    }
+
+    /// <summary>Mientras graba, cada minuto se transcribe lo que ya hay entero: al parar casi no queda nada.</summary>
+    void StartLiveTranscript(Recorder rec)
+    {
+        _liveTimer?.Dispose();
+        _liveTimer = new System.Threading.Timer(_ =>
+        {
+            if (_recorder != rec) return;
+            _ = Task.Run(async () =>
+            {
+                try { await _meetingWork.LiveAsync(rec.Dir, rec.Started); }
+                catch (Exception ex) { Log.Write("reunión: transcribir en vivo · " + ex.Message); }
+            });
+        }, null, 60_000, 60_000);
     }
 
     async Task RunMeetingsAsync()
@@ -584,6 +628,7 @@ sealed class Widget : LayeredWindow
             case "resume": return Meeting(RecAction.Resume);
             case "stop": return Meeting(RecAction.Stop);
             case "list": return _meetings.List(DateTime.Now);
+            case "read": return _meetings.Read(c.Str("query"));
             case "retry":
                 foreach (var j in _meetings.All.Where(j => j.Status != "done" && j.Attempts >= 3))
                     _meetings.Update(j with { Attempts = 0, Error = "" });
@@ -1134,7 +1179,7 @@ sealed class Widget : LayeredWindow
         bool saved;
         try
         {
-            using var f = new SettingsWindow(_s, _memory, _tokens, _vault, _agenda);
+            using var f = new SettingsWindow(_s, _memory, _tokens, _vault, _agenda, new MeetingDesk(_meetings, _meetingWork, _people));
             _settingsWindow = f;
             f.RecordTest += StartProbe;
             f.SayTest += TrySpeaking;
@@ -1428,6 +1473,7 @@ sealed class Widget : LayeredWindow
         _watch?.Dispose();
         _reminders?.Dispose();
         // Cerrar Colo grabando no pierde la reunión: se guarda y se procesa al volver.
+        _liveTimer?.Dispose();
         if (_recorder is { } rec)
         {
             _recorder = null;

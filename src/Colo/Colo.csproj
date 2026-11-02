@@ -11,7 +11,7 @@
     <LangVersion>latest</LangVersion>
     <AssemblyName>Colo</AssemblyName>
     <Product>Colo</Product>
-    <Version>1.23.0</Version>
+    <Version>1.24.0</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>colo.ico</ApplicationIcon>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
@@ -32,12 +32,21 @@
     <EmbeddedResource Include="settings.html" LogicalName="Colo.settings.html" />
     <EmbeddedResource Include="stage.html" LogicalName="Colo.stage.html" />
     <!-- Whisper (whisper.cpp) para Windows dentro del .exe; se extraen a %LOCALAPPDATA%\Colo\native al arrancar. -->
-    <EmbeddedResource Include="$(NuGetPackageRoot)whisper.net.runtime/1.9.1/build/win-x64/*.dll" LogicalName="whisper/%(Filename)%(Extension)" />
+    <EmbeddedResource Include="$([MSBuild]::EnsureTrailingSlash('$(NuGetPackageRoot)'))whisper.net.runtime/1.9.1/build/win-x64/*.dll" LogicalName="whisper/%(Filename)%(Extension)" />
+    <!-- sherpa-onnx (voces de las reuniones), igual: dentro del .exe y se extraen la primera vez que hacen falta. -->
+    <EmbeddedResource Include="$([MSBuild]::EnsureTrailingSlash('$(NuGetPackageRoot)'))org.k2fsa.sherpa.onnx.runtime.win-x64/2.0.1/runtimes/win-x64/native/*.dll" LogicalName="sherpa/%(Filename)%(Extension)" />
   </ItemGroup>
   <!-- Sin la carpeta runtimes/ al lado del .exe: todo va embebido. -->
   <Target Name="NoWhisperRuntimeFolder" BeforeTargets="AssignTargetPaths">
     <ItemGroup>
       <None Remove="@(None)" Condition="$([System.String]::Copy('%(None.FullPath)').Contains('whisper.net.runtime'))" />
+    </ItemGroup>
+  </Target>
+  <!-- Y sin copiarlas sueltas (irían también al paquete de arranque, extraídas en cada versión). -->
+  <Target Name="NoSherpaNativeCopy" AfterTargets="ResolvePackageAssets">
+    <ItemGroup>
+      <NativeCopyLocalItems Remove="@(NativeCopyLocalItems)" Condition="$([System.String]::Copy('%(NativeCopyLocalItems.Identity)').Contains('sherpa.onnx.runtime'))" />
+      <RuntimeTargetsCopyLocalItems Remove="@(RuntimeTargetsCopyLocalItems)" Condition="$([System.String]::Copy('%(RuntimeTargetsCopyLocalItems.Identity)').Contains('sherpa.onnx.runtime'))" />
     </ItemGroup>
   </Target>
   <ItemGroup>

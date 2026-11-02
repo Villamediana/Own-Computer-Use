@@ -131,7 +131,8 @@ Internet
         new("meeting", "Reuniones", "Grabar una reunión (micrófono y sonido del PC) y sacar el acta y las tareas solo", ["meeting"], """
 Reuniones
 - «Graba la reunión», «pausa», «sigue», «para de grabar» = meeting. Al parar, Colo transcribe y hace el acta solo y
-  lleva las tareas a la agenda: no hagas nada más. «¿Qué quedó de la reunión de…?» = agenda search.
+  lleva las tareas a la agenda: no hagas nada más. «¿Qué quedó / quién quedó con qué / qué está pendiente de la
+  reunión de…?» = agenda search; para el acta entera, meeting read con query (título, proyecto, persona o fecha).
 """),
         new("stage", "Palco", "Un diseñador crea al momento lo que ayuda a ver: gráficos, explicaciones animadas, 3D, mapas, vídeos…", ["stage"], """
 Palco
@@ -232,8 +233,8 @@ Palco
  {"type":"function","name":"stage","description":"Palco (ventana al lado). show: un diseñador crea la pieza con brief (qué contar) y data (los datos reales); sale en unos segundos, sin esperar. edit: cambia la pieza actual según brief. page: abre url o ruta tal cual. close. bigger/smaller: tamaño.",
   "parameters":{"type":"object","properties":{"action":{"type":"string","enum":["show","edit","page","close","bigger","smaller"]},
    "title":{"type":"string"},"brief":{"type":"string"},"data":{"type":"string"},"url":{"type":"string"}},"required":["action"]}},
- {"type":"function","name":"meeting","description":"Grabar reuniones (micrófono + sonido del PC). start, pause, resume, stop (guarda; transcripción y acta salen solas). status. list: las grabadas con su estado. retry: reintenta las que fallaron.",
-  "parameters":{"type":"object","properties":{"action":{"type":"string","enum":["start","pause","resume","stop","status","list","retry"]}},"required":["action"]}},
+ {"type":"function","name":"meeting","description":"Grabar reuniones (micrófono + sonido del PC). start, pause, resume, stop (guarda; transcripción y acta salen solas). status. list: las grabadas con su estado. read: el acta entera de la que encaja con query (vacía = la última). retry: reintenta las que fallaron.",
+  "parameters":{"type":"object","properties":{"action":{"type":"string","enum":["start","pause","resume","stop","status","list","read","retry"]},"query":{"type":"string"}},"required":["action"]}},
  {"type":"function","name":"plan","description":"Plan de un pedido con varias partes: steps lo fija (una frase por parte); done marca hecha la parte n (1, 2…). Va en cada turno.",
   "parameters":{"type":"object","properties":{"steps":{"type":"array","items":{"type":"string"}},"done":{"type":"integer"}}}},
  {"type":"function","name":"look","description":"Pide la captura de pantalla para el siguiente turno.",

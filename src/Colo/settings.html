@@ -137,6 +137,33 @@
   .row.done .label > span { color: var(--muted); text-decoration: line-through; }
   .ag-tag { font-size: 11.5px; font-weight: 600; color: var(--muted); background: var(--fill); border-radius: 99px; padding: 2px 8px; margin-right: 6px; }
   .label small.late { color: var(--red); }
+  /* reuniones */
+  .mt-row { cursor: pointer; transition: background .12s; }
+  .mt-row:hover { background: #fafafb; }
+  .mt-row .chev { color: var(--muted); font-size: 18px; }
+  .mt-back { all: unset; cursor: pointer; color: var(--muted); font-size: 13px; font-weight: 500; display: inline-flex; gap: 6px; align-items: center; margin-bottom: 14px; }
+  .mt-back:hover { color: var(--ink); }
+  .mt-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 18px; }
+  .mt-head > div { flex: 1; min-width: 0; }
+  .mt-head h1 { margin: 0 0 4px; text-wrap: balance; }
+  .mt-head .lead { margin: 0; }
+  #mtTabs { margin-bottom: 14px; max-width: 420px; }
+  .md { padding: 18px 20px; line-height: 1.6; font-size: 14px; }
+  .md h1, .md h2, .md h3 { font: 600 15px var(--font); margin: 18px 0 6px; }
+  .md h1:first-child, .md h2:first-child { margin-top: 0; }
+  .md ul { margin: 4px 0; padding-left: 20px; }
+  .md p { margin: 6px 0; }
+  .md.tr { max-height: 460px; overflow: auto; font-size: 13.5px; }
+  .md.tr p { margin: 10px 0; }
+  .who-play { all: unset; cursor: pointer; width: 34px; height: 34px; border-radius: 99px; background: var(--fill); display: grid; place-items: center; flex: none; transition: background .12s, transform var(--t-soft) var(--spring); }
+  .who-play:hover { background: var(--fill-2); }
+  .who-play:active { transform: scale(.92); }
+  .who-play[disabled] { opacity: .35; pointer-events: none; }
+  .who-play svg { width: 14px; height: 14px; fill: var(--ink); stroke: none; }
+  .who-play.on { background: var(--blue); }
+  .who-play.on svg { fill: #fff; }
+  .who-name { max-width: 260px; height: 34px; }
+  .who-auto { font-size: 11px; font-weight: 600; color: var(--blue); background: rgba(37,99,235,.08); border-radius: 99px; padding: 2px 8px; margin-left: 6px; }
   .cost-total { display: grid; grid-template-columns: 1fr 1fr; }
   .cost-total > div { padding: 16px 18px; }
   .cost-total > div + div { border-left: 1px solid var(--line); }
@@ -424,6 +451,7 @@
       <button data-page="tools"><svg><use href="#i-tools"/></svg>Herramientas</button>
       <button data-page="mcp"><svg><use href="#i-plug"/></svg>MCP</button>
       <button data-page="agenda"><svg><use href="#i-list"/></svg>Agenda</button>
+      <button data-page="meetings"><svg><use href="#i-mic"/></svg>Reuniones</button>
       <button data-page="cost"><svg><use href="#i-coin"/></svg>Costo</button>
       <button data-page="general"><svg><use href="#i-gear"/></svg>General</button>
     </nav>
@@ -708,6 +736,30 @@
         <p class="hint">«¿Cómo va el proyecto X?», «apúntalo en X», «recuérdame mañana a las 9…»: Colo lo lleva aquí.</p>
       </section>
 
+      <section class="page" id="p-meetings">
+        <div id="mtListView">
+          <h1>Reuniones</h1>
+          <p class="lead">Lo grabado con el atajo: el acta, quién dijo qué y lo que quedó pendiente. Pregúntale a Colo por cualquiera.</p>
+          <div class="group" id="mtList"></div>
+        </div>
+        <div id="mtDetail" hidden>
+          <button class="mt-back" id="mtBack">‹ Reuniones</button>
+          <div class="mt-head">
+            <div><h1 id="mtTitle"></h1><p class="lead" id="mtMeta"></p></div>
+            <button class="btn danger ghost" id="mtDelete"><svg><use href="#i-trash"/></svg><span>Borrar</span></button>
+          </div>
+          <div class="seg" id="mtTabs" data-options="ata:Acta|people:Personas|tr:Transcripción"></div>
+          <div id="mtAta" class="group md"></div>
+          <div id="mtPeople" hidden>
+            <div class="group" id="mtWho"></div>
+            <p class="hint">Escucha cada voz y escribe quién es. Colo la recuerda: en las próximas reuniones la reconoce solo. Si dos voces son la misma persona, ponles el mismo nombre.</p>
+            <div style="margin-top:14px"><button class="btn primary" id="mtRedo">Rehacer el acta con estos nombres</button></div>
+          </div>
+          <div id="mtTr" class="group md tr" hidden></div>
+          <datalist id="mtPeopleNames"></datalist>
+        </div>
+      </section>
+
       <section class="page" id="p-general">
         <h1>General</h1>
         <p class="lead">&nbsp;</p>
@@ -964,6 +1016,88 @@ function addToAgenda() {
   for (const id of ["#agText", "#agRemind"]) $(id).value = "";
 }
 
+// ── reuniones: la lista, y al abrir una su acta, sus voces (para nombrarlas) y la transcripción
+let meetings = [], meeting = null, mtTab = "ata", setMtTab = null, mtAudio = null;
+function md(text) {
+  const inline = t => esc(t).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1");
+  let html = "", list = false;
+  for (const line of (text || "").replace(/\r/g, "").split("\n")) {
+    const li = /^\s*[-*] (.*)/.exec(line);
+    if (li) { if (!list) { html += "<ul>"; list = true; } html += `<li>${inline(li[1])}</li>`; continue; }
+    if (list) { html += "</ul>"; list = false; }
+    const h = /^(#{1,3}) (.*)/.exec(line);
+    if (h) html += `<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`;
+    else if (line.trim()) html += `<p>${inline(line)}</p>`;
+  }
+  return html + (list ? "</ul>" : "");
+}
+function renderMeetings() {
+  $("#mtList").innerHTML = meetings.length
+    ? meetings.map(m => `<div class="row mt-row" data-mt="${esc(m.id)}"><div class="label"><b>${esc(m.title || "Reunión del " + m.when)}</b><small>${esc([m.when, m.length, m.project, m.status].filter(Boolean).join(" · "))}</small></div><span class="chev">›</span></div>`).join("")
+    : '<div class="row"><div class="label"><small>Todavía ninguna. Graba una con el atajo de Ajustes › Voz › Atajos.</small></div></div>';
+  $$("[data-mt]").forEach(r => r.onclick = () => host.send({ type: "meetingOpen", id: r.dataset.mt }));
+}
+function showMeetingList() { meeting = null; $("#mtDetail").hidden = true; $("#mtListView").hidden = false; mtAudio?.pause(); }
+function renderMeeting() {
+  const m = meeting;
+  if (!m) return showMeetingList();
+  $("#mtListView").hidden = true;
+  $("#mtDetail").hidden = false;
+  $("#mtTitle").textContent = m.title || "Reunión del " + m.when;
+  $("#mtMeta").textContent = [m.when, m.length, m.project, m.status].filter(Boolean).join(" · ");
+  $("#mtAta").innerHTML = m.ata ? md(m.ata) : '<p class="hint">El acta sale cuando termina de transcribir.</p>';
+  $("#mtTr").innerHTML = m.transcript ? md(m.transcript) : '<p class="hint">Aún sin transcripción.</p>';
+  $("#mtPeopleNames").innerHTML = (m.people || []).map(n => `<option value="${esc(n)}">`).join("");
+  $("#mtWho").innerHTML = (m.speakers || []).length
+    ? m.speakers.map(s => `<div class="row"><button class="who-play" data-play="${esc(s.id)}" title="Escuchar"${s.clip ? "" : " disabled"}><svg viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z"/></svg></button><div class="label"><input class="input who-name" data-name="${esc(s.id)}" value="${esc(s.name)}" placeholder="¿Quién es?" list="mtPeopleNames" autocomplete="off"><small>${esc(s.id)} · habla ${esc(s.talk)} · ${s.mic}% por el micrófono${s.auto && s.name ? '<span class="who-auto">reconocido por la voz</span>' : ""}</small></div></div>`).join("")
+    : '<div class="row"><div class="label"><small>Sin voces todavía.</small></div></div>';
+  $$("[data-play]").forEach(b => b.onclick = () => {
+    if (b.classList.contains("on")) { mtAudio?.pause(); return; }
+    host.send({ type: "meetingClip", id: m.id, speaker: b.dataset.play });
+  });
+  $$("[data-name]").forEach(i => {
+    const save = () => { if (i.value.trim() !== (m.speakers.find(s => s.id === i.dataset.name)?.name || "")) host.send({ type: "meetingName", id: m.id, speaker: i.dataset.name, name: i.value.trim() }); };
+    i.onchange = save;
+    i.onkeydown = e => { if (e.key === "Enter") i.blur(); };
+  });
+  $("#mtRedo").disabled = !m.done;
+  $("#mtRedo").textContent = m.redoing ? "Rehaciendo el acta…" : "Rehacer el acta con estos nombres";
+  if (m.redoing) $("#mtRedo").disabled = true;
+  showMtTab(mtTab);
+}
+function showMtTab(t) {
+  mtTab = t;
+  setMtTab?.(t, false);
+  $("#mtAta").hidden = t !== "ata";
+  $("#mtPeople").hidden = t !== "people";
+  $("#mtTr").hidden = t !== "tr";
+}
+function playClip(msg) {
+  mtAudio?.pause();
+  $$("[data-play]").forEach(b => b.classList.remove("on"));
+  if (!msg.wav) { toast("No hay audio de esa voz"); return; }
+  const b = $(`[data-play="${msg.speaker}"]`);
+  mtAudio = new Audio("data:audio/wav;base64," + msg.wav);
+  mtAudio.onended = mtAudio.onpause = () => b?.classList.remove("on");
+  b?.classList.add("on");
+  mtAudio.play().catch(() => b?.classList.remove("on"));
+}
+function initMeetings() {
+  renderMeetings();
+  setMtTab = seg($("#mtTabs"), mtTab, showMtTab);
+  $("#mtBack").onclick = showMeetingList;
+  $("#mtRedo").onclick = () => { if (!meeting) return; meeting.redoing = true; renderMeeting(); host.send({ type: "meetingRedo", id: meeting.id }); };
+  let armed = null;
+  $("#mtDelete").onclick = () => {
+    if (!meeting) return;
+    const label = $("#mtDelete span");
+    if (armed !== meeting.id) { armed = meeting.id; label.textContent = "¿Borrar audio, acta y transcripción?"; setTimeout(() => { armed = null; label.textContent = "Borrar"; }, 4000); return; }
+    armed = null; label.textContent = "Borrar";
+    host.send({ type: "meetingDelete", id: meeting.id });
+    showMeetingList();
+  };
+}
+
 // ── atajos que se mantienen: se graban apretándolos (todas las teclas a la vez) y soltando
 const KEY_NAMES = { Space: "Espacio", Shift: "Mayús" };
 function keyName(code) {
@@ -1127,6 +1261,8 @@ function init(msg) {
   $("#vAdd").onclick = addToVault;
   agenda = msg.agenda || agenda;
   renderAgenda();
+  meetings = msg.meetings || [];
+  initMeetings();
   $("#agAdd").onclick = addToAgenda;
   $("#agText").onkeydown = e => { if (e.key === "Enter") addToAgenda(); };
   $("#vSecret").onkeydown = e => { if (e.key === "Enter") addToVault(); };
@@ -1546,6 +1682,9 @@ host.on(msg => {
   else if (msg.type === "mcpTools") onMcpTools(msg);
   else if (msg.type === "toast") toast(msg.text);
   else if (msg.type === "agenda") { agenda = msg.agenda || agenda; renderAgenda(); }
+  else if (msg.type === "meetings") { meetings = msg.items || []; renderMeetings(); }
+  else if (msg.type === "meeting") { if (!meeting || meeting.id === msg.meeting.id || msg.open) { meeting = msg.meeting; renderMeeting(); } }
+  else if (msg.type === "meetingClip") playClip(msg);
   else if (msg.type === "vault") { vault = msg.items || []; renderVault(); if (msg.error) toast(msg.error); }
   else if (msg.type === "voiceStatus") voiceStatus(msg.text);
   else if (msg.type === "voiceLevel") voiceLevel(msg.v);
@@ -1567,6 +1706,13 @@ function demoHost() {
       { id: 4, text: "Ligar para o pediatra", project: "", list: "", who: "", done: true, when: "", late: false } ],
     projects: [{ name: "Tower Lease", status: "em teste", summary: "Dossiê por site pronto; falta aditivos", open: 1 }, { name: "Qualifica", status: "produção", summary: "", open: 1 }] };
   const demoReplyAgenda = () => reply({ type: "agenda", agenda: demoAgenda });
+  let demoMeetings = [
+    { id: "m1", title: "Migração do Tower Finder para o Postgres", when: "03/11 15:00", length: "42 min", project: "Tower Finder", status: "con acta", done: true },
+    { id: "m2", title: "", when: "04/11 10:30", length: "12 min", project: "", status: "transcribiendo", done: false } ];
+  const demoMeeting = { ...demoMeetings[0], people: ["Ana", "Gabriel", "Miguel"],
+    ata: "# Migração do Tower Finder para o Postgres\n03/11/2026 15:00 · 42 min · Tower Finder\n\n**Participantes:** Miguel, Ana, S3\n\nDecidimos migrar o banco na sexta. A Ana revisa os relatórios antes.\n\n## Decisões\n- Postgres em produção na sexta\n\n## Pendências\n- Ana: Definir a janela de manutenção\n\n## Minhas tarefas\n- Mandar o plano de migração (até 2026-11-06 12:00)\n\n## Tarefas dos outros\n- S3: Criar o usuário read-only",
+    transcript: "# Transcrição · 03/11/2026 15:00 · 0:42:10\n\n[0:00] **Miguel:** Bom, vamos lá. A ideia hoje é fechar a data da migração.\n[0:07] **Ana:** Eu preciso de uma janela de manutenção, pelo menos duas horas.\n[0:15] **S3:** Posso criar o usuário read-only ainda hoje.",
+    speakers: [ { id: "S1", name: "Miguel", auto: true, talk: "18 min", mic: 94, clip: true }, { id: "S2", name: "Ana", auto: false, talk: "14 min", mic: 3, clip: true }, { id: "S3", name: "", auto: false, talk: "6 min", mic: 2, clip: true } ] };
   let demoVault = [{ name: "ssh servidor", kind: "ssh", detail: "miguel@10.0.0.5" }, { name: "Freshservice", kind: "login", detail: "miguel@vertistorres.com.br · freshservice" }];
   const page = new URLSearchParams(location.hash.slice(1));
   if (page.has("still")) document.documentElement.classList.add("still");
@@ -1583,6 +1729,7 @@ function demoHost() {
               all: { "gpt-6-luna": { Input: 540000, Cached: 410000, Output: 21000, Seconds: 0, Calls: 160 }, "gpt-4o-mini-transcribe": { Input: 0, Cached: 0, Output: 0, Seconds: 1900, Calls: 210 }, "gpt-5.6-luna": { Input: 300000, Cached: 100000, Output: 9000, Seconds: 0, Calls: 50 } } },
             vault: demoVault,
             agenda: demoAgenda,
+            meetings: demoMeetings,
             memory: ["Su navegador es Comet", "«El backlog» es la pestaña P&I · Backlog", "«Fresh» es Freshservice, el portal de tickets"],
             mics: [{ id: "{0.0.1.00000000}.{a}", name: "Micrófono (Realtek Audio)" }, { id: "{0.0.1.00000000}.{b}", name: "Microfone do Headset (Plantronics)" }],
             groups: [
@@ -1606,6 +1753,7 @@ function demoHost() {
             },
           });
           if (page.get("page")) go(page.get("page"));
+          if (page.has("meeting")) { mtTab = page.get("meeting") || "ata"; handler({ type: "meeting", open: true, meeting: demoMeeting }); }
           if (page.get("sheet") != null) openSheet(+page.get("sheet"));
           handler({ type: "voiceStatus", text: "Escuchando con «Micrófono (Realtek Audio)»" });
           if (page.get("voice")) { handler({ type: "voiceVad", on: true }); handler({ type: "voiceLevel", v: .55 }); handler({ type: "voiceHeard", text: "abre chrome y entra en youtube", ms: 312 }); }
@@ -1623,6 +1771,18 @@ function demoHost() {
       } else if (m.type === "agendaRemove") {
         demoAgenda.items = demoAgenda.items.filter(i => i.id !== m.id);
         demoReplyAgenda();
+      } else if (m.type === "meetingOpen") {
+        reply({ type: "meeting", open: true, meeting: m.id === "m1" ? demoMeeting : { ...demoMeetings[1], people: [], ata: "", transcript: "", speakers: [] } });
+      } else if (m.type === "meetingName") {
+        demoMeeting.speakers = demoMeeting.speakers.map(s => s.id === m.speaker ? { ...s, name: m.name, auto: false } : s);
+        reply({ type: "meeting", meeting: demoMeeting });
+      } else if (m.type === "meetingRedo") {
+        setTimeout(() => reply({ type: "meeting", meeting: { ...demoMeeting, redoing: false } }), 1200);
+      } else if (m.type === "meetingDelete") {
+        demoMeetings = demoMeetings.filter(x => x.id !== m.id);
+        reply({ type: "meetings", items: demoMeetings });
+      } else if (m.type === "meetingClip") {
+        reply({ type: "meetingClip", speaker: m.speaker, wav: "" });
       } else if (m.type === "vaultForget") {
         demoVault = demoVault.filter(v => v.name !== m.name);
         reply({ type: "vault", items: demoVault });

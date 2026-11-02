@@ -164,6 +164,18 @@ public sealed class Agenda
         }
     }
 
+    /// <summary>Quita lo abierto que vino de esa fuente (rehacer el acta de una reunión sin duplicar). Lo hecho queda.</summary>
+    public int RemoveOpenFrom(string sourcePrefix)
+    {
+        if (sourcePrefix.Length == 0) return 0;
+        lock (_lock)
+        {
+            var n = _d.Items.RemoveAll(i => !i.Done && i.Source.StartsWith(sourcePrefix, StringComparison.Ordinal));
+            if (n > 0) Save();
+            return n;
+        }
+    }
+
     public string Project(string name, string status, string summary, string aliases, DateTime now)
     {
         name = name.Trim();

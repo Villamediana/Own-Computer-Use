@@ -21,6 +21,9 @@ namespace Colo;
 /// Sin botón de guardar: cada cambio llega como «save» y se guarda al momento; lo pesado (micrófono, MCP,
 /// atajos) se aplica al cerrar.
 /// </summary>
+/// <summary>Lo que Ajustes › Reuniones necesita de Colo.</summary>
+sealed record MeetingDesk(Meetings Meetings, MeetingWork Work, People People);
+
 sealed class SettingsWindow : Form
 {
     static readonly JsonSerializerOptions Json = new() { Converters = { new JsonStringEnumConverter() } };
@@ -30,6 +33,8 @@ sealed class SettingsWindow : Form
     readonly TokenMeter? _meter;
     readonly Vault? _vault;
     readonly Agenda? _agenda;
+    readonly MeetingDesk? _desk;
+    string? _openMeeting;
     readonly WebView2 _web = new() { Dock = DockStyle.Fill, DefaultBackgroundColor = Color.White };
     readonly CancellationTokenSource _closing = new();
     string _voiceStatus = "";
@@ -84,8 +89,52 @@ sealed class SettingsWindow : Form
         };
     }
 
-    public SettingsWindow(Settings s, Memory? memory = null, TokenMeter? meter = null, Vault? vault = null, Agenda? agenda = null)
+    /// <summary>Ajustes › Reuniones: la lista (lo último primero).</summary>
+    object[] MeetingsData() => (_desk?.Meetings.All ?? []).OrderByDescending(j => j.Started).Select(j => (object)new
     {
+        id = j.Id, title = j.Title, when = j.Started.ToString("dd/MM HH:mm"), length = Meetings.Minutes(j.Seconds),
+        project = j.Project, status = Meetings.StatusText(j), done = j.Status == "done",
+    }).ToArray();
+
+    /// <summary>Una reunión abierta: el acta, la transcripción y sus voces (para oírlas y nombrarlas).</summary>
+    object? MeetingData(string id)
+    {
+        if (_desk?.Meetings.Find(id) is not { } j) return null;
+        string Read(string file) { try { var p = Path.Combine(j.Dir, file); return File.Exists(p) ? File.ReadAllText(p) : ""; } catch { return ""; } }
+        var t = MeetingTranscript.Load(j.Dir);
+        return new
+        {
+            id = j.Id, title = j.Title, when = j.Started.ToString("dd/MM/yyyy HH:mm"), length = Meetings.Minutes(j.Seconds),
+            project = j.Project, status = Meetings.StatusText(j), done = j.Status == "done",
+            ata = Read("ata.md"), transcript = Read("transcricao.md"), people = _desk.People.Names,
+            speakers = t.Speakers.Where(x => x.Seconds >= 1).Select(x => new
+            {
+                id = x.Id, name = x.Name, auto = x.Auto, talk = x.Seconds < 60 ? $"{(int)x.Seconds} s" : $"{(int)Math.Round(x.Seconds / 60)} min",
+                mic = (int)Math.Round(100 * x.MicSeconds / Math.Max(1, x.Seconds)), clip = x.ClipSeconds > 0,
+            }),
+        };
+    }
+
+    public SettingsWindow(Settings s, Memory? memory = null, TokenMeter? meter = null, Vault? vault = null, Agenda? agenda = null, MeetingDesk? desk = null)
+    {
+        _desk = desk;
+        if (desk is not null)
+        {
+            void Refresh()
+            {
+                try
+                {
+                    BeginInvoke(() =>
+                    {
+                        Post(new { type = "meetings", items = MeetingsData() });
+                        if (_openMeeting is { } open && MeetingData(open) is { } m) Post(new { type = "meeting", meeting = m });
+                    });
+                }
+                catch { }
+            }
+            desk.Meetings.Changed += Refresh;
+            FormClosed += (_, _) => desk.Meetings.Changed -= Refresh;
+        }
         _s = s;
         _memory = memory;
         _meter = meter;
@@ -185,6 +234,7 @@ sealed class SettingsWindow : Form
                     memory = _memory?.Facts ?? [],
                     vault = VaultList(),
                     agenda = _agenda is null ? null : AgendaData(),
+                    meetings = MeetingsData(),
                     usage = Usage(),
                 });
                 if (_voiceStatus.Length > 0) Post(new { type = "voiceStatus", text = _voiceStatus });
@@ -243,6 +293,39 @@ sealed class SettingsWindow : Form
             case "agendaRemove":
                 _agenda?.Remove(msg["id"]?.ToString() ?? "");
                 break;
+
+            // Reuniones: abrir, oír una voz, nombrarla, rehacer el acta, borrar.
+            case "meetingOpen":
+                _openMeeting = msg["id"]?.GetValue<string>();
+                if (_openMeeting is not null && MeetingData(_openMeeting) is { } opened) Post(new { type = "meeting", open = true, meeting = opened });
+                break;
+            case "meetingClip":
+            {
+                var wav = _desk?.Work.Clip(msg["id"]?.GetValue<string>() ?? "", msg["speaker"]?.GetValue<string>() ?? "");
+                Post(new { type = "meetingClip", speaker = msg["speaker"]?.GetValue<string>(), wav = wav is null ? "" : Convert.ToBase64String(wav) });
+                break;
+            }
+            case "meetingName":
+            {
+                var id = msg["id"]?.GetValue<string>() ?? "";
+                var name = msg["name"]?.GetValue<string>() ?? "";
+                await Task.Run(() => _desk?.Work.Rename(id, msg["speaker"]?.GetValue<string>() ?? "", name));
+                Log.Write($"reunión {id}: voz {msg["speaker"]} = «{name}»");
+                break;
+            }
+            case "meetingRedo":
+            {
+                var id = msg["id"]?.GetValue<string>() ?? "";
+                if (_desk is { } d) _ = Task.Run(() => d.Work.RedoAsync(id));
+                break;
+            }
+            case "meetingDelete":
+            {
+                var id = msg["id"]?.GetValue<string>() ?? "";
+                Log.Write($"reunión {id}: borrada desde Ajustes → {_desk?.Meetings.Delete(id)}");
+                _openMeeting = null;
+                break;
+            }
 
             case "forgetFact":
                 var fact = msg["text"]?.GetValue<string>() ?? "";

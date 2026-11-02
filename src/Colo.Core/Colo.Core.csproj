@@ -9,5 +9,7 @@
     <PackageReference Include="Whisper.net" Version="1.9.1" />
     <PackageReference Include="Whisper.net.Runtime" Version="1.9.1" />
     <PackageReference Include="NAudio.Core" Version="2.2.1" />
+    <!-- Quién habla, por la voz (reuniones): sherpa-onnx (k2-fsa, Apache 2.0). -->
+    <PackageReference Include="org.k2fsa.sherpa.onnx" Version="2.0.1" />
   </ItemGroup>
 </Project>

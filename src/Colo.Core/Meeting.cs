@@ -116,7 +116,7 @@ public sealed class Downsampler(int sourceRate, int targetRate = 16000)
     }
 }
 
-/// <summary>Lecturas del WAV de la reunión (16 kHz estéreo: izquierda = micrófono, derecha = sonido del PC).</summary>
+/// <summary>El WAV de la reunión (16 kHz estéreo: izquierda = micrófono, derecha = sonido del PC).</summary>
 public static class MeetingAudio
 {
     public const int Rate = 16000, Frame = 1600; // 100 ms
@@ -128,100 +128,147 @@ public static class MeetingAudio
     public static long RepairHeader(string wav)
     {
         using var f = new FileStream(wav, FileMode.Open, FileAccess.ReadWrite);
-        using var r = new BinaryReader(f);
+        var (start, _) = Layout(f);
+        if (start < 0) return 0;
+        var real = f.Length - start;
+        real -= real % 4;
         using var w = new BinaryWriter(f);
+        f.Position = start - 4;
+        w.Write((int)real);
+        f.Position = 4;
+        w.Write((int)(f.Length - 8));
+        return real;
+    }
+
+    /// <summary>Dónde empiezan los datos y cuántos pares de muestras hay de verdad (aunque la cabecera vaya atrasada).</summary>
+    static (long Start, long Frames) Layout(FileStream f)
+    {
+        var r = new BinaryReader(f);
         string Id() => Encoding.ASCII.GetString(r.ReadBytes(4));
-        if (f.Length < 44 || Id() != "RIFF") return 0;
+        f.Position = 0;
+        if (f.Length < 44 || Id() != "RIFF") return (-1, 0);
         f.Position = 12;
         while (f.Position + 8 <= f.Length)
         {
             var id = Id();
             var len = r.ReadInt32();
-            if (id == "data")
-            {
-                var real = f.Length - f.Position;
-                real -= real % 4;
-                if (len != real)
-                {
-                    f.Position -= 4;
-                    w.Write((int)real);
-                    f.Position = 4;
-                    w.Write((int)(f.Length - 8));
-                }
-                return real;
-            }
+            if (id == "data") return (f.Position, (f.Length - f.Position) / 4);
             f.Position += len + (len & 1);
         }
-        return 0;
+        return (-1, 0);
     }
 
-    /// <summary>Volumen (RMS) de cada canal cada 100 ms, leyendo el archivo por partes.</summary>
-    public static (float[] Mic, float[] Pc) Envelope(string wav)
+    /// <summary>Pares de muestras que ya hay en el archivo (se puede mirar mientras se graba).</summary>
+    public static long Frames(string wav)
     {
-        using var r = new WaveFileReader(wav);
-        var frames = (int)(r.SampleCount / Frame) + 1;
-        var mic = new float[frames];
-        var pc = new float[frames];
-        var buf = new byte[Frame * 4];
-        for (var f = 0; f < frames; f++)
+        using var f = new FileStream(wav, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        return Math.Max(0, Layout(f).Frames);
+    }
+
+    /// <summary>Un tramo de los dos canales, desde from (en muestras), mientras se graba también.</summary>
+    public static (float[] Mic, float[] Pc) Read(string wav, long from, long count)
+    {
+        using var f = new FileStream(wav, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        var (start, frames) = Layout(f);
+        count = Math.Max(0, Math.Min(count, frames - from));
+        var bytes = new byte[count * 4];
+        f.Position = start + from * 4;
+        var got = 0;
+        while (got < bytes.Length && f.Read(bytes, got, bytes.Length - got) is var n and > 0) got += n;
+        var frames2 = got / 4;
+        var mic = new float[frames2];
+        var pc = new float[frames2];
+        for (var i = 0; i < frames2; i++)
         {
-            var n = r.Read(buf, 0, buf.Length) / 4;
-            if (n <= 0) break;
-            double l = 0, rr = 0;
-            for (var i = 0; i < n; i++)
-            {
-                var a = BitConverter.ToInt16(buf, i * 4) / 32768.0;
-                var b = BitConverter.ToInt16(buf, i * 4 + 2) / 32768.0;
-                l += a * a;
-                rr += b * b;
-            }
-            mic[f] = (float)Math.Sqrt(l / n);
-            pc[f] = (float)Math.Sqrt(rr / n);
+            mic[i] = BitConverter.ToInt16(bytes, i * 4) / 32768f;
+            pc[i] = BitConverter.ToInt16(bytes, i * 4 + 2) / 32768f;
         }
         return (mic, pc);
     }
 
-    /// <summary>Quién sonaba más en ese tramo: «mic» (el usuario) o «pc» (los demás).</summary>
-    public static string Channel((float[] Mic, float[] Pc) env, double start, double end)
+    public static float[] Mix(float[] mic, float[] pc)
     {
-        var a = Math.Clamp((int)(start * 10), 0, env.Mic.Length - 1);
-        var b = Math.Clamp((int)Math.Ceiling(end * 10), a + 1, env.Mic.Length);
-        double m = 0, p = 0;
-        for (var i = a; i < b; i++) { m += env.Mic[i]; p += env.Pc[i]; }
-        return m >= p ? "mic" : "pc";
+        var m = new float[mic.Length];
+        for (var i = 0; i < m.Length; i++) m[i] = (mic[i] + pc[i]) / 2;
+        return m;
     }
 
-    /// <summary>El audio en trozos mono (mezcla de los dos canales) de seconds segundos, para transcribir por partes.</summary>
-    public static IEnumerable<(double At, float[] Samples)> MonoChunks(string wav, int seconds)
+    /// <summary>
+    /// Dónde cortar un trozo: el medio segundo más callado de los últimos window segundos antes de at (no se corta
+    /// una palabra por la mitad). Muestras desde el inicio del tramo.
+    /// </summary>
+    public static int QuietCut(float[] mono, int at, int window)
     {
-        using var r = new WaveFileReader(wav);
-        var buf = new byte[Rate * 4 * seconds];
-        for (var at = 0.0; ; at += seconds)
+        var half = Rate / 2;
+        var best = at;
+        var bestE = double.MaxValue;
+        for (var s = Math.Max(0, at - window); s + half <= Math.Min(at, mono.Length); s += Frame)
         {
-            var n = r.Read(buf, 0, buf.Length) / 4;
-            if (n <= 0) yield break;
-            var s = new float[n];
-            for (var i = 0; i < n; i++) s[i] = (BitConverter.ToInt16(buf, i * 4) + BitConverter.ToInt16(buf, i * 4 + 2)) / 65536f;
-            yield return (at, s);
+            double e = 0;
+            for (var i = s; i < s + half; i++) e += mono[i] * mono[i];
+            if (e < bestE) { bestE = e; best = s + half / 2; }
         }
+        return Math.Clamp(best, Rate, mono.Length);
+    }
+
+    /// <summary>Qué parte de la energía de ese tramo vino del micrófono (0–1).</summary>
+    public static double MicShare(float[] mic, float[] pc, int from, int to)
+    {
+        double m = 0, p = 0;
+        for (var i = Math.Max(0, from); i < Math.Min(to, mic.Length); i++) { m += mic[i] * mic[i]; p += pc[i] * pc[i]; }
+        return m + p == 0 ? 0.5 : m / (m + p);
+    }
+
+    /// <summary>
+    /// Sin el reconocedor de voces: turnos por canal (0 = micrófono, 1 = sonido del PC), cada 100 ms el que suena
+    /// más; tramos de menos de medio segundo se juntan con el vecino.
+    /// </summary>
+    public static List<Turn> ChannelTurns(float[] mic, float[] pc)
+    {
+        var turns = new List<Turn>();
+        for (var f = 0; f + Frame <= mic.Length; f += Frame)
+        {
+            double m = 0, p = 0;
+            for (var i = f; i < f + Frame; i++) { m += mic[i] * mic[i]; p += pc[i] * pc[i]; }
+            m = Math.Sqrt(m / Frame); p = Math.Sqrt(p / Frame);
+            if (Math.Max(m, p) < 0.01) continue;
+            var who = m >= p ? 0 : 1;
+            double s = f / (double)Rate, e = (f + Frame) / (double)Rate;
+            if (turns.Count > 0 && turns[^1].Speaker == who && s - turns[^1].End < 0.6) turns[^1] = turns[^1] with { End = e };
+            else turns.Add(new Turn(s, e, who));
+        }
+        return turns.Where(t => t.End - t.Start >= 0.5).ToList();
+    }
+
+    /// <summary>WAV mono de 16 kHz (trocito para oír a alguien, o para transcribir).</summary>
+    public static byte[] Wav(float[] mono, double from, double to)
+    {
+        var a = Math.Clamp((int)(from * Rate), 0, mono.Length);
+        var b = Math.Clamp((int)(to * Rate), a, mono.Length);
+        return Core.Wav.Encode(mono.AsSpan(a, b - a));
     }
 }
 
 // ───────────────────────── trabajos
 
 /// <summary>
-/// Una reunión grabada y su camino: recorded → encoded (audio comprimido) → transcribed → done. Si un paso falla
-/// queda con Error y se reintenta al arrancar (hasta 3 veces); el audio no se borra hasta que todo sale bien.
+/// Una reunión grabada y su camino: recorded (con la transcripción avanzando mientras se graba) → transcribed →
+/// done. Si un paso falla queda con Error y se reintenta al arrancar (hasta 3 veces); el audio no se borra hasta que
+/// todo sale bien. Lo del acta (título, resumen, pendientes, tareas…) queda aquí para consultarlo.
 /// </summary>
 public sealed record MeetingJob(string Id, string Dir, DateTime Started, double Seconds, string Status = "recorded",
     string Error = "", int Attempts = 0, string Title = "", string Project = "", string Summary = "",
-    List<string>? Decisions = null);
+    List<string>? Decisions = null, List<string>? Pending = null, List<string>? Tasks = null,
+    List<string>? FollowUps = null, List<string>? Participants = null);
 
 public sealed class Meetings
 {
     readonly string _path;
     readonly object _lock = new();
     List<MeetingJob> _jobs = [];
+
+    /// <summary>Cambió algo (Ajustes se refresca).</summary>
+    public event Action? Changed;
 
     public Meetings(string path)
     {
@@ -231,6 +278,8 @@ public sealed class Meetings
     }
 
     public IReadOnlyList<MeetingJob> All { get { lock (_lock) return [.. _jobs]; } }
+
+    public MeetingJob? Find(string id) { lock (_lock) return _jobs.FirstOrDefault(j => j.Id == id); }
 
     public MeetingJob Add(string dir, DateTime started, double seconds)
     {
@@ -248,6 +297,21 @@ public sealed class Meetings
             Save();
         }
         return job;
+    }
+
+    /// <summary>Borra la reunión entera (su carpeta con audio, transcripción y acta). Las tareas de la agenda quedan.</summary>
+    public bool Delete(string id)
+    {
+        MeetingJob? job;
+        lock (_lock)
+        {
+            job = _jobs.FirstOrDefault(j => j.Id == id);
+            if (job is null) return false;
+            _jobs.Remove(job);
+            Save();
+        }
+        try { if (Directory.Exists(job.Dir)) Directory.Delete(job.Dir, true); } catch { }
+        return true;
     }
 
     /// <summary>
@@ -290,7 +354,7 @@ public sealed class Meetings
         if (all.Count == 0) return "ok: no hay reuniones grabadas";
         return "ok:\n" + string.Join("\n", all.Select(j =>
             $"{j.Started:dd/MM HH:mm} · {Minutes(j.Seconds)} · {(j.Title.Length > 0 ? j.Title : "(sin título)")}"
-            + (j.Project.Length > 0 ? $" [{j.Project}]" : "") + " · " + StatusText(j) + $" · {j.Dir}"));
+            + (j.Project.Length > 0 ? $" [{j.Project}]" : "") + " · " + StatusText(j)));
     }
 
     public static string StatusText(MeetingJob j) => j.Status switch
@@ -301,29 +365,41 @@ public sealed class Meetings
         _ => "transcribiendo",
     };
 
-    static string Minutes(double s) => s < 3600 ? $"{(int)(s / 60)} min" : $"{(int)(s / 3600)} h {(int)(s % 3600 / 60):00} min";
+    public static string Minutes(double s) => s < 3600 ? $"{(int)(s / 60)} min" : $"{(int)(s / 3600)} h {(int)(s % 3600 / 60):00} min";
 
-    /// <summary>Para agenda search: actas (título, resumen, decisiones, proyecto) y, si no, la transcripción.</summary>
+    static string[] Words(string q) => Extract.Fold(q).Split([' ', ',', '.', '?', '¿'], StringSplitOptions.RemoveEmptyEntries).Where(w => w.Length > 1).ToArray();
+
+    static string Meta(MeetingJob j) => Extract.Fold(string.Join(" ", new[] { j.Title, j.Project, j.Summary, j.Started.ToString("dd/MM/yyyy") }
+        .Concat(j.Decisions ?? []).Concat(j.Pending ?? []).Concat(j.Tasks ?? []).Concat(j.FollowUps ?? []).Concat(j.Participants ?? [])));
+
+    /// <summary>
+    /// Para agenda search: lo del acta (título, resumen, decisiones, pendientes, quién quedó con qué) y, si no, la
+    /// transcripción.
+    /// </summary>
     public IEnumerable<string> Search(string query)
     {
-        var words = Extract.Fold(query).Split([' ', ',', '.'], StringSplitOptions.RemoveEmptyEntries).Where(w => w.Length > 1).ToArray();
+        var words = Words(query);
         if (words.Length == 0) yield break;
         var n = 0;
         foreach (var j in All.Where(j => j.Status == "done").OrderByDescending(j => j.Started))
         {
             if (n >= 6) yield break;
-            var meta = Extract.Fold($"{j.Title} {j.Project} {j.Summary} {string.Join(" ", j.Decisions ?? [])}");
             var head = $"Reunión {j.Started:dd/MM/yyyy HH:mm} «{j.Title}»{(j.Project.Length > 0 ? $" [{j.Project}]" : "")}";
-            if (words.All(meta.Contains))
+            if (words.All(Meta(j).Contains))
             {
                 n++;
-                yield return $"{head}: {j.Summary}" + (j.Decisions is { Count: > 0 } d ? " Decisiones: " + string.Join("; ", d) : "")
-                    + $" (acta en {Path.Combine(j.Dir, "ata.md")})";
+                yield return $"{head}: {j.Summary}"
+                    + (j.Participants is { Count: > 0 } who ? " Participantes: " + string.Join(", ", who) + "." : "")
+                    + (j.Decisions is { Count: > 0 } d ? " Decisiones: " + string.Join("; ", d) + "." : "")
+                    + (j.Pending is { Count: > 0 } p ? " Pendiente: " + string.Join("; ", p) + "." : "")
+                    + (j.Tasks is { Count: > 0 } t ? " Tareas: " + string.Join("; ", t) + "." : "")
+                    + (j.FollowUps is { Count: > 0 } f ? " Seguimiento: " + string.Join("; ", f) + "." : "")
+                    + " (más: meeting read)";
                 continue;
             }
-            var t = Path.Combine(j.Dir, "transcricao.md");
-            if (!File.Exists(t)) continue;
-            var text = File.ReadAllText(t);
+            var path = Path.Combine(j.Dir, "transcricao.md");
+            if (!File.Exists(path)) continue;
+            var text = File.ReadAllText(path);
             var fold = Extract.Fold(text);
             if (!words.All(fold.Contains)) continue;
             n++;
@@ -331,6 +407,18 @@ public sealed class Meetings
             var from = Math.Clamp(at - 120, 0, text.Length);
             yield return $"{head}, en la transcripción: …{text.Substring(from, Math.Min(280, text.Length - from)).Replace('\n', ' ')}…";
         }
+    }
+
+    /// <summary>meeting read: el acta entera de la reunión que encaja (por título, proyecto, fecha o gente); vacío = la última.</summary>
+    public string Read(string query)
+    {
+        var words = Words(query);
+        var job = All.Where(j => j.Status == "done").OrderByDescending(j => j.Started)
+            .FirstOrDefault(j => words.Length == 0 || words.All(Meta(j).Contains));
+        if (job is null) return "error: no encuentro esa reunión (mira meeting list)";
+        var ata = Path.Combine(job.Dir, "ata.md");
+        var text = File.Exists(ata) ? File.ReadAllText(ata) : job.Summary;
+        return "ok:\n" + (text.Length > 8000 ? text[..8000] + "\n…" : text);
     }
 
     void Save()
@@ -343,89 +431,229 @@ public sealed class Meetings
             File.Move(tmp, _path, overwrite: true);
         }
         catch { }
+        Changed?.Invoke();
     }
 }
 
-// ───────────────────────── transcripción y acta
+// ───────────────────────── transcripción con voces
 
-/// <summary>Una frase de la transcripción: cuándo, quién (hablante del diarizador) y por qué canal sonó.</summary>
-public sealed record Utterance(double Start, double End, string Speaker, string Channel, string Text);
-
-public static class MeetingText
+/// <summary>Una voz de la reunión: S1, S2… con el nombre que le dio el usuario (o reconocido por la huella).</summary>
+public sealed class MeetingSpeaker
 {
-    /// <summary>Palabras de Scribe (con speaker_id y tiempos) → frases por hablante.</summary>
-    public static List<Utterance> FromScribe(JsonNode scribe, (float[] Mic, float[] Pc)? env)
+    public string Id { get; set; } = "";
+    public string Name { get; set; } = "";
+    /// <summary>El nombre vino de reconocer la voz (no lo escribió el usuario en esta reunión).</summary>
+    public bool Auto { get; set; }
+    public float[]? Voice { get; set; }
+    public double Seconds { get; set; }
+    public double MicSeconds { get; set; }
+    /// <summary>Duración del trocito guardado en clips/Id.wav (el turno más largo, hasta 12 s).</summary>
+    public double ClipSeconds { get; set; }
+}
+
+public sealed record TranscriptLine(double Start, double End, string Speaker, string Text);
+
+/// <summary>
+/// La transcripción que va creciendo mientras se graba (transcricao.json): hasta dónde va, las frases con su voz,
+/// las voces y, en reuniones largas, notas por bloque de 20 min (para que el acta no tenga que leerlo todo).
+/// </summary>
+public sealed class MeetingTranscript
+{
+    public const string FileName = "transcricao.json";
+    /// <summary>«voices» (por la voz) o «channels» (sin reconocedor: micrófono y computador).</summary>
+    public string Mode { get; set; } = "";
+    public double Covered { get; set; }
+    public List<TranscriptLine> Lines { get; set; } = [];
+    public List<MeetingSpeaker> Speakers { get; set; } = [];
+    public List<string> Notes { get; set; } = [];
+
+    public static MeetingTranscript Load(string dir)
     {
-        var list = new List<Utterance>();
-        var names = new Dictionary<string, string>();
-        string? speaker = null;
-        double start = 0, end = 0;
-        var sb = new StringBuilder();
-        void Flush()
-        {
-            var text = sb.ToString().Trim();
-            if (speaker is not null && text.Length > 0)
-                list.Add(new Utterance(start, end, names[speaker], env is { } e ? MeetingAudio.Channel(e, start, end) : "", text));
-            sb.Clear();
-        }
-        foreach (var w in scribe["words"] as JsonArray ?? [])
-        {
-            var type = w?["type"]?.GetValue<string>() ?? "word";
-            var text = w?["text"]?.GetValue<string>() ?? "";
-            if (type == "audio_event") continue;
-            if (type == "spacing") { if (sb.Length > 0) sb.Append(text); continue; }
-            var id = w?["speaker_id"]?.GetValue<string>() ?? "speaker_0";
-            if (!names.ContainsKey(id)) names[id] = $"P{names.Count + 1}";
-            var s = w?["start"]?.GetValue<double>() ?? end;
-            if (id != speaker) { Flush(); speaker = id; start = s; }
-            sb.Append(text);
-            end = w?["end"]?.GetValue<double>() ?? s;
-        }
-        Flush();
-        // Sin palabras (respuesta sin tiempos): el texto entero.
-        if (list.Count == 0 && scribe["text"]?.GetValue<string>() is { Length: > 0 } all) list.Add(new Utterance(0, 0, "", "", all.Trim()));
-        return list;
+        var path = Path.Combine(dir, FileName);
+        try { if (File.Exists(path)) return JsonSerializer.Deserialize<MeetingTranscript>(File.ReadAllText(path)) ?? new(); }
+        catch { }
+        return new();
     }
 
-    public static string Markdown(IEnumerable<Utterance> utterances, DateTime started, double seconds)
+    public void Save(string dir, DateTime started)
+    {
+        var path = Path.Combine(dir, FileName);
+        File.WriteAllText(path + ".tmp", JsonSerializer.Serialize(this));
+        File.Move(path + ".tmp", path, overwrite: true);
+        File.WriteAllText(Path.Combine(dir, "transcricao.md"), Markdown(started));
+    }
+
+    public string Label(string id) => Speakers.FirstOrDefault(s => s.Id == id) is { Name.Length: > 0 } s ? s.Name : id;
+
+    /// <summary>
+    /// La voz de ese audio en la reunión: la más parecida si pasa el umbral (y su huella se afina con lo nuevo);
+    /// si no, una nueva (S1, S2…), con nombre si es alguien que el usuario ya nombró otra vez.
+    /// </summary>
+    public MeetingSpeaker Assign(float[]? voice, double seconds, People? people)
+    {
+        MeetingSpeaker? best = null;
+        var score = -1.0;
+        if (voice is { Length: > 0 })
+            foreach (var s in Speakers.Where(s => s.Voice is not null))
+                if (VoiceMath.Cos(s.Voice, voice) is var c && c > score) { score = c; best = s; }
+        if (best is not null && score >= VoiceMath.Same)
+        {
+            best.Voice = VoiceMath.Mix(best.Voice, best.Seconds, voice!, seconds);
+            if (best.Name.Length == 0 && people?.Match(best.Voice) is { } known) { best.Name = known; best.Auto = true; }
+            return best;
+        }
+        // Sin huella (tramo demasiado corto): la última voz que habló.
+        if (voice is not { Length: > 0 } && Speakers.Count > 0) return Speakers[^1];
+        var n = new MeetingSpeaker { Id = $"S{Speakers.Count + 1}", Voice = voice is { Length: > 0 } ? VoiceMath.Mix(null, 0, voice, 1) : null };
+        if (people?.Match(n.Voice) is { } name) { n.Name = name; n.Auto = true; }
+        Speakers.Add(n);
+        return n;
+    }
+
+    /// <summary>
+    /// El usuario dice quién es esa voz. Si otra voz de la reunión ya tiene ese nombre, son la misma persona: se
+    /// juntan. La huella se guarda en People para reconocerla en las próximas.
+    /// </summary>
+    public void Rename(string id, string name, People? people, DateTime now, string? dir = null)
+    {
+        name = name.Trim();
+        var s = Speakers.FirstOrDefault(x => x.Id == id);
+        if (s is null) return;
+        s.Name = name;
+        s.Auto = false;
+        var twin = name.Length == 0 ? null : Speakers.FirstOrDefault(x => x != s && string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase));
+        if (twin is not null)
+        {
+            // Queda la que habló primero; la otra pasa a ella.
+            var (keep, gone) = Speakers.IndexOf(twin) < Speakers.IndexOf(s) ? (twin, s) : (s, twin);
+            keep.Voice = gone.Voice is null ? keep.Voice : VoiceMath.Mix(keep.Voice, keep.Seconds, gone.Voice, gone.Seconds);
+            keep.Seconds += gone.Seconds;
+            keep.MicSeconds += gone.MicSeconds;
+            keep.Name = name;
+            keep.Auto = false;
+            if (dir is not null && gone.ClipSeconds > keep.ClipSeconds)
+                try { File.Move(Path.Combine(dir, "clips", gone.Id + ".wav"), Path.Combine(dir, "clips", keep.Id + ".wav"), true); keep.ClipSeconds = gone.ClipSeconds; } catch { }
+            Lines = Lines.Select(l => l.Speaker == gone.Id ? l with { Speaker = keep.Id } : l).ToList();
+            Speakers.Remove(gone);
+            s = keep;
+        }
+        if (name.Length > 0) people?.Learn(name, s.Voice, now);
+    }
+
+    static string Clock(double t) => TimeSpan.FromSeconds(t).ToString(t >= 3600 ? @"h\:mm\:ss" : @"m\:ss");
+
+    /// <summary>
+    /// Para el modelo, lo más corto posible: frases seguidas de la misma voz juntas, la hora solo al cambiar de voz,
+    /// la voz por su id (S1…; los nombres van en la leyenda, así nombrar a alguien no cambia esto).
+    /// </summary>
+    public string Compact(double from = 0, double to = double.MaxValue)
     {
         var sb = new StringBuilder();
-        sb.AppendLine($"# Transcrição · {started:dd/MM/yyyy HH:mm} · {TimeSpan.FromSeconds(seconds):h\\:mm\\:ss}");
-        sb.AppendLine();
-        sb.AppendLine("mic = microfone (você) · pc = som do computador (os outros) · P1, P2… = vozes diferentes");
-        sb.AppendLine();
-        foreach (var u in utterances)
+        string? last = null;
+        foreach (var l in Lines.Where(l => l.Start >= from && l.Start < to))
         {
-            var who = string.Join(" · ", new[] { u.Speaker, u.Channel }.Where(x => x.Length > 0));
-            sb.AppendLine($"[{TimeSpan.FromSeconds(u.Start):h\\:mm\\:ss}]{(who.Length > 0 ? " " + who + ":" : "")} {u.Text}");
+            if (l.Speaker != last) { sb.Append(sb.Length > 0 ? "\n" : "").Append($"[{Clock(l.Start)}] {l.Speaker}: "); last = l.Speaker; }
+            else sb.Append(' ');
+            sb.Append(l.Text);
         }
         return sb.ToString();
     }
 
+    /// <summary>Quién es cada voz: nombre, cuánto habló y cuánto por el micrófono (el del usuario).</summary>
+    public string Legend()
+    {
+        if (Mode == "channels") return "S1 = micrófono del usuario (él y quien esté a su lado) · S2 = sonido del ordenador (los demás)";
+        return string.Join("\n", Speakers.Where(s => s.Seconds >= 2).Select(s =>
+            $"{s.Id} = {(s.Name.Length > 0 ? s.Name + (s.Auto ? " (reconocido por la voz)" : "") : "sin nombre")} · habla {Math.Max(1, (int)Math.Round(s.Seconds / 60))} min"
+            + $" · {(int)Math.Round(100 * s.MicSeconds / Math.Max(1, s.Seconds))}% por el micrófono"));
+    }
+
+    public string Markdown(DateTime started)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"# Transcrição · {started:dd/MM/yyyy HH:mm} · {TimeSpan.FromSeconds(Covered):h\\:mm\\:ss}");
+        sb.AppendLine();
+        string? last = null;
+        foreach (var l in Lines)
+        {
+            if (l.Speaker != last) { sb.AppendLine().Append($"[{Clock(l.Start)}] **{Label(l.Speaker)}:** "); last = l.Speaker; }
+            else sb.Append(' ');
+            sb.Append(l.Text);
+        }
+        return sb.AppendLine().ToString();
+    }
+}
+
+// ───────────────────────── acta
+
+public static class MeetingText
+{
+    /// <summary>Hasta aquí el acta lee la transcripción entera (≈15 mil tokens, más de una hora de reunión).</summary>
+    public const int FullLimit = 60_000;
+    /// <summary>Bloques de las reuniones largas: se resumen mientras se graba.</summary>
+    public const double Block = 1200;
+
     public const string MinutesPrompt = """
-Eres quien toma el acta de una reunión del usuario. Recibes la transcripción: «mic» es el usuario (su micrófono),
-«pc» son los demás (sonido del ordenador); P1, P2… son voces distintas. También recibes sus proyectos.
+Eres quien toma el acta de una reunión del usuario. Recibes quién es cada voz (S1, S2… con su nombre si se sabe y
+cuánto habló por el micrófono, que es el del usuario: quien habla casi todo por el micrófono suele ser él, salvo que
+casi todos lo hagan, que es una reunión presencial), sus proyectos y la transcripción (o, en reuniones largas,
+notas por bloque y el final transcrito).
 Devuelve SOLO un objeto JSON, en el idioma de la reunión:
-{"title": "título corto", "summary": "3 a 6 frases: de qué se habló y qué quedó",
+{"title": "nombre corto y concreto de la reunión según lo que se habló",
+ "summary": "3 a 6 frases: de qué se habló y qué quedó",
+ "participants": ["nombres, o S3 si no se sabe"],
  "project": "nombre del proyecto: uno de la lista si es ese (escrito igual); uno nuevo si es claramente otro; \"\" si no hay",
  "project_status": "cómo va el proyecto en pocas palabras, solo si se dijo",
  "decisions": ["…"],
+ "pending": [{"text": "lo que quedó abierto o sin respuesta", "who": "quién lo tiene, o \"\""}],
  "my_tasks": [{"text": "lo que tiene que hacer el usuario", "due": "yyyy-MM-dd HH:mm o \"\""}],
- "others_tasks": [{"text": "…", "who": "nombre o «P2» si no se dijo", "due": ""}],
+ "others_tasks": [{"text": "…", "who": "nombre, o S2 si no se sabe", "due": ""}],
+ "follow_ups": [{"text": "algo a revisar o retomar más adelante", "who": "", "when": "yyyy-MM-dd HH:mm o \"\""}],
  "reminders": [{"text": "…", "remind": "yyyy-MM-dd HH:mm"}]}
-Solo lo que se dijo; nada inventado. Fechas relativas («el viernes») a partir de la fecha de la reunión. Tareas
-concretas, una frase cada una, sin repetir.
+Usa los nombres cuando los haya. Solo lo que se dijo; nada inventado. Fechas relativas («el viernes») a partir de
+la fecha de la reunión. Tareas concretas, una frase cada una, sin repetir.
 """;
 
-    /// <summary>La llamada al modelo para el acta.</summary>
-    public static JsonObject MinutesRequest(Settings s, string transcript, MeetingJob job, Agenda agenda)
+    public const string NotesPrompt = """
+Resume este bloque de una reunión para quien hará el acta después: temas, decisiones, lo pendiente, quién quedó
+con qué (con su S1, S2…) y fechas dichas. Viñetas cortas, nada inventado, en el idioma de la reunión.
+""";
+
+    static JsonObject Call(Settings s, string instructions, string text, string? effort, bool json)
+    {
+        var body = new JsonObject
+        {
+            ["model"] = s.Model,
+            ["instructions"] = instructions,
+            ["input"] = new JsonArray(new JsonObject
+            {
+                ["role"] = "user",
+                ["content"] = new JsonArray(new JsonObject { ["type"] = "input_text", ["text"] = text }),
+            }),
+            ["store"] = false,
+            ["prompt_cache_key"] = "colo-reunion",
+        };
+        if (json) body["text"] = new JsonObject { ["format"] = new JsonObject { ["type"] = "json_object" } };
+        if (effort is not null && !string.IsNullOrEmpty(s.ReasoningEffort)) body["reasoning"] = new JsonObject { ["effort"] = effort };
+        return body;
+    }
+
+    /// <summary>Notas de un bloque (barato: sin razonamiento).</summary>
+    public static JsonObject NotesRequest(Settings s, string block) => Call(s, NotesPrompt, block, "none", false);
+
+    /// <summary>
+    /// La llamada del acta, económica: la transcripción compacta entera si cabe; si no, las notas de los bloques ya
+    /// resumidos y solo el final transcrito.
+    /// </summary>
+    public static JsonObject MinutesRequest(Settings s, MeetingTranscript t, MeetingJob job, Agenda agenda)
     {
         var ctx = new StringBuilder();
         ctx.AppendLine($"Fecha de la reunión: {job.Started.ToString("dddd yyyy-MM-dd HH:mm", CultureInfo.GetCultureInfo("es"))} ({(int)(job.Seconds / 60)} min)");
+        ctx.AppendLine().AppendLine("Voces:").AppendLine(t.Legend());
         var projects = agenda.Projects;
         if (projects.Count > 0)
         {
-            ctx.AppendLine("Proyectos:");
+            ctx.AppendLine().AppendLine("Proyectos:");
             foreach (var p in projects)
             {
                 var open = agenda.Items.Where(i => !i.Done && i.Project == p.Name).Take(8).Select(i => i.Text).ToList();
@@ -433,21 +661,14 @@ concretas, una frase cada una, sin repetir.
                     + (open.Count > 0 ? " · abiertas: " + string.Join("; ", open) : ""));
             }
         }
-        ctx.AppendLine().AppendLine(transcript);
-        var body = new JsonObject
+        if (t.Notes.Count > 0)
         {
-            ["model"] = s.Model,
-            ["instructions"] = MinutesPrompt,
-            ["input"] = new JsonArray(new JsonObject
-            {
-                ["role"] = "user",
-                ["content"] = new JsonArray(new JsonObject { ["type"] = "input_text", ["text"] = ctx.ToString() }),
-            }),
-            ["text"] = new JsonObject { ["format"] = new JsonObject { ["type"] = "json_object" } },
-            ["store"] = false,
-        };
-        if (!string.IsNullOrEmpty(s.ReasoningEffort)) body["reasoning"] = new JsonObject { ["effort"] = s.ReasoningEffort };
-        return body;
+            for (var i = 0; i < t.Notes.Count; i++)
+                ctx.AppendLine().AppendLine($"Notas del bloque {i + 1} ({i * Block / 60:0}–{(i + 1) * Block / 60:0} min):").AppendLine(t.Notes[i]);
+            ctx.AppendLine().AppendLine($"Transcripción desde el minuto {t.Notes.Count * Block / 60:0}:").AppendLine(t.Compact(t.Notes.Count * Block));
+        }
+        else ctx.AppendLine().AppendLine("Transcripción:").AppendLine(t.Compact());
+        return Call(s, MinutesPrompt, ctx.ToString(), s.ReasoningEffort.Length > 0 ? "low" : null, true);
     }
 
     /// <summary>El JSON del acta (tolera texto alrededor).</summary>
@@ -461,18 +682,33 @@ concretas, una frase cada una, sin repetir.
 
     static string S(JsonNode? n, string key) => n?[key] is JsonValue v && v.TryGetValue<string>(out var s) ? s.Trim() : "";
     static IEnumerable<JsonNode> Arr(JsonNode? n, string key) => (n?[key] as JsonArray ?? []).Where(x => x is not null)!;
+    static IEnumerable<string> Strings(JsonNode? n, string key) => Arr(n, key).Select(d => d is JsonValue v && v.TryGetValue<string>(out var s) ? s.Trim() : "").Where(s => s.Length > 0);
 
-    /// <summary>Lleva el acta a la agenda (proyecto, tareas suyas y de otros, recordatorios) y devuelve el .md.</summary>
-    public static (string Markdown, int Tasks) Apply(JsonObject m, MeetingJob job, Agenda agenda, DateTime now)
+    /// <summary>Así empieza el Source de lo que la reunión llevó a la agenda (para rehacer el acta sin duplicar).</summary>
+    public static string SourcePrefix(MeetingJob job) => $"reunión {job.Started:dd/MM HH:mm}";
+
+    /// <summary>
+    /// Lleva el acta a la agenda (proyecto, tareas suyas y de otros, seguimientos, recordatorios), devuelve el .md y
+    /// la reunión con lo del acta (para consultarlo después).
+    /// </summary>
+    public static (string Markdown, int Tasks, MeetingJob Job) Apply(JsonObject m, MeetingJob job, Agenda agenda, DateTime now)
     {
         var title = S(m, "title");
         var project = S(m, "project");
         if (project.Length > 0) agenda.Project(project, S(m, "project_status"), "", "", now);
-        var source = $"reunión {job.Started:dd/MM HH:mm}" + (title.Length > 0 ? $" «{title}»" : "");
+        var source = SourcePrefix(job) + (title.Length > 0 ? $" «{title}»" : "");
         var tasks = 0;
+        // Al rehacer el acta, lo que ya se hizo no vuelve a aparecer abierto.
+        var closed = agenda.Items.Where(i => i.Done && i.Source.StartsWith(SourcePrefix(job), StringComparison.Ordinal)).Select(i => Extract.Fold(i.Text)).ToHashSet();
+        void Add(string text, DateTime? due, DateTime? remind, string who)
+        {
+            if (!closed.Contains(Extract.Fold(text))) agenda.Add(text, project, "", due, remind, "", who, source, now);
+        }
         var md = new StringBuilder();
         md.AppendLine($"# {(title.Length > 0 ? title : "Reunião")}");
         md.AppendLine($"{job.Started:dd/MM/yyyy HH:mm} · {(int)(job.Seconds / 60)} min" + (project.Length > 0 ? $" · {project}" : ""));
+        var people = Strings(m, "participants").ToList();
+        if (people.Count > 0) md.AppendLine().AppendLine("**Participantes:** " + string.Join(", ", people));
         md.AppendLine().AppendLine(S(m, "summary"));
         void Section(string head, IEnumerable<string> lines)
         {
@@ -481,14 +717,18 @@ concretas, una frase cada una, sin repetir.
             md.AppendLine().AppendLine($"## {head}");
             foreach (var x in l) md.AppendLine("- " + x);
         }
-        Section("Decisões", Arr(m, "decisions").Select(d => d is JsonValue v && v.TryGetValue<string>(out var s) ? s : ""));
+        static string Due(string d) => d.Length > 0 ? $" (até {d})" : "";
+        var decisions = Strings(m, "decisions").ToList();
+        Section("Decisões", decisions);
+        var pending = Arr(m, "pending").Select(p => (S(p, "who").Length > 0 ? S(p, "who") + ": " : "") + S(p, "text")).Where(p => !p.EndsWith(": ")).ToList();
+        Section("Pendências", pending);
         var mine = new List<string>();
         foreach (var t in Arr(m, "my_tasks"))
         {
             var text = S(t, "text");
             if (text.Length == 0) continue;
-            agenda.Add(text, project, "", Agenda.Date(S(t, "due")), null, "", "", source, now);
-            mine.Add(text + (S(t, "due").Length > 0 ? $" (até {S(t, "due")})" : ""));
+            Add(text, Agenda.Date(S(t, "due")), null, "");
+            mine.Add(text + Due(S(t, "due")));
             tasks++;
         }
         Section("Minhas tarefas", mine);
@@ -497,41 +737,63 @@ concretas, una frase cada una, sin repetir.
         {
             var text = S(t, "text");
             if (text.Length == 0) continue;
-            agenda.Add(text, project, "", Agenda.Date(S(t, "due")), null, "", S(t, "who"), source, now);
-            others.Add($"{S(t, "who")}: {text}" + (S(t, "due").Length > 0 ? $" (até {S(t, "due")})" : ""));
+            Add(text, Agenda.Date(S(t, "due")), null, S(t, "who"));
+            others.Add($"{S(t, "who")}: {text}" + Due(S(t, "due")));
             tasks++;
         }
         Section("Tarefas dos outros", others);
+        var follow = new List<string>();
+        foreach (var t in Arr(m, "follow_ups"))
+        {
+            var text = S(t, "text");
+            if (text.Length == 0) continue;
+            var when = Agenda.Date(S(t, "when"));
+            Add(text, null, when, S(t, "who"));
+            follow.Add((S(t, "who").Length > 0 ? S(t, "who") + ": " : "") + text + (S(t, "when").Length > 0 ? $" ({S(t, "when")})" : ""));
+            tasks++;
+        }
+        Section("Acompanhamentos", follow);
         var reminders = new List<string>();
         foreach (var t in Arr(m, "reminders"))
         {
             var text = S(t, "text");
             if (text.Length == 0) continue;
-            agenda.Add(text, project, "", null, Agenda.Date(S(t, "remind")), "", "", source, now);
+            Add(text, null, Agenda.Date(S(t, "remind")), "");
             reminders.Add(text + (S(t, "remind").Length > 0 ? $" ({S(t, "remind")})" : ""));
             tasks++;
         }
         Section("Lembretes", reminders);
         md.AppendLine().AppendLine("[Transcrição completa](transcricao.md)");
-        return (md.ToString(), tasks);
+        job = job with
+        {
+            Title = title, Project = project, Summary = S(m, "summary"), Decisions = decisions, Pending = pending,
+            Tasks = [.. mine.Select(x => "yo: " + x), .. others], FollowUps = follow, Participants = people,
+        };
+        return (md.ToString(), tasks, job);
     }
 }
 
 /// <summary>
-/// Procesa las reuniones en segundo plano, una a una, sin tocar el turno de voz: comprime el audio, transcribe
-/// (ElevenLabs Scribe con hablantes; si no, el modelo de transcripción por API o Whisper local, por trozos) y hace el
-/// acta con el modelo, que va a la agenda. Cada paso queda guardado: si Colo se cierra, sigue al volver.
+/// Procesa las reuniones en segundo plano sin tocar el turno de voz. Mientras se graba, cada ~3 min de audio (cortado
+/// en un silencio) se separa por voces y se transcribe; al parar solo queda el último trozo y el acta. Cada paso
+/// queda guardado: si Colo se cierra, sigue al volver.
 /// </summary>
 public sealed class MeetingWork(Meetings meetings, Settings settings, AiClient ai, Agenda agenda)
 {
+    public const double Chunk = 180, Margin = 15;
+
     readonly SemaphoreSlim _one = new(1, 1);
+    readonly SemaphoreSlim _audio = new(1, 1);
     int _again;
-    static readonly Lazy<HttpClient> LongHttp = new(() => new HttpClient { Timeout = TimeSpan.FromMinutes(60) });
+    static readonly Lazy<HttpClient> LongHttp = new(() => new HttpClient { Timeout = TimeSpan.FromMinutes(30) });
 
     /// <summary>Comprime audio.wav → audio.m4a (en Windows con Media Foundation). null = no se comprime.</summary>
     public Func<string, string, bool>? Encode { get; set; }
     /// <summary>Whisper local para el último recurso (muestras 16 kHz mono → texto). null = no hay.</summary>
     public Func<float[], string>? LocalTranscribe { get; set; }
+    /// <summary>El reconocedor de voces (baja los modelos la primera vez). null o que devuelva null = por canales.</summary>
+    public Func<CancellationToken, Task<IVoices?>>? Voices { get; set; }
+    public People? People { get; set; }
     /// <summary>Avisos para la onda («Acta lista…»). El bool dice si es un error.</summary>
     public event Action<string, bool>? Notice;
 
@@ -557,16 +819,34 @@ public sealed class MeetingWork(Meetings meetings, Settings settings, AiClient a
         if (Volatile.Read(ref _again) == 1) await RunAsync(ct);
     }
 
+    /// <summary>Durante la grabación: transcribe lo que ya hay entero (si está ocupado con otro trozo, espera a la próxima).</summary>
+    public async Task LiveAsync(string dir, DateTime started, CancellationToken ct = default)
+    {
+        if (!await _audio.WaitAsync(0, ct)) return;
+        try { await ContinueAsync(dir, started, final: false, ct); }
+        finally { _audio.Release(); }
+    }
+
     async Task ProcessAsync(MeetingJob job, CancellationToken ct)
     {
         var wav = Path.Combine(job.Dir, "audio.wav");
         var m4a = Path.Combine(job.Dir, "audio.m4a");
         try
         {
-            if (job.Status == "recorded")
+            if (job.Status is "recorded" or "encoded")
             {
-                // A un nombre provisional: si Colo se cierra a medias, un .m4a cortado no pasa por bueno (y luego se
-                // borraría el WAV).
+                if (!File.Exists(wav)) throw new AiException("falta audio.wav");
+                await _audio.WaitAsync(ct);
+                try { await ContinueAsync(job.Dir, job.Started, final: true, ct); }
+                finally { _audio.Release(); }
+                job = meetings.Update(job with { Status = "transcribed", Error = "" });
+            }
+            if (job.Status == "transcribed")
+            {
+                var tasks = await MinutesAsync(job, ct);
+                job = meetings.Find(job.Id) ?? job;
+                // Con la versión comprimida guardada, el WAV grande sobra. A un nombre provisional: un .m4a cortado
+                // (Colo cerrado a medias) no pasa por bueno.
                 if (Encode is { } enc && File.Exists(wav) && !File.Exists(m4a))
                 {
                     var part = Path.Combine(job.Dir, "audio.part.m4a");
@@ -575,38 +855,9 @@ public sealed class MeetingWork(Meetings meetings, Settings settings, AiClient a
                         File.Delete(part);
                         if (enc(wav, part)) File.Move(part, m4a);
                     }
-                    catch { } // sin comprimir: se transcribe del WAV
+                    catch { } // sin comprimir: el WAV se queda
                     finally { try { File.Delete(part); } catch { } }
                 }
-                job = meetings.Update(job with { Status = "encoded", Error = "" });
-            }
-            if (job.Status == "encoded")
-            {
-                var md = await TranscribeAsync(job, wav, m4a, ct);
-                await File.WriteAllTextAsync(Path.Combine(job.Dir, "transcricao.md"), md, ct);
-                job = meetings.Update(job with { Status = "transcribed", Error = "" });
-            }
-            if (job.Status == "transcribed")
-            {
-                var transcript = await File.ReadAllTextAsync(Path.Combine(job.Dir, "transcricao.md"), ct);
-                // En streaming: una reunión larga tarda en resumirse y la llamada normal se cortaría a los 90 s.
-                var text = new StringBuilder();
-                await foreach (var item in ai.StreamAsync(MeetingText.MinutesRequest(settings, transcript, job, agenda), ct))
-                    if (item["type"]?.GetValue<string>() == "message")
-                        foreach (var c in item["content"] as JsonArray ?? [])
-                            text.Append(c?["text"]?.GetValue<string>());
-                var minutes = MeetingText.ParseMinutes(text.ToString()) ?? throw new AiException("el acta no vino en JSON");
-                var (mdText, tasks) = MeetingText.Apply(minutes, job, agenda, DateTime.Now);
-                await File.WriteAllTextAsync(Path.Combine(job.Dir, "ata.md"), mdText, ct);
-                job = meetings.Update(job with
-                {
-                    Status = "done", Error = "",
-                    Title = minutes["title"]?.ToString() ?? "",
-                    Project = minutes["project"]?.ToString() ?? "",
-                    Summary = minutes["summary"]?.ToString() ?? "",
-                    Decisions = (minutes["decisions"] as JsonArray ?? []).Select(d => d?.ToString() ?? "").Where(d => d.Length > 0).ToList(),
-                });
-                // Con la versión comprimida guardada, el WAV grande sobra.
                 if (File.Exists(m4a) && File.Exists(wav)) try { File.Delete(wav); } catch { }
                 Notice?.Invoke($"Acta lista: «{job.Title}»" + (tasks > 0 ? $" · {tasks} cosas a la agenda" : "")
                     + (job.Project.Length > 0 ? $" ({job.Project})" : ""), false);
@@ -620,47 +871,282 @@ public sealed class MeetingWork(Meetings meetings, Settings settings, AiClient a
         }
     }
 
-    async Task<string> TranscribeAsync(MeetingJob job, string wav, string m4a, CancellationToken ct)
+    /// <summary>Hace (o rehace) el acta; lo de una versión anterior que siga abierto en la agenda se quita antes.</summary>
+    async Task<int> MinutesAsync(MeetingJob job, CancellationToken ct)
     {
-        (float[], float[])? env = File.Exists(wav) ? MeetingAudio.Envelope(wav) : null;
-        if (!string.IsNullOrWhiteSpace(settings.ElevenLabsKey))
+        var t = MeetingTranscript.Load(job.Dir);
+        var md = Path.Combine(job.Dir, "transcricao.md");
+        if (t.Lines.Count == 0 && File.Exists(md))
+            // Grabada con una versión anterior (sin transcricao.json): el acta sale del .md tal cual.
+            t = new MeetingTranscript { Mode = "channels", Lines = [new(0, 0, "", await File.ReadAllTextAsync(md, ct))] };
+        else
         {
-            var file = File.Exists(m4a) ? m4a : wav;
-            var scribe = await ScribeAsync(file, ct);
-            return MeetingText.Markdown(MeetingText.FromScribe(scribe, env), job.Started, job.Seconds);
+            await NotesAsync(t, ct);
+            t.Save(job.Dir, job.Started);
         }
-        if (!File.Exists(wav)) throw new AiException("falta audio.wav para transcribir por partes");
-        var parts = new List<Utterance>();
-        if (!string.IsNullOrWhiteSpace(settings.TranscribeModel))
-        {
-            foreach (var (at, samples) in MeetingAudio.MonoChunks(wav, 300))
-                parts.Add(new Utterance(at, at + samples.Length / 16000.0, "", "", await ai.TranscribeAsync(Wav.Encode(samples), "", ct)));
-        }
-        else if (LocalTranscribe is { } local)
-        {
-            foreach (var (at, samples) in MeetingAudio.MonoChunks(wav, 30))
-                parts.Add(new Utterance(at, at + samples.Length / 16000.0, "", "", await Task.Run(() => local(samples), ct)));
-        }
-        else throw new AiException("no hay con qué transcribir: pon la key de ElevenLabs o un modelo de voz en Ajustes");
-        return MeetingText.Markdown(parts.Where(p => p.Text.Length > 0), job.Started, job.Seconds);
+        var minutes = MeetingText.ParseMinutes(await TextAsync(MeetingText.MinutesRequest(settings, t, job, agenda), ct))
+            ?? throw new AiException("el acta no vino en JSON");
+        agenda.RemoveOpenFrom(MeetingText.SourcePrefix(job));
+        var (ata, tasks, done) = MeetingText.Apply(minutes, job, agenda, DateTime.Now);
+        await File.WriteAllTextAsync(Path.Combine(job.Dir, "ata.md"), ata, ct);
+        meetings.Update(done with { Status = "done", Error = "" });
+        return tasks;
     }
 
-    async Task<JsonNode> ScribeAsync(string path, CancellationToken ct)
+    /// <summary>Rehace el acta (después de poner nombres a las voces).</summary>
+    public async Task<string> RedoAsync(string id, CancellationToken ct = default)
+    {
+        var job = meetings.Find(id);
+        if (job is not { Status: "done" }) return "error: esa reunión todavía no tiene acta";
+        await _one.WaitAsync(ct);
+        try
+        {
+            var tasks = await MinutesAsync(job, ct);
+            var now = meetings.Find(id)!;
+            Notice?.Invoke($"Acta rehecha: «{now.Title}»" + (tasks > 0 ? $" · {tasks} cosas en la agenda" : ""), false);
+            return "ok";
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Notice?.Invoke("No pude rehacer el acta: " + ex.Message, true);
+            return "error: " + ex.Message;
+        }
+        finally { _one.Release(); }
+    }
+
+    /// <summary>Pone nombre a una voz de la reunión (y la aprende para las siguientes).</summary>
+    public void Rename(string id, string speaker, string name)
+    {
+        if (meetings.Find(id) is not { } job) return;
+        // Que no se cruce con un trozo que se esté transcribiendo (los dos guardan el mismo archivo).
+        _audio.Wait();
+        try
+        {
+            var t = MeetingTranscript.Load(job.Dir);
+            t.Rename(speaker, name, People, DateTime.Now, job.Dir);
+            t.Save(job.Dir, job.Started);
+        }
+        finally { _audio.Release(); }
+        meetings.Update(job);
+    }
+
+    /// <summary>El trocito de audio de esa voz (WAV), para oír quién es.</summary>
+    public byte[]? Clip(string id, string speaker)
+    {
+        if (meetings.Find(id) is not { } job || speaker.Any(c => !char.IsLetterOrDigit(c))) return null;
+        var path = Path.Combine(job.Dir, "clips", speaker + ".wav");
+        return File.Exists(path) ? File.ReadAllBytes(path) : null;
+    }
+
+    /// <summary>
+    /// Sigue la transcripción desde donde iba: trozos de ~3 min cortados en un silencio. Mientras se graba solo los
+    /// que ya están enteros (con margen); al final, todo.
+    /// </summary>
+    async Task ContinueAsync(string dir, DateTime started, bool final, CancellationToken ct)
+    {
+        var wav = Path.Combine(dir, "audio.wav");
+        if (!File.Exists(wav)) return;
+        var t = MeetingTranscript.Load(dir);
+        const int R = MeetingAudio.Rate;
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            var from = (long)Math.Round(t.Covered * R);
+            var avail = MeetingAudio.Frames(wav) - from;
+            var whole = (long)((Chunk + Margin) * R);
+            if (!final && avail < whole) break;
+            if (avail < R / 2) { if (final && avail > 0) { t.Covered = (from + avail) / (double)R; t.Save(dir, started); } break; }
+            var (mic, pc) = MeetingAudio.Read(wav, from, Math.Min(avail, whole));
+            var take = mic.Length;
+            if (avail > whole) take = MeetingAudio.QuietCut(MeetingAudio.Mix(mic, pc), (int)(Chunk * R), (int)(Margin * R));
+            if (take < mic.Length) { mic = mic[..take]; pc = pc[..take]; }
+            await ChunkAsync(dir, t, mic, pc, from / (double)R, ct);
+            t.Covered = (from + take) / (double)R;
+            await NotesAsync(t, ct);
+            t.Save(dir, started);
+        }
+    }
+
+    /// <summary>Un trozo: quién habla cuándo, a qué voz de la reunión corresponde cada uno, y el texto.</summary>
+    async Task ChunkAsync(string dir, MeetingTranscript t, float[] mic, float[] pc, double at, CancellationToken ct)
+    {
+        var mono = MeetingAudio.Mix(mic, pc);
+        IVoices? voices = null;
+        if (t.Mode != "channels" && Voices is { } get)
+        {
+            try { voices = await get(ct); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { voices = null; if (t.Mode == "voices") throw new AiException("no cargó el reconocedor de voces: " + ex.Message); }
+            if (voices is null && t.Mode == "voices") throw new AiException("no cargó el reconocedor de voces");
+        }
+        if (t.Mode == "") t.Mode = voices is null ? "channels" : "voices";
+
+        List<Turn> turns;
+        var global = new Dictionary<int, MeetingSpeaker>();
+        if (voices is null)
+        {
+            turns = MeetingAudio.ChannelTurns(mic, pc);
+            foreach (var who in turns.Select(x => x.Speaker).Distinct())
+            {
+                var id = who == 0 ? "S1" : "S2";
+                var s = t.Speakers.FirstOrDefault(x => x.Id == id);
+                if (s is null)
+                {
+                    s = new MeetingSpeaker { Id = id, Name = who == 0 ? "Micrófono" : "Computador" };
+                    t.Speakers.Add(s);
+                    t.Speakers.Sort((a, b) => string.CompareOrdinal(a.Id, b.Id));
+                }
+                global[who] = s;
+            }
+        }
+        else
+        {
+            turns = await Task.Run(() => voices.Turns(mono), ct);
+            foreach (var g in turns.GroupBy(x => x.Speaker))
+            {
+                // La huella con lo más largo que dijo en este trozo (hasta 20 s).
+                var parts = new List<float>();
+                foreach (var x in g.OrderByDescending(x => x.End - x.Start))
+                {
+                    if (parts.Count >= 20 * MeetingAudio.Rate) break;
+                    var a = Math.Clamp((int)(x.Start * MeetingAudio.Rate), 0, mono.Length);
+                    var b = Math.Clamp((int)(x.End * MeetingAudio.Rate), a, mono.Length);
+                    parts.AddRange(mono.AsSpan(a, b - a).ToArray());
+                }
+                var voice = parts.Count >= MeetingAudio.Rate / 2 ? await Task.Run(() => voices.Embed([.. parts]), ct) : null;
+                global[g.Key] = t.Assign(voice, parts.Count / (double)MeetingAudio.Rate, People);
+            }
+        }
+
+        // Cuánto habló cada voz, cuánto por el micrófono, y su trocito más largo para oírla.
+        foreach (var x in turns)
+        {
+            var s = global[x.Speaker];
+            var d = x.End - x.Start;
+            s.Seconds += d;
+            s.MicSeconds += d * MeetingAudio.MicShare(mic, pc, (int)(x.Start * MeetingAudio.Rate), (int)(x.End * MeetingAudio.Rate));
+            if (d > s.ClipSeconds + 0.5 && s.ClipSeconds < 12)
+                try
+                {
+                    Directory.CreateDirectory(Path.Combine(dir, "clips"));
+                    var len = Math.Min(d, 12);
+                    await File.WriteAllBytesAsync(Path.Combine(dir, "clips", s.Id + ".wav"), MeetingAudio.Wav(mono, x.Start, x.Start + len), ct);
+                    s.ClipSeconds = len;
+                }
+                catch (IOException) { }
+        }
+
+        foreach (var (start, end, speaker, text) in await SpeechAsync(mono, turns, ct))
+            if (text.Length > 0) t.Lines.Add(new TranscriptLine(Math.Round(at + start, 1), Math.Round(at + end, 1), global[speaker].Id, text));
+    }
+
+    /// <summary>
+    /// El texto de cada turno. Con ElevenLabs, el trozo entero con tiempos por palabra y cada palabra a su turno; si
+    /// no, cada grupo de turnos seguidos de la misma voz por separado (modelo de voz de la API o Whisper local).
+    /// </summary>
+    async Task<List<(double Start, double End, int Speaker, string Text)>> SpeechAsync(float[] mono, List<Turn> turns, CancellationToken ct)
+    {
+        var groups = new List<Turn>();
+        foreach (var x in turns.OrderBy(x => x.Start))
+            if (groups.Count > 0 && groups[^1].Speaker == x.Speaker && x.Start - groups[^1].End < 1.0 && x.End - groups[^1].Start <= 45)
+                groups[^1] = groups[^1] with { End = x.End };
+            else groups.Add(x);
+        groups = groups.Where(g => g.End - g.Start >= 0.6).ToList();
+        if (groups.Count == 0) return [];
+
+        if (!string.IsNullOrWhiteSpace(settings.ElevenLabsKey))
+        {
+            var words = await ScribeWordsAsync(Core.Wav.Encode(mono), ct);
+            var lines = new List<(double, double, int, string)>();
+            int? cur = null;
+            var sb = new StringBuilder();
+            double s0 = 0, e0 = 0;
+            void Flush() { if (cur is { } c && sb.ToString().Trim() is { Length: > 0 } txt) lines.Add((s0, e0, groups[c].Speaker, txt)); sb.Clear(); }
+            foreach (var (text, start, end) in words)
+            {
+                var mid = (start + end) / 2;
+                var g = groups.FindIndex(x => mid >= x.Start - 0.3 && mid <= x.End + 0.3);
+                if (g < 0) g = cur ?? 0;
+                if (g != cur) { Flush(); cur = g; s0 = start; }
+                sb.Append(text);
+                e0 = end;
+            }
+            Flush();
+            return lines;
+        }
+        if (!string.IsNullOrWhiteSpace(settings.TranscribeModel))
+        {
+            using var gate = new SemaphoreSlim(3);
+            var texts = await Task.WhenAll(groups.Select(async g =>
+            {
+                await gate.WaitAsync(ct);
+                try { return await ai.TranscribeAsync(MeetingAudio.Wav(mono, g.Start - 0.15, g.End + 0.15), "", ct); }
+                finally { gate.Release(); }
+            }));
+            return groups.Select((g, i) => (g.Start, g.End, g.Speaker, texts[i].Trim())).ToList();
+        }
+        if (LocalTranscribe is { } local)
+        {
+            var r = new List<(double, double, int, string)>();
+            foreach (var g in groups)
+            {
+                var a = Math.Clamp((int)(g.Start * MeetingAudio.Rate), 0, mono.Length);
+                var b = Math.Clamp((int)(g.End * MeetingAudio.Rate), a, mono.Length);
+                r.Add((g.Start, g.End, g.Speaker, (await Task.Run(() => local(mono[a..b]), ct)).Trim()));
+            }
+            return r;
+        }
+        throw new AiException("no hay con qué transcribir: pon la key de ElevenLabs o un modelo de voz en Ajustes");
+    }
+
+    /// <summary>Reuniones largas: cada bloque de 20 min ya entero se resume una vez (barato), así el acta no relee todo.</summary>
+    async Task NotesAsync(MeetingTranscript t, CancellationToken ct)
+    {
+        if (t.Compact().Length <= MeetingText.FullLimit) return;
+        while ((t.Notes.Count + 1) * MeetingText.Block <= t.Covered)
+        {
+            var block = t.Compact(t.Notes.Count * MeetingText.Block, (t.Notes.Count + 1) * MeetingText.Block);
+            t.Notes.Add(block.Length == 0 ? "(sin habla)" : await TextAsync(MeetingText.NotesRequest(settings, "Voces:\n" + t.Legend() + "\n\n" + block), ct));
+        }
+    }
+
+    async Task<string> TextAsync(JsonObject request, CancellationToken ct)
+    {
+        var text = new StringBuilder();
+        await foreach (var item in ai.StreamAsync(request, ct))
+            if (item["type"]?.GetValue<string>() == "message")
+                foreach (var c in item["content"] as JsonArray ?? [])
+                    text.Append(c?["text"]?.GetValue<string>());
+        return text.ToString().Trim();
+    }
+
+    async Task<List<(string Text, double Start, double End)>> ScribeWordsAsync(byte[] wav, CancellationToken ct)
     {
         using var req = new HttpRequestMessage(HttpMethod.Post, ElevenLabsStt.Url);
         req.Headers.Add("xi-api-key", settings.ElevenLabsKey.Trim());
         using var form = new MultipartFormDataContent();
-        var file = new StreamContent(File.OpenRead(path));
-        file.Headers.ContentType = new MediaTypeHeaderValue(path.EndsWith(".m4a") ? "audio/mp4" : "audio/wav");
-        form.Add(file, "file", Path.GetFileName(path));
+        var file = new ByteArrayContent(wav);
+        file.Headers.ContentType = new MediaTypeHeaderValue("audio/wav");
+        form.Add(file, "file", "trozo.wav");
         form.Add(new StringContent(string.IsNullOrWhiteSpace(settings.ElevenLabsModel) ? ElevenLabsStt.Models[0] : settings.ElevenLabsModel.Trim()), "model_id");
-        form.Add(new StringContent("true"), "diarize");
         form.Add(new StringContent("word"), "timestamps_granularity");
         form.Add(new StringContent("false"), "tag_audio_events");
         req.Content = form;
-        using var resp = await LongHttp.Value.SendAsync(req, ct);
+        using var resp = await (Http ?? LongHttp.Value).SendAsync(req, ct);
         var body = await resp.Content.ReadAsStringAsync(ct);
         if (!resp.IsSuccessStatusCode) throw new AiException($"ElevenLabs {(int)resp.StatusCode}: {(body.Length > 160 ? body[..160] : body)}");
-        return JsonNode.Parse(body) ?? throw new AiException("ElevenLabs devolvió vacío");
+        var words = new List<(string, double, double)>();
+        foreach (var w in JsonNode.Parse(body)?["words"] as JsonArray ?? [])
+        {
+            var type = w?["type"]?.GetValue<string>() ?? "word";
+            var text = w?["text"]?.GetValue<string>() ?? "";
+            if (type == "audio_event") continue;
+            var start = w?["start"]?.GetValue<double>() ?? (words.Count > 0 ? words[^1].Item3 : 0);
+            var end = w?["end"]?.GetValue<double>() ?? start;
+            words.Add((text, start, end));
+        }
+        return words;
     }
+
+    /// <summary>Para las pruebas: otro HttpClient para ElevenLabs.</summary>
+    public HttpClient? Http { get; set; }
 }

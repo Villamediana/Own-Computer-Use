@@ -570,6 +570,7 @@ dejar lo que está haciendo? Responde solo «sí» o «no».
                 "resume" => "Sigue grabando",
                 "stop" => "Para y guarda la reunión",
                 "list" => "Mira las reuniones",
+                "read" => "Lee el acta",
                 "retry" => "Reintenta las reuniones",
                 _ => "Mira la grabación",
             },

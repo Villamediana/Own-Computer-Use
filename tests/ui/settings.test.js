@@ -220,5 +220,38 @@ const assert = (c, m) => { if (!c) { console.log('FAIL:', m); process.exitCode =
   assert(add && add.text === 'Ligar pro pediatra' && add.remind === '2026-11-03 09:00', 'agenda: añadir con aviso');
   assert(await page.inputValue('#agText') === '', 'agenda: limpia el campo');
   await page.screenshot({ path: process.argv[2] + '/agenda.png' });
+
+  // reuniones: lista → abrir → nombrar una voz, oírla, rehacer el acta, borrar
+  await page.click('nav button[data-page=meetings]');
+  await page.evaluate(() => window.__deliver({ type: 'meetings', items: [
+    { id: 'm1', title: 'Migração do Tower Finder', when: '03/11 15:00', length: '42 min', project: 'Tower Finder', status: 'con acta', done: true },
+    { id: 'm2', title: '', when: '04/11 10:30', length: '12 min', project: '', status: 'transcribiendo', done: false }] }));
+  assert((await page.textContent('#mtList')).includes('Reunión del 04/11 10:30'), 'reuniones: sin título todavía');
+  await page.waitForTimeout(700);
+  await page.screenshot({ path: process.argv[2] + '/reuniones.png' });
+  await page.click('[data-mt="m1"]');
+  assert((await last('meetingOpen'))?.id === 'm1', 'reuniones: abrir');
+  await page.evaluate(() => window.__deliver({ type: 'meeting', open: true, meeting: { id: 'm1', title: 'Migração do Tower Finder', when: '03/11/2026 15:00', length: '42 min', project: 'Tower Finder', status: 'con acta', done: true,
+    ata: '# Migração do Tower Finder\n\n**Participantes:** Miguel, Ana, S3\n\nDecidimos migrar.\n\n## Pendências\n- Ana: Definir a janela', transcript: '[0:00] **Miguel:** Bom dia', people: ['Ana', 'Miguel'],
+    speakers: [{ id: 'S1', name: 'Miguel', auto: true, talk: '18 min', mic: 94, clip: true }, { id: 'S3', name: '', auto: false, talk: '6 min', mic: 2, clip: true }] } }));
+  assert(await page.isVisible('#mtAta h2') && (await page.textContent('#mtAta')).includes('Ana: Definir a janela'), 'reuniones: el acta se lee');
+  await page.waitForTimeout(700);
+  await page.screenshot({ path: process.argv[2] + '/reunion-acta.png' });
+  await page.click('#mtTabs button[data-v=people]');
+  assert(await page.isVisible('.who-auto'), 'reuniones: reconocido por la voz');
+  await page.fill('[data-name="S3"]', 'Gabriel');
+  await page.press('[data-name="S3"]', 'Enter');
+  const named = await last('meetingName');
+  assert(named && named.speaker === 'S3' && named.name === 'Gabriel', 'reuniones: nombrar una voz');
+  await page.click('[data-play="S1"]');
+  assert((await last('meetingClip'))?.speaker === 'S1', 'reuniones: oír una voz');
+  await page.waitForTimeout(700);
+  await page.screenshot({ path: process.argv[2] + '/reunion-personas.png' });
+  await page.click('#mtRedo');
+  assert((await last('meetingRedo'))?.id === 'm1' && (await page.textContent('#mtRedo')).includes('Rehaciendo'), 'reuniones: rehacer el acta');
+  await page.click('#mtDelete');
+  assert(!(await last('meetingDelete')), 'reuniones: borrar pide confirmar');
+  await page.click('#mtDelete');
+  assert((await last('meetingDelete'))?.id === 'm1' && await page.isVisible('#mtList'), 'reuniones: borrar y volver a la lista');
   await browser.close();
 })();
