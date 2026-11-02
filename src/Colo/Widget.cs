@@ -311,7 +311,10 @@ sealed class Widget : LayeredWindow
         {
             using var run = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", writable: true);
             if (run is null) return;
-            if (_s.StartWithWindows) run.SetValue("Colo", $"\"{Application.ExecutablePath}\"");
+            // Instalado, arranca siempre la copia instalada (un .exe suelto de Descargas abierto un día no la cambia).
+            var installed = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Colo", "Colo.exe");
+            var exe = System.IO.File.Exists(installed) ? installed : Application.ExecutablePath;
+            if (_s.StartWithWindows) run.SetValue("Colo", $"\"{exe}\"");
             else if (run.GetValue("Colo") is not null) run.DeleteValue("Colo");
         }
         catch { }
