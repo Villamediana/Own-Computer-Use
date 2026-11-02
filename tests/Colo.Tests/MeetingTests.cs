@@ -253,6 +253,8 @@ Aqui está: {"title":"Migração do Tower Finder","summary":"Decidimos migrar o 
         var (settings, ai, calls) = Fakes(Minutes);
         var meetings = new Meetings(Path.Combine(_dir, "meetings.json"));
         var work = new MeetingWork(meetings, settings, ai, new Agenda(Path.Combine(_dir, "agenda.json")));  // sin voces: por canales
+        var billed = new Dictionary<string, double>();
+        work.Audio += (m, sec) => { lock (billed) billed[m] = billed.GetValueOrDefault(m) + sec; };
         await work.LiveAsync(dir, T0);
         var t = MeetingTranscript.Load(dir);
         Assert.Equal("channels", t.Mode);
@@ -265,6 +267,28 @@ Aqui está: {"title":"Migração do Tower Finder","summary":"Decidimos migrar o 
         Assert.Equal("done", meetings.All.Single().Status);
         Assert.InRange(calls.Count - before, 2, 60);     // solo el final y el acta (los 400 s serían ~200)
         Assert.Equal(["Micrófono", "Computador"], t.Speakers.Select(s => s.Name));
+        Assert.InRange(billed["whisper-1"], 390, 470);                // todo el audio enviado (con su margen), para el costo
+    }
+
+    [Fact]
+    public async Task Silent_recording_gets_no_invented_minutes_and_deleted_ones_stay_deleted()
+    {
+        using (var w = new WaveFileWriter(Path.Combine(_dir, "audio.wav"), new WaveFormat(16000, 16, 2)))
+            w.Write(new byte[16000 * 4 * 10], 0, 16000 * 4 * 10);
+        var (settings, ai, calls) = Fakes(Minutes);
+        var meetings = new Meetings(Path.Combine(_dir, "meetings.json"));
+        var job = meetings.Add(_dir, T0, 10);
+        string? notice = null;
+        var work = new MeetingWork(meetings, settings, ai, new Agenda(Path.Combine(_dir, "agenda.json")));
+        work.Notice += (t, _) => notice = t;
+        await work.RunAsync();
+        Assert.Empty(calls);                                         // ni transcripción ni acta
+        Assert.Equal(("done", "Reunión sin habla"), (meetings.All.Single().Status, meetings.All.Single().Title));
+        Assert.Contains("no tiene habla", notice);
+        Assert.True(meetings.Delete(job.Id));
+        meetings.Update(job with { Error = "x" });                   // lo que estaba en marcha al borrar
+        Assert.Empty(meetings.All);
+        Directory.CreateDirectory(_dir);
     }
 
     /// <summary>Con los modelos de verdad (COLO_VOICES = carpeta con segmentacion.onnx, voz.onnx y four.wav).</summary>

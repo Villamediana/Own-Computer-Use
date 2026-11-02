@@ -333,6 +333,14 @@ sealed class StageHost(Control ui, AiClient ai, Settings settings)
     CancellationTokenSource? _work;
     string? _lastHtml;
     (string Title, string Brief, string Data, string? Previous)? _lastAsk;
+    // Lo que se ve en el palco, para el turno del agente: así «cámbialo» edita esa pieza y no crea otra.
+    volatile string? _shown;
+    volatile bool _open;
+
+    /// <summary>La línea del turno cuando el palco está abierto (null si no).</summary>
+    public string? Line() => _open && _shown is { } s
+        ? $"Palco abierto con {s}. Si pide cambiar algo de lo que ve ahí: stage edit (se cambia esa pieza; no se rehace)."
+        : null;
 
     public event Action<string>? Ask;
     public event Action<string>? Speak;
@@ -364,7 +372,7 @@ sealed class StageHost(Control ui, AiClient ai, Settings settings)
         _stage.Speak += s => Speak?.Invoke(s);
         _stage.Retry += () => { if (_lastAsk is { } a) Start(a.Title, a.Brief, a.Data, a.Previous); };
         // Cerrar el palco también para el diseño en curso.
-        _stage.Closed += () => _work?.Cancel();
+        _stage.Closed += () => { _work?.Cancel(); _open = false; };
         return _stage;
     }
 
@@ -386,9 +394,12 @@ sealed class StageHost(Control ui, AiClient ai, Settings settings)
             {
                 case "page":
                     _work?.Cancel();
-                    return await OnUi(() => Window().ShowPageAsync(c.Str("url"), Near()));
+                    var shown = await OnUi(() => Window().ShowPageAsync(c.Str("url"), Near()));
+                    if (shown.StartsWith("ok", StringComparison.Ordinal)) { _shown = "la página " + c.Str("url").Trim(); _open = true; }
+                    return shown;
                 case "close":
                     _work?.Cancel();
+                    _open = false;
                     await OnUi(() => { if (_stage is { IsDisposed: false }) _stage.Hide(); });
                     return "ok";
                 case "bigger":
@@ -399,8 +410,11 @@ sealed class StageHost(Control ui, AiClient ai, Settings settings)
                 default:
                     var brief = c.Str("brief").Trim();
                     if (brief.Length == 0) return "error: falta brief (qué contar)";
-                    var edit = c.Str("action") == "edit" && _lastHtml is not null;
-                    Start(c.Str("title").Trim(), brief, c.Str("data"), edit ? _lastHtml : null);
+                    var edit = c.Str("action") == "edit";
+                    if (edit && _lastHtml is null && _lastAsk is { Previous: null } first)
+                        // La primera versión aún se está creando: se vuelve a pedir con el cambio ya dentro.
+                        Start(first.Title, first.Brief + "\nY además: " + brief, (first.Data + "\n" + c.Str("data")).Trim(), null);
+                    else Start(edit && c.Str("title").Trim().Length == 0 && _lastAsk is { } a ? a.Title : c.Str("title").Trim(), brief, c.Str("data"), edit ? _lastHtml : null);
                     return "ok: el palco se está creando (sale en unos segundos); termina tú ya con done";
             }
         }
@@ -445,6 +459,8 @@ sealed class StageHost(Control ui, AiClient ai, Settings settings)
                 errors = await OnUi(() => Window().ShowDocAsync(title, StageDoc.Wrap(html), ct));
             }
             _lastHtml = html;
+            if (previous is null) _shown = $"«{title}» ({(brief.Length > 160 ? brief[..160] + "…" : brief)})";
+            _open = true;
             Log.Write($"palco: «{title}» en {sw.Elapsed.TotalSeconds:0.0} s, {html.Length} caracteres" + (errors.Count > 0 ? " · aún con errores: " + string.Join(" | ", errors) : ""));
         }
         catch (OperationCanceledException) { }

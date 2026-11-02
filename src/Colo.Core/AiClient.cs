@@ -173,6 +173,22 @@ public sealed class AiClient
         using var reader = new StreamReader(await resp.Content.ReadAsStreamAsync(ct));
         // HttpClient.Timeout no cubre la lectura del stream: si el servidor se calla, se corta aquí.
         using var idle = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var model = body["model"]?.GetValue<string>() ?? "";
+        // Cortada antes del final (palco cerrado, orden interrumpida, error): el proveedor cobra lo que ya generó y no
+        // manda el uso. Se cuenta una estimación (≈4 caracteres por token) para no perderlo en el costo.
+        var counted = false;
+        long streamed = 0;
+        void Count(JsonNode? u)
+        {
+            if (counted) return;
+            counted = true;
+            Used?.Invoke(u is null
+                ? new Usage(json.Length / 4, 0, streamed / 4, model)
+                : new Usage(u["input_tokens"]?.GetValue<long>() ?? 0, u["input_tokens_details"]?["cached_tokens"]?.GetValue<long>() ?? 0,
+                    u["output_tokens"]?.GetValue<long>() ?? 0, model));
+        }
+        try
+        {
         while (true)
         {
             idle.CancelAfter(StreamIdle);
@@ -191,28 +207,34 @@ public sealed class AiClient
             switch (ev?["type"]?.GetValue<string>())
             {
                 case "response.output_text.delta":
-                    if (onText is not null && ev["delta"]?.GetValue<string>() is { Length: > 0 } d) onText(d);
+                    if (ev["delta"]?.GetValue<string>() is { Length: > 0 } d)
+                    {
+                        streamed += d.Length;
+                        onText?.Invoke(d);
+                    }
+                    break;
+                case "response.function_call_arguments.delta":
+                    streamed += ev["delta"]?.GetValue<string>()?.Length ?? 0;
                     break;
                 case "response.output_item.done":
                     if (ev["item"] is JsonNode item) yield return item;
                     break;
                 case "response.completed":
-                    if (ev["response"]?["usage"] is JsonNode u)
-                        Used?.Invoke(new Usage(
-                            u["input_tokens"]?.GetValue<long>() ?? 0,
-                            u["input_tokens_details"]?["cached_tokens"]?.GetValue<long>() ?? 0,
-                            u["output_tokens"]?.GetValue<long>() ?? 0,
-                            body["model"]?.GetValue<string>() ?? ""));
+                    Count(ev["response"]?["usage"]);
                     yield break;
                 case "error":
                     throw new AiException(ev["message"]?.GetValue<string>() ?? ev["error"]?["message"]?.GetValue<string>() ?? data);
                 case "response.failed":
                 case "response.incomplete":
                     var r = ev["response"];
+                    // También se cobra lo que hizo antes de fallar o cortarse (por ejemplo, por max_output_tokens).
+                    if (r?["usage"] is JsonNode used) Count(used);
                     throw new AiException(r?["error"]?["message"]?.GetValue<string>()
                         ?? r?["incomplete_details"]?["reason"]?.GetValue<string>() ?? "respuesta incompleta");
             }
         }
+        }
+        finally { Count(null); }
     }
 
     /// <param name="prompt">Glosario que orienta al modelo (nombres de programas, palabras de las órdenes).</param>

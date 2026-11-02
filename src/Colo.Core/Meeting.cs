@@ -231,7 +231,7 @@ public static class MeetingAudio
             double m = 0, p = 0;
             for (var i = f; i < f + Frame; i++) { m += mic[i] * mic[i]; p += pc[i] * pc[i]; }
             m = Math.Sqrt(m / Frame); p = Math.Sqrt(p / Frame);
-            if (Math.Max(m, p) < 0.01) continue;
+            if (Math.Max(m, p) < 0.006) continue;
             var who = m >= p ? 0 : 1;
             double s = f / (double)Rate, e = (f + Frame) / (double)Rate;
             if (turns.Count > 0 && turns[^1].Speaker == who && s - turns[^1].End < 0.6) turns[^1] = turns[^1] with { End = e };
@@ -292,8 +292,10 @@ public sealed class Meetings
     {
         lock (_lock)
         {
+            // Borrada mientras se procesaba: no vuelve.
             var i = _jobs.FindIndex(j => j.Id == job.Id);
-            if (i >= 0) _jobs[i] = job; else _jobs.Add(job);
+            if (i < 0) return job;
+            _jobs[i] = job;
             Save();
         }
         return job;
@@ -796,6 +798,8 @@ public sealed class MeetingWork(Meetings meetings, Settings settings, AiClient a
     public People? People { get; set; }
     /// <summary>Avisos para la onda («Acta lista…»). El bool dice si es un error.</summary>
     public event Action<string, bool>? Notice;
+    /// <summary>Audio transcrito (modelo, segundos), para el costo: ElevenLabs y la API cobran por minuto.</summary>
+    public event Action<string, double>? Audio;
 
     public async Task RunAsync(CancellationToken ct = default)
     {
@@ -841,6 +845,15 @@ public sealed class MeetingWork(Meetings meetings, Settings settings, AiClient a
                 finally { _audio.Release(); }
                 job = meetings.Update(job with { Status = "transcribed", Error = "" });
             }
+            // (Covered > 0: transcrita por esta versión; las de antes no tienen transcricao.json.)
+            if (job.Status == "transcribed" && MeetingTranscript.Load(job.Dir) is { Lines.Count: 0, Covered: > 0 })
+            {
+                // Nadie habló (o el micrófono no captó nada): sin llamar al modelo para inventar un acta.
+                await File.WriteAllTextAsync(Path.Combine(job.Dir, "ata.md"), $"# Reunião sem fala\n{job.Started:dd/MM/yyyy HH:mm} · {(int)(job.Seconds / 60)} min\n\nA gravação não tem fala reconhecível.\n", ct);
+                job = meetings.Update(job with { Status = "done", Error = "", Title = "Reunión sin habla" });
+                Notice?.Invoke("La reunión grabada no tiene habla: revisa el micrófono en Ajustes › Voz.", true);
+                return;
+            }
             if (job.Status == "transcribed")
             {
                 var tasks = await MinutesAsync(job, ct);
@@ -881,8 +894,9 @@ public sealed class MeetingWork(Meetings meetings, Settings settings, AiClient a
             t = new MeetingTranscript { Mode = "channels", Lines = [new(0, 0, "", await File.ReadAllTextAsync(md, ct))] };
         else
         {
+            var notes = t.Notes.Count;
             await NotesAsync(t, ct);
-            t.Save(job.Dir, job.Started);
+            if (t.Notes.Count != notes) t.Save(job.Dir, job.Started);
         }
         var minutes = MeetingText.ParseMinutes(await TextAsync(MeetingText.MinutesRequest(settings, t, job, agenda), ct))
             ?? throw new AiException("el acta no vino en JSON");
@@ -1056,6 +1070,7 @@ public sealed class MeetingWork(Meetings meetings, Settings settings, AiClient a
         if (!string.IsNullOrWhiteSpace(settings.ElevenLabsKey))
         {
             var words = await ScribeWordsAsync(Core.Wav.Encode(mono), ct);
+            Audio?.Invoke(string.IsNullOrWhiteSpace(settings.ElevenLabsModel) ? ElevenLabsStt.Models[0] : settings.ElevenLabsModel.Trim(), mono.Length / (double)MeetingAudio.Rate);
             var lines = new List<(double, double, int, string)>();
             int? cur = null;
             var sb = new StringBuilder();
@@ -1082,6 +1097,7 @@ public sealed class MeetingWork(Meetings meetings, Settings settings, AiClient a
                 try { return await ai.TranscribeAsync(MeetingAudio.Wav(mono, g.Start - 0.15, g.End + 0.15), "", ct); }
                 finally { gate.Release(); }
             }));
+            Audio?.Invoke(settings.TranscribeModel.Trim(), groups.Sum(g => g.End - g.Start + 0.3));
             return groups.Select((g, i) => (g.Start, g.End, g.Speaker, texts[i].Trim())).ToList();
         }
         if (LocalTranscribe is { } local)
@@ -1093,6 +1109,7 @@ public sealed class MeetingWork(Meetings meetings, Settings settings, AiClient a
                 var b = Math.Clamp((int)(g.End * MeetingAudio.Rate), a, mono.Length);
                 r.Add((g.Start, g.End, g.Speaker, (await Task.Run(() => local(mono[a..b]), ct)).Trim()));
             }
+            Audio?.Invoke(Prices.Local, groups.Sum(g => g.End - g.Start));
             return r;
         }
         throw new AiException("no hay con qué transcribir: pon la key de ElevenLabs o un modelo de voz en Ajustes");

@@ -85,7 +85,8 @@ Memoria
   vale en un sitio (una palabra del título, el programa o la URL).
 - Prudente: una frase con el dato concreto. Nada de tareas del momento, cosas de una vez ni datos sensibles. Si
   ya hay uno parecido, replaces (corrige o junta) en vez de otro. forget si deja de ser cierto o te lo pide.
-  Si además hay una tarea, sigue con ella sin comentarlo; si solo te estaba enseñando algo, done muy corto.
+  Si además hay una tarea, sigue con ella sin comentarlo; si solo te estaba enseñando algo, el done (muy corto) va
+  en el mismo remember.
 - Contraseñas, claves, PIN, tokens y accesos (IP + usuario + clave de un ssh) van al cofre con vault save, nunca a
   remember: si te pide guardarlos o te los da para usarlos. Para usarlos, vault type en el campo (la contraseña de
   una web, el «password:» del ssh en la terminal). Nunca escribas un secreto con type_text ni lo repitas en done.
@@ -251,7 +252,7 @@ Palco
 """;
 
     /// <summary>Acciones que pueden cerrar el pedido en la misma llamada (campo done): ahorra un turno entero.</summary>
-    public static readonly HashSet<string> Finishing = ["meeting", "stage", "agenda", "vault", "click", "type_text", "dictate", "edit_text", "press_keys", "browser", "open", "window", "scroll", "clipboard", "screenshot"];
+    public static readonly HashSet<string> Finishing = ["remember", "forget", "meeting", "stage", "agenda", "vault", "click", "type_text", "dictate", "edit_text", "press_keys", "browser", "open", "window", "scroll", "clipboard", "screenshot"];
 
     /// <summary>Herramientas activas: todas menos los grupos apagados (plan, look, wait, done, stop e ignore van siempre).</summary>
     public static JsonArray Build(IEnumerable<string>? disabledGroups)

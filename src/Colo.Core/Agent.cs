@@ -38,6 +38,8 @@ public sealed class Agent
     public Vault? Vault { get; set; }
     /// <summary>Agenda personal: el turno lleva la hora y los nombres de los proyectos (null = sin agenda).</summary>
     public Agenda? Agenda { get; set; }
+    /// <summary>Qué hay en el palco ahora (null = cerrado o sin palco): va en el turno para editarlo en vez de rehacerlo.</summary>
+    public Func<string?>? Stage { get; set; }
     public event Action<AgentEvent>? Event;
 
     public Agent(AiClient ai, Settings settings, IComputer pc)
@@ -162,12 +164,18 @@ dejar lo que está haciendo? Responde solo «sí» o «no».
         string? lastCall = null;
         var waits = 0;
         var repeats = 0;
+        // Tras un paso que no tocó la pantalla (recordar, mirar el historial) la pantalla es la misma: no se vuelve a
+        // leer (leerla en un navegador pesado tarda).
+        Observation? lastObs = null;
+        var still = false;
         try
         {
             for (var step = 0; step < MaxSteps; step++)
             {
                 ct.ThrowIfCancellationRequested();
-                var obs = await _pc.ObserveAsync(_s.Vision == Vision.Always || look, ct);
+                var obs = still && !look && lastObs is not null ? lastObs : await _pc.ObserveAsync(_s.Vision == Vision.Always || look, ct);
+                lastObs = obs;
+                still = false;
                 look = false;
                 DrainIncoming(heard, log);
                 Emit(AgentEventKind.Thinking, step == 0 ? "Pensando…" : "Mirando la pantalla…");
@@ -268,7 +276,9 @@ dejar lo que está haciendo? Responde solo «sí» o «no».
                             log.Add($"Ya hiciste «{label}» {repeats} veces seguidas. Si el pedido está cumplido, done; si no tuvo efecto, prueba de otra forma.");
                         if (result.StartsWith("error", StringComparison.Ordinal)) closed = true;
                         // La acción traía la frase final: si es la última de la respuesta, hecho sin otro turno.
-                        else closing = Tools.Finishing.Contains(call.Name) && call.Str("done").Trim() is { Length: > 0 } f ? f : null;
+                        // Recordar algo sin done después de una acción con done no le quita el cierre.
+                        else if (call.Str("done").Trim() is { Length: > 0 } f && Tools.Finishing.Contains(call.Name)) closing = f;
+                        else if (!remembers) closing = null;
                     }
                 }
                 catch (OperationCanceledException) when (!ct.IsCancellationRequested)
@@ -330,6 +340,7 @@ dejar lo que está haciendo? Responde solo «sí» o «no».
 
                 // Solo se espera a que la pantalla se asiente si algo cambió en este paso.
                 if (SettleMs > 0 && acted) await Task.Delay(SettleMs, ct);
+                still = anyCall && !acted;
                 if (log.Count > 40) log.RemoveRange(0, log.Count - 40);
             }
             Remember(heard, did, "se cortó por demasiados pasos");
@@ -429,6 +440,7 @@ dejar lo que está haciendo? Responde solo «sí» o «no».
             if (agenda.ProjectsLine() is { } projects) sb.AppendLine(projects);
             if (agenda.RecentNotice(DateTime.Now) is { } notice) sb.AppendLine(notice);
         }
+        if (Stage?.Invoke() is { } stage && !(_s.DisabledTools?.Contains("stage") ?? false)) sb.AppendLine().AppendLine(stage);
         var withImage = obs.Jpeg.Length > 0;
         sb.AppendLine().AppendLine($"Ventana activa: {obs.Window}");
         foreach (var d in obs.Details ?? []) sb.AppendLine(d);

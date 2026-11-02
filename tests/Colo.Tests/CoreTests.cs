@@ -644,6 +644,67 @@ public class CoreTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public async Task Remembering_is_quick_one_call_with_done_and_no_second_screen_read()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"colo-mem-{Guid.NewGuid():N}.json");
+        var calls = 0;
+        var s = Azure();
+        // El done va en el mismo remember: una sola llamada al modelo.
+        var h = new FakeHandler((_, _) => { Interlocked.Increment(ref calls); return (HttpStatusCode.OK, Calls(("remember", """{"fact":"El sistema de chamados es https://x.vertis","done":"Anotado."}"""))); });
+        var pc = new FakeComputer();
+        var agent = new Agent(new AiClient(s, new HttpClient(h)), s, pc) { SettleMs = 0, Memory = new Memory(path) };
+        var events = new List<AgentEvent>();
+        agent.Event += e => { lock (events) events.Add(e); };
+        await agent.Hear("lembra que o sistema de chamados é essa url");
+        Assert.Equal(1, calls);
+        Assert.Equal("Anotado.", events[^1].Text);
+        // Sin done: un paso más, pero la pantalla no se vuelve a leer (recordar no la cambió).
+        var step = 0;
+        var h2 = new FakeHandler((_, _) => (HttpStatusCode.OK, Interlocked.Increment(ref step) == 1
+            ? Calls(("remember", """{"fact":"O backlog é a aba P&I"}"""))
+            : Calls(("done", """{"message":"ok"}"""))));
+        var pc2 = new FakeComputer();
+        await new Agent(new AiClient(s, new HttpClient(h2)), s, pc2) { SettleMs = 0, Memory = new Memory(path) }.Hear("lembra do backlog");
+        Assert.Equal(2, step);
+        Assert.Single(pc2.Images);
+        File.Delete(path);
+    }
+
+    [Fact]
+    public void The_turn_knows_what_is_on_the_stage()
+    {
+        var s = Azure();
+        var agent = new Agent(new AiClient(s), s, new FakeComputer()) { Stage = () => "Palco abierto con «Dólar hoy» (cotización). Si pide cambiar algo de lo que ve ahí: stage edit" };
+        var obs = new Observation([], 0, 0, "Comet", []);
+        Assert.Contains("Palco abierto con «Dólar hoy»", agent.BuildRequest(["ponlo en barras"], [], obs)["input"]![0]!["content"]![0]!["text"]!.GetValue<string>());
+        s.DisabledTools = ["stage"];
+        Assert.DoesNotContain("Palco abierto", agent.BuildRequest(["ponlo en barras"], [], obs)["input"]![0]!["content"]![0]!["text"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task Cut_streams_still_count_tokens()
+    {
+        // Sin response.completed (cortada): se estima por el tamaño del pedido y lo que llegó.
+        var sse = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"" + new string('x', 400) + "\"}\n\n";
+        var s = Azure();
+        var ai = new AiClient(s, new HttpClient(new FakeHandler((_, _) => (HttpStatusCode.OK, sse))));
+        var used = new List<Usage>();
+        ai.Used += u => used.Add(u);
+        var body = new System.Text.Json.Nodes.JsonObject { ["model"] = "gpt-6-luna", ["input"] = new string('y', 4000) };
+        await foreach (var _ in ai.StreamAsync(body, default)) { }
+        var u = Assert.Single(used);
+        Assert.Equal(100, u.Output);
+        Assert.InRange(u.Input, 1000, 1100);
+        // Incompleta (max_output_tokens): cuenta lo que dice el proveedor.
+        var inc = "data: {\"type\":\"response.incomplete\",\"response\":{\"usage\":{\"input_tokens\":500,\"output_tokens\":9000},\"incomplete_details\":{\"reason\":\"max_output_tokens\"}}}\n\n";
+        var ai2 = new AiClient(s, new HttpClient(new FakeHandler((_, _) => (HttpStatusCode.OK, inc))));
+        used.Clear();
+        ai2.Used += u2 => used.Add(u2);
+        await Assert.ThrowsAsync<AiException>(async () => { await foreach (var _ in ai2.StreamAsync(body, default)) { } });
+        Assert.Equal(new Usage(500, 0, 9000, "gpt-6-luna"), Assert.Single(used));
+    }
+
+    [Fact]
     public void Screen_text_shows_focus_and_other_windows()
     {
         var s = Azure();

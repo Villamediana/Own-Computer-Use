@@ -230,6 +230,8 @@ sealed class Speaker : IDisposable
     WasapiOut? _out;
     int _turn;
     public Listener? Listener { get; set; }
+    /// <summary>Voz de ElevenLabs usada (modelo, segundos de audio), para el costo.</summary>
+    public event Action<string, double>? Billed;
 
     public Speaker(Settings s)
     {
@@ -263,6 +265,8 @@ sealed class Speaker : IDisposable
         var model = string.IsNullOrWhiteSpace(_s.ElevenTtsModel) ? ElevenLabsTts.Models[0] : _s.ElevenTtsModel;
         var sw = Stopwatch.StartNew();
         var started = false;
+        long total = 0;
+        var complete = false;
         try
         {
             // Suena con el primer trozo: no se espera a que ElevenLabs genere la frase entera.
@@ -275,7 +279,6 @@ sealed class Speaker : IDisposable
             };
             var chunk = new byte[8192];
             var odd = -1;
-            long total = 0;
             int n;
             while ((n = await audio.ReadAsync(chunk, ct)) > 0)
             {
@@ -293,6 +296,7 @@ sealed class Speaker : IDisposable
                     if (!Play(buffer, turn)) return;
                 }
             }
+            complete = true;
             if (!started && total > 0 && !Play(buffer, turn)) return;
             Log.Write($"voz: ElevenLabs «{text}» → {total / 2.0 / ElevenLabsTts.Rate:0.0} s de audio en {sw.ElapsedMilliseconds} ms");
             // ReadFully da silencio cuando se vacía: se para a mano al terminar lo recibido.
@@ -305,6 +309,13 @@ sealed class Speaker : IDisposable
         {
             Log.Write("voz: ElevenLabs falló, uso la voz de Windows · " + ex.Message);
             if (!ct.IsCancellationRequested && !started) _tts.SpeakAsync(Expressive.Clean(text));
+        }
+        finally
+        {
+            // ElevenLabs cobra el texto pedido aunque se corte antes: cortada, se cuenta por el largo (~14 letras/s).
+            var seconds = total / 2.0 / ElevenLabsTts.Rate;
+            if (!complete && total > 0) seconds = Math.Max(seconds, Expressive.Clean(text).Length / 14.0);
+            if (seconds > 0) Billed?.Invoke(model, seconds);
         }
     }
 

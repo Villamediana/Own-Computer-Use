@@ -1041,6 +1041,8 @@ function showMeetingList() { meeting = null; $("#mtDetail").hidden = true; $("#m
 function renderMeeting() {
   const m = meeting;
   if (!m) return showMeetingList();
+  // Si estaba escribiendo un nombre cuando llegó un refresco, lo escrito y el foco se quedan.
+  const typing = document.activeElement?.dataset?.name, typed = typing ? document.activeElement.value : "";
   $("#mtListView").hidden = true;
   $("#mtDetail").hidden = false;
   $("#mtTitle").textContent = m.title || "Reunión del " + m.when;
@@ -1060,6 +1062,7 @@ function renderMeeting() {
     i.onchange = save;
     i.onkeydown = e => { if (e.key === "Enter") i.blur(); };
   });
+  if (typing) { const el = $(`[data-name="${typing}"]`); if (el) { el.value = typed; el.focus(); } }
   $("#mtRedo").disabled = !m.done;
   $("#mtRedo").textContent = m.redoing ? "Rehaciendo el acta…" : "Rehacer el acta con estos nombres";
   if (m.redoing) $("#mtRedo").disabled = true;
@@ -1683,7 +1686,8 @@ host.on(msg => {
   else if (msg.type === "toast") toast(msg.text);
   else if (msg.type === "agenda") { agenda = msg.agenda || agenda; renderAgenda(); }
   else if (msg.type === "meetings") { meetings = msg.items || []; renderMeetings(); }
-  else if (msg.type === "meeting") { if (!meeting || meeting.id === msg.meeting.id || msg.open) { meeting = msg.meeting; renderMeeting(); } }
+  // Lo que se refresca solo (otra voz nombrada, acta rehecha) entra si esa reunión sigue abierta; abrirla, siempre.
+  else if (msg.type === "meeting") { if (msg.open || meeting?.id === msg.meeting.id) { meeting = msg.meeting; renderMeeting(); } }
   else if (msg.type === "meetingClip") playClip(msg);
   else if (msg.type === "vault") { vault = msg.items || []; renderVault(); if (msg.error) toast(msg.error); }
   else if (msg.type === "voiceStatus") voiceStatus(msg.text);

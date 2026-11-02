@@ -101,6 +101,7 @@ sealed class Widget : LayeredWindow
     readonly People _people = new(System.IO.Path.Combine(Store.Dir, "people.json"));
     readonly VoiceKit _voiceKit = new(System.IO.Path.Combine(Store.ModelsDir, "voces"));
     SherpaVoices? _voices;
+    readonly SemaphoreSlim _voicesGate = new(1, 1);
     System.Threading.Timer? _liveTimer;
     long _orderTokens;
 
@@ -120,6 +121,7 @@ sealed class Widget : LayeredWindow
         _pc.Agenda = _agenda;
         _stage = new StageHost(this, _ai, _s);
         _pc.Stage = _stage;
+        _agent.Stage = _stage.Line;
         // Una pregunta que propone la página (con clic del usuario) es como si la dijera.
         _stage.Ask += q => Post(() => Command(q));
         _stage.Speak += text => Post(() => { _speaker ??= TryCreateSpeaker(); _speaker?.Say(text); });
@@ -132,6 +134,7 @@ sealed class Widget : LayeredWindow
             Voices = VoicesAsync,
             People = _people,
         };
+        _meetingWork.Audio += (model, seconds) => _tokens.AddAudio(model, seconds);
         _meetingWork.Notice += (text, error) => Post(() =>
         {
             Say(text, error ? Theme.Danger : Theme.Blue, 10_000);
@@ -419,7 +422,13 @@ sealed class Widget : LayeredWindow
 
     Speaker? TryCreateSpeaker()
     {
-        try { return new Speaker(_s); } catch { return null; }
+        try
+        {
+            var s = new Speaker(_s);
+            s.Billed += (model, seconds) => _tokens.AddAudio(model, seconds);
+            return s;
+        }
+        catch { return null; }
     }
 
     void StopListening()
@@ -584,17 +593,21 @@ sealed class Widget : LayeredWindow
     async Task<IVoices?> VoicesAsync(CancellationToken ct)
     {
         if (_voices is not null) return _voices;
+        // Uno solo a la vez: la descarga al empezar a grabar y el primer trozo no cargan los modelos dos veces.
+        await _voicesGate.WaitAsync(ct);
         try
         {
+            if (_voices is not null) return _voices;
             if (!await _voiceKit.EnsureAsync(ct)) return null;
             SherpaNative.Prepare();
-            return _voices ??= new SherpaVoices(_voiceKit, Math.Clamp(Environment.ProcessorCount / 4, 1, 4));
+            return _voices = new SherpaVoices(_voiceKit, Math.Clamp(Environment.ProcessorCount / 4, 1, 4));
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             Log.Write("voces: no disponibles · " + ex.Message);
             return null;
         }
+        finally { _voicesGate.Release(); }
     }
 
     /// <summary>Mientras graba, cada minuto se transcribe lo que ya hay entero: al parar casi no queda nada.</summary>
@@ -1121,6 +1134,7 @@ sealed class Widget : LayeredWindow
         try
         {
             var speaker = new Speaker(trial);
+            speaker.Billed += (model, seconds) => _tokens.AddAudio(model, seconds);
             speaker.Say(sample);
             // Se suelta solo al terminar; un objeto por prueba, para no tocar el que usa la escucha.
             _ = Task.Delay(15_000).ContinueWith(_ => speaker.Dispose());
