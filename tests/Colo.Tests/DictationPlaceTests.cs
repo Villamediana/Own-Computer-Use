@@ -25,6 +25,23 @@ public class DictationPlaceTests
     }
 
     [Fact]
+    public void Place_said_by_name_is_recognized_and_not_typed()
+    {
+        // O modelo pôs o nome da conversa em vez de @2: antes saía «@Felipe SantosDependendo…» no campo errado.
+        string[] labels = ["claude  [WindowsTerminal]", "Felipe Santos | Microsoft Teams: «Digite uma mensagem»"];
+        var p = new Dictation.Place(labels);
+        var text = string.Concat(new[] { "@Felipe ", "Santos", "\nDependendo do que ", "precisar" }.Select(p.Feed)) + p.Flush();
+        Assert.Equal((2, "Dependendo do que precisar"), (p.Choice, text));
+
+        // Menção de verdade continua sendo texto: a linha não é o nome de um campo.
+        var m = new Dictation.Place(labels);
+        Assert.Equal("@Felipe olha isso\nvaleu", string.Concat(new[] { "@Felipe olha isso", "\nvaleu" }.Select(m.Feed)) + m.Flush());
+        Assert.Equal(1, m.Choice);
+        var solta = new Dictation.Place(labels);
+        Assert.Equal("@Felipe olha isso", solta.Feed("@Felipe olha isso") + solta.Flush());
+    }
+
+    [Fact]
     public void Text_waits_until_the_place_is_decided()
     {
         var p = new Dictation.Place(2);

@@ -1030,7 +1030,7 @@ sealed class Widget : LayeredWindow
         var focusMs = sw.ElapsedMilliseconds;
         var target = direct ?? (inputs.Count == 0 ? "nada (no hay campos)" : "");
         if (direct is null && inputs.Count == 1) target = await Task.Run(() => Desktop.GoTo(inputs[0], _cursor));
-        var place = direct is null && inputs.Count > 1 ? new Dictation.Place(inputs.Count) : null;
+        var place = direct is null && inputs.Count > 1 ? new Dictation.Place(inputs.Select(i => i.Label).ToList()) : null;
         long first = -1;
 
         var chunks = Channel.CreateUnbounded<string>(new UnboundedChannelOptions { SingleReader = true });
