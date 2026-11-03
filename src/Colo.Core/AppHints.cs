@@ -17,6 +17,7 @@ public static class AppHints
         {
             "explorer" => "Explorador: files trabaja sobre la carpeta abierta (rutas relativas). f2 renombra, ctrl+shift+n carpeta nueva, alt+↑ sube, ctrl+l ruta, ctrl+e busca.",
             "winword" => "Word: doc antes que ctrl+f o desplazar (outline, goto, read, find, write, format). Preguntas sobre el documento: read (section o all) y responde. Escribir o completar una parte: read de esa sección y write con el tono y el estilo del documento (at=section_end para añadir al final).",
+            "olk" or "outlook" => "Outlook: puede tener varias cuentas, cada una plegada en el panel de la izquierda (clic en el nombre de la cuenta la despliega). La búsqueda mira solo el buzón actual: para todas, en el desplegable de alcance junto a la caja de búsqueda elige «Todas as caixas de correio». Un código o correo que acaba de llegar: búscalo en todas las cuentas, ábrelo y léelo con read_text.",
             "excel" => "Excel: sheet para leer, escribir, fórmulas y filtros. f2 edita la celda, ctrl+flechas salta al borde de la tabla, ctrl+z deshace.",
             _ => "",
         };

@@ -835,6 +835,9 @@ public sealed class MeetingWork(Meetings meetings, Settings settings, AiClient a
     {
         var wav = Path.Combine(job.Dir, "audio.wav");
         var m4a = Path.Combine(job.Dir, "audio.m4a");
+        // La tentativa cuenta antes de empezar: si algo nativo tumba el proceso a mitad (pasó con sherpa-onnx), al
+        // volver a abrir Colo no se repite sin fin; a las 3 queda parada hasta «meeting retry».
+        job = meetings.Update(job with { Attempts = job.Attempts + 1 });
         try
         {
             if (job.Status is "recorded" or "encoded")
@@ -879,7 +882,7 @@ public sealed class MeetingWork(Meetings meetings, Settings settings, AiClient a
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            meetings.Update(job with { Error = ex.Message.Length > 160 ? ex.Message[..160] : ex.Message, Attempts = job.Attempts + 1 });
+            meetings.Update((meetings.Find(job.Id) ?? job) with { Error = ex.Message.Length > 160 ? ex.Message[..160] : ex.Message });
             Notice?.Invoke("La reunión no se pudo procesar: " + ex.Message, true);
         }
     }

@@ -83,8 +83,18 @@ public sealed class SherpaVoices : IVoices, IDisposable
         c.Clustering.Threshold = 0.9f;
         c.MinDurationOn = 0.3f;
         c.MinDurationOff = 0.5f;
-        _diarize = new OfflineSpeakerDiarization(c);
-        _embed = new SpeakerEmbeddingExtractor(new SpeakerEmbeddingExtractorConfig { Model = kit.Voice, NumThreads = threads });
+        // Un modelo que sherpa no encuentra o no carga no lanza nada: deja el puntero nulo y el primer uso tumba el
+        // proceso entero (sin excepción ni log). Se mira aquí y se convierte en un error normal.
+        _diarize = Alive(new OfflineSpeakerDiarization(c), kit.Segmentation);
+        _embed = Alive(new SpeakerEmbeddingExtractor(new SpeakerEmbeddingExtractorConfig { Model = kit.Voice, NumThreads = threads }), kit.Voice);
+    }
+
+    static T Alive<T>(T native, string model) where T : class
+    {
+        var f = typeof(T).GetField("_handle", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        if (f?.GetValue(native) is System.Runtime.InteropServices.HandleRef h && h.Handle == IntPtr.Zero)
+            throw new InvalidOperationException("sherpa-onnx no pudo cargar " + Path.GetFileName(model));
+        return native;
     }
 
     public List<Turn> Turns(float[] mono)
@@ -100,7 +110,9 @@ public sealed class SherpaVoices : IVoices, IDisposable
             var s = _embed.CreateStream();
             s.AcceptWaveform(MeetingAudio.Rate, mono);
             s.InputFinished();
-            return _embed.IsReady(s) ? _embed.Compute(s) : [];
+            // Con muy poco audio sale todo NaN: eso no es una huella (y estropearía el centroide).
+            var v = _embed.IsReady(s) ? _embed.Compute(s) : [];
+            return v.Any(float.IsNaN) ? [] : v;
         }
     }
 

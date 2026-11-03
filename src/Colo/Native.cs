@@ -115,6 +115,15 @@ static class Native
     [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr h, uint cmd);
     [DllImport("user32.dll")] public static extern int GetWindowTextLength(IntPtr h);
     [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern uint GetShortPathNameW(string longPath, System.Text.StringBuilder shortPath, uint size);
+
+    /// <summary>El nombre corto (8.3) de una ruta que existe; la misma si el disco no los guarda.</summary>
+    public static string ShortPath(string path)
+    {
+        var sb = new System.Text.StringBuilder(1024);
+        var n = GetShortPathNameW(path, sb, (uint)sb.Capacity);
+        return n > 0 && n < sb.Capacity ? sb.ToString() : path;
+    }
     [DllImport("user32.dll")] static extern bool AttachThreadInput(uint a, uint b, bool attach);
     public const int SW_MAXIMIZE = 3, SW_MINIMIZE = 6, SW_RESTORE = 9;
     public const uint WM_CLOSE = 0x10, GW_OWNER = 4;

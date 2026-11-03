@@ -186,13 +186,15 @@ sealed class Recorder : IDisposable
 }
 
 /// <summary>
-/// Pastilla pequeña mientras graba: ● y el tiempo (‖ en pausa). Clic = pausa o sigue; clic derecho = parar y guardar.
-/// No toma el foco.
+/// Pastilla pequeña mientras graba: ● y el tiempo, y dos botones a la vista: pausar/seguir y parar (guarda la
+/// reunión). No toma el foco.
 /// </summary>
 sealed class RecordPill : Form
 {
     readonly Func<(RecState State, TimeSpan Elapsed)> _read;
     readonly System.Windows.Forms.Timer _timer = new() { Interval = 500 };
+    readonly ToolTip _tip = new();
+    int _hover = -1; // 0 = pausar/seguir, 1 = parar
     public event Action? Toggle;
     public event Action? StopAsked;
 
@@ -205,11 +207,33 @@ sealed class RecordPill : Form
         StartPosition = FormStartPosition.Manual;
         BackColor = Color.White;
         DoubleBuffered = true;
-        Cursor = Cursors.Hand;
         _timer.Tick += (_, _) => Invalidate();
-        MouseUp += (_, e) => { if (e.Button == MouseButtons.Right) StopAsked?.Invoke(); else Toggle?.Invoke(); };
-        var tip = new ToolTip();
-        tip.SetToolTip(this, "Clic: pausar o seguir · clic derecho: parar y guardar");
+        MouseMove += (_, e) => SetHover(Hit(e.Location));
+        MouseLeave += (_, _) => SetHover(-1);
+        MouseUp += (_, e) =>
+        {
+            if (e.Button != MouseButtons.Left) return;
+            switch (Hit(e.Location))
+            {
+                case 0: Toggle?.Invoke(); break;
+                case 1: StopAsked?.Invoke(); break;
+            }
+        };
+    }
+
+    float S => DeviceDpi / 96f;
+    RectangleF Button(int i) => new(Width - (i == 0 ? 66 : 36) * S, (Height - 28 * S) / 2, 28 * S, 28 * S);
+
+    int Hit(Point p) => Button(1).Contains(p) ? 1 : Button(0).Contains(p) ? 0 : -1;
+
+    void SetHover(int h)
+    {
+        if (h == _hover) return;
+        _hover = h;
+        Cursor = h >= 0 ? Cursors.Hand : Cursors.Default;
+        var paused = _read().State == RecState.Paused;
+        _tip.SetToolTip(this, h switch { 0 => paused ? "Seguir grabando" : "Pausar", 1 => "Parar y guardar la reunión", _ => "" });
+        Invalidate();
     }
 
     protected override bool ShowWithoutActivation => true;
@@ -226,8 +250,8 @@ sealed class RecordPill : Form
 
     public void ShowNear(Rectangle widget)
     {
-        var s = DeviceDpi / 96f;
-        Size = new Size((int)(128 * s), (int)(34 * s));
+        var s = S;
+        Size = new Size((int)(172 * s), (int)(36 * s));
         var wa = Screen.FromRectangle(widget).WorkingArea;
         Location = new Point(Math.Clamp(widget.X + (widget.Width - Width) / 2, wa.Left, wa.Right - Width),
             Math.Max(wa.Top, widget.Top - Height - (int)(6 * s)));
@@ -237,9 +261,9 @@ sealed class RecordPill : Form
         Show();
     }
 
-    protected override void OnFormClosed(FormClosedEventArgs e) { _timer.Dispose(); base.OnFormClosed(e); }
+    protected override void OnFormClosed(FormClosedEventArgs e) { _timer.Dispose(); _tip.Dispose(); base.OnFormClosed(e); }
 
-    static GraphicsPath Round(Rectangle r, int radius)
+    static GraphicsPath Round(RectangleF r, float radius)
     {
         var p = new GraphicsPath();
         var d = radius * 2;
@@ -257,28 +281,44 @@ sealed class RecordPill : Form
         var g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
         g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
-        var s = DeviceDpi / 96f;
+        var s = S;
         using (var border = new Pen(Color.FromArgb(228, 228, 231), 1))
-        using (var path = Round(new Rectangle(0, 0, Width - 1, Height - 1), (Height - 1) / 2))
+        using (var path = Round(new Rectangle(0, 0, Width - 1, Height - 1), (Height - 1) / 2f))
             g.DrawPath(border, path);
         var cy = Height / 2f;
         var recording = state == RecState.Recording;
-        // El punto late despacio mientras graba.
+        // El punto late despacio mientras graba; en pausa queda gris y quieto.
         var alpha = recording ? (int)(170 + 85 * Math.Sin(Environment.TickCount64 / 300.0)) : 255;
-        if (recording)
-            using (var dot = new SolidBrush(Color.FromArgb(alpha, 220, 38, 38)))
-                g.FillEllipse(dot, 14 * s, cy - 5 * s, 10 * s, 10 * s);
-        else
-            using (var bars = new SolidBrush(Color.FromArgb(132, 132, 140)))
-            {
-                g.FillRectangle(bars, 14 * s, cy - 5 * s, 3.5f * s, 10 * s);
-                g.FillRectangle(bars, 20 * s, cy - 5 * s, 3.5f * s, 10 * s);
-            }
+        using (var dot = new SolidBrush(recording ? Color.FromArgb(alpha, 220, 38, 38) : Color.FromArgb(180, 180, 186)))
+            g.FillEllipse(dot, 14 * s, cy - 5 * s, 10 * s, 10 * s);
         var text = elapsed.TotalHours >= 1 ? elapsed.ToString(@"h\:mm\:ss") : elapsed.ToString(@"mm\:ss");
-        if (!recording) text += "  pausa";
-        using var font = new Font("Segoe UI Semibold", 10.5f);
-        using var ink = new SolidBrush(recording ? Color.FromArgb(17, 17, 19) : Color.FromArgb(132, 132, 140));
-        var size = g.MeasureString(text, font);
-        g.DrawString(text, font, ink, 32 * s, cy - size.Height / 2);
+        using (var font = new Font("Segoe UI Semibold", 10.5f))
+        using (var ink = new SolidBrush(recording ? Color.FromArgb(17, 17, 19) : Color.FromArgb(132, 132, 140)))
+        {
+            var size = g.MeasureString(text, font);
+            g.DrawString(text, font, ink, 30 * s, cy - size.Height / 2);
+        }
+
+        for (var i = 0; i < 2; i++)
+        {
+            var b = Button(i);
+            if (_hover == i)
+                using (var bg = new SolidBrush(Color.FromArgb(241, 241, 244)))
+                    g.FillEllipse(bg, b);
+            var c = new PointF(b.X + b.Width / 2, b.Y + b.Height / 2);
+            if (i == 0 && recording)
+                using (var bars = new SolidBrush(Color.FromArgb(60, 60, 67)))
+                {
+                    g.FillRectangle(bars, c.X - 4.5f * s, c.Y - 5.5f * s, 3.2f * s, 11 * s);
+                    g.FillRectangle(bars, c.X + 1.3f * s, c.Y - 5.5f * s, 3.2f * s, 11 * s);
+                }
+            else if (i == 0)
+                using (var play = new SolidBrush(Color.FromArgb(220, 38, 38)))
+                    g.FillPolygon(play, new PointF[] { new(c.X - 3.5f * s, c.Y - 6 * s), new(c.X + 6 * s, c.Y), new(c.X - 3.5f * s, c.Y + 6 * s) });
+            else
+                using (var sq = new SolidBrush(Color.FromArgb(17, 17, 19)))
+                using (var path = Round(new RectangleF(c.X - 5 * s, c.Y - 5 * s, 10 * s, 10 * s), 2 * s))
+                    g.FillPath(sq, path);
+        }
     }
 }

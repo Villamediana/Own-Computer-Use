@@ -29,6 +29,18 @@ public sealed class VaultTests : IDisposable
     }
 
     [Fact]
+    public void Model_cannot_overwrite_an_entry_without_replace()
+    {
+        var v = Open();
+        v.Save("Servidor Local", "ssh", "u0", "192.168.15.188", "", "senha-ssh");
+        var r = v.Save("Servidor Local", "note", "", "", "", "miguel@vertis.com.br", replace: false);
+        Assert.StartsWith("error: ya existe «Servidor Local» ssh", r);
+        Assert.Equal("senha-ssh", Open().Reveal("Servidor Local", out _));
+        Assert.StartsWith("ok: actualicé", v.Save("Servidor Local", "ssh", "u0", "192.168.15.188", "", "nueva", replace: true));
+        Assert.Equal("nueva", Open().Reveal("Servidor Local", out _));
+    }
+
+    [Fact]
     public void Model_sees_names_never_secrets()
     {
         var v = Open();

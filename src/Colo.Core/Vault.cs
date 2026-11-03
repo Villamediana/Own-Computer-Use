@@ -50,7 +50,8 @@ public sealed class Vault
     /// <summary>Las líneas del turno: nombres y para qué sirven, sin secretos.</summary>
     public IReadOnlyList<string> Lines() { lock (_lock) return _entries.Select(Describe).ToList(); }
 
-    public string Save(string name, string kind, string user, string host, string where, string secret)
+    /// <summary>replace = false: si ya hay uno con ese nombre no se toca (el modelo pisó así una contraseña ssh con un e-mail).</summary>
+    public string Save(string name, string kind, string user, string host, string where, string secret, bool replace = true)
     {
         name = name.Trim();
         if (name.Length == 0) return "error: falta name";
@@ -63,6 +64,8 @@ public sealed class Vault
         {
             var i = _entries.FindIndex(e => e.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
             replaced = i >= 0;
+            if (replaced && !replace)
+                return $"error: ya existe {Describe(_entries[i])}. Pregúntale si quiere reemplazarlo; solo con su sí, save con replace=true (o usa otro name)";
             if (!replaced && _entries.Count >= MaxEntries) return "error: el cofre está lleno";
             var entry = new VaultEntry(name, kind, user.Trim(), host.Trim(), where.Trim(), cipher, DateTime.Now);
             if (replaced) _entries[i] = entry; else _entries.Add(entry);

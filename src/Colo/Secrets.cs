@@ -53,7 +53,7 @@ static class Secrets
                             : $"error: no hay texto en {from}";
                 }
                 cursor?.Say("Guardando en el cofre");
-                return vault.Save(name, c.Str("kind"), c.Str("user"), c.Str("host"), c.Str("where"), secret);
+                return vault.Save(name, c.Str("kind"), c.Str("user"), c.Str("host"), c.Str("where"), secret, c.Bool("replace"));
             }
             case "forget":
                 return vault.Forget(name);

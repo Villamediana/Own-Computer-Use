@@ -311,6 +311,33 @@ Aqui está: {"title":"Migração do Tower Finder","summary":"Decidimos migrar o 
         Assert.InRange(t.Speakers.Count, 4, 5);
     }
 
+    /// <summary>Lo que trae una reunión corta de verdad: pocos segundos, silencio, ruido, una voz sola.</summary>
+    [Fact]
+    public void Real_voices_survive_short_silent_and_noisy_audio()
+    {
+        var dir = Environment.GetEnvironmentVariable("COLO_VOICES");
+        if (dir is null || !File.Exists(Path.Combine(dir, "four.wav"))) return;
+        using var r = new WaveFileReader(Path.Combine(dir, "four.wav"));
+        var bytes = new byte[r.Length];
+        r.ReadExactly(bytes);
+        var x = new float[bytes.Length / 2];
+        for (var i = 0; i < x.Length; i++) x[i] = BitConverter.ToInt16(bytes, i * 2) / 32768f;
+        var v = new SherpaVoices(new VoiceKit(dir));
+        var rnd = new Random(1);
+        var noise = new float[8 * 16000];
+        for (var i = 0; i < noise.Length; i++) noise[i] = (float)(rnd.NextDouble() - 0.5) * 0.02f;
+        foreach (var clip in new[] { new float[8 * 16000], new float[16000], noise, x[..(8 * 16000)], x[..(3 * 16000)], new float[200 * 16000] })
+        {
+            var turns = v.Turns(clip);
+            foreach (var g in turns.GroupBy(t => t.Speaker))
+            {
+                var a = Math.Min((int)(g.First().Start * 16000), clip.Length);
+                v.Embed(clip[a..Math.Clamp((int)(g.First().End * 16000), a, clip.Length)]);
+            }
+        }
+        Assert.Empty(v.Embed(new float[100]));
+    }
+
     [Fact]
     public void Killed_recording_is_recovered_with_its_real_length()
     {

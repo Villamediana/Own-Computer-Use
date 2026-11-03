@@ -278,6 +278,9 @@ dejar lo que está haciendo? Responde solo «sí» o «no».
                         // La acción traía la frase final: si es la última de la respuesta, hecho sin otro turno.
                         // Recordar algo sin done después de una acción con done no le quita el cierre.
                         else if (call.Str("done").Trim() is { Length: > 0 } f && Tools.Finishing.Contains(call.Name)) closing = f;
+                        // El palco se crea aparte: pedirlo otra vez en la misma orden solo cancela y relanza el
+                        // diseño (cada vez una llamada cara). Pedido el palco, la orden termina.
+                        else if (call.Name == "stage" && call.Str("action") is "show" or "edit") closing = "";
                         else if (!remembers) closing = null;
                     }
                 }

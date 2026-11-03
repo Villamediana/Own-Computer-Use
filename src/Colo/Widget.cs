@@ -99,7 +99,7 @@ sealed class Widget : LayeredWindow
     RecordPill? _pill;
     // Quién habla (1.24): huellas de voz de las personas ya nombradas y el reconocedor, bajado la primera vez que se graba.
     readonly People _people = new(System.IO.Path.Combine(Store.Dir, "people.json"));
-    readonly VoiceKit _voiceKit = new(System.IO.Path.Combine(Store.ModelsDir, "voces"));
+    readonly VoiceKit _voiceKit = new(VoicesDir());
     SherpaVoices? _voices;
     readonly SemaphoreSlim _voicesGate = new(1, 1);
     System.Threading.Timer? _liveTimer;
@@ -587,6 +587,26 @@ sealed class Widget : LayeredWindow
         _ = Task.Run(RunMeetingsAsync);
         Say("Reunión guardada · la transcribo en segundo plano", Theme.Blue, 4000);
         return $"ok: guardada ({(int)(seconds / 60)} min) en {rec.Dir}; el acta sale sola en unos minutos";
+    }
+
+    /// <summary>
+    /// Dónde van los modelos de voces. sherpa-onnx lee la ruta como UTF-8 y .NET se la pasa en ANSI: con una letra
+    /// como la «ó» de «MiguelOsório» no encuentra el modelo y Colo se caía al primer trozo. Carpeta solo ASCII: la
+    /// misma con su nombre corto (8.3) o, si el disco no los tiene, ProgramData.
+    /// </summary>
+    static string VoicesDir()
+    {
+        static bool Ascii(string s) => s.All(ch => ch < 128);
+        var dir = System.IO.Path.Combine(Store.ModelsDir, "voces");
+        if (Ascii(dir)) return dir;
+        try
+        {
+            System.IO.Directory.CreateDirectory(dir);
+            var shortDir = Native.ShortPath(dir);
+            if (Ascii(shortDir)) return shortDir;
+        }
+        catch { }
+        return System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Colo", "voces");
     }
 
     /// <summary>El reconocedor de voces; null si no se pudo bajar o cargar (la reunión sigue por canales).</summary>
@@ -1289,6 +1309,7 @@ sealed class Widget : LayeredWindow
         [
             new(_listening ? "Pausar" : "Seguir", _listening ? PopMenu.Icon.Pause : PopMenu.Icon.Play, ToggleListening),
             new("Detener lo que hace", PopMenu.Icon.Stop, () => _agent.Stop()),
+            .. (_recorder is null ? Array.Empty<PopMenu.Entry>() : [new PopMenu.Entry("Parar la reunión y guardarla", PopMenu.Icon.Stop, () => Meeting(RecAction.Stop))]),
             new("Ajustes…", PopMenu.Icon.Settings, OpenSettings, GapBefore: true),
             new("Salir", PopMenu.Icon.Power, Close, Danger: true),
         ]);
