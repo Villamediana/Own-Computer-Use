@@ -1,82 +1,111 @@
-# Colo
+<div align="center">
 
-Controla el PC con Windows hablando. Mantienes un atajo (por defecto `Ctrl+Win`), hablas y sueltas: transcribe
-y lo hace. Una onda blanca aparece mientras hablas o trabaja y se va sola. Un cursor azul muestra dónde va a
-hacer clic y qué está haciendo.
+# 🌊 Colo
 
-- **Movimiento**: el ratón real y el cursor azul se deslizan juntos al ritmo del monitor (DwmFlush), con curva de
-  jerk mínimo y un arco leve (`Motion`). Todo lo que aparece entra con muelle (`Spring`): la flecha rebota al
-  aparecer, la etiqueta se estira al texto nuevo, el clic hunde la flecha y suelta ondas y chispas; la onda es una
-  gota de vidrio que se aplasta y estira al cambiar de estado, y la frase sube con rebote.
-- **Atajos que se mantienen**: dos teclas cualesquiera, también dos letras cercanas (se aprieta una y luego la otra);
-  una letra del atajo se retiene al bajar y, si no llega la otra, se reenvía tal cual. Con otra tecla encima
-  (Ctrl+Win+D) era otro atajo y no transcribe. Opcional: un atajo de **dictar**: transcribe, una llamada corta al
-  modelo (sin herramientas ni pantalla) lo corrige con tu tono y se escribe donde está el cursor. Sin él, el
-  modelo decide cuándo es un dictado y usa `dictate`.
-- **Parar**: si hablas a mitad de una tarea, el paso en curso se corta y el modelo lee lo nuevo antes de seguir;
-  «para», «déjalo» → `stop`, sin tocar nada más.
-- **GPT-Live** (opcional): conversación en vivo por WebSocket (`/openai/v1/live/sessions`). Mantener el atajo
-  abre el micrófono (y la llamada si no hay); soltarlo lo silencia pero la llamada sigue. Lo que haya que hacer en
-  el PC, GPT-Live lo delega en Colo (delegación al cliente) y dice el resultado con su voz; cuelga sola cuando la
-  tarea terminó y lleva 8 s callada.
+**Le hablas a tu PC y lo hace.**
 
-- **Voz**: el micrófono se abre al apretar el atajo y se cierra al soltarlo (nada queda escuchando en segundo plano).
-  Lo dicho va a una de tres transcripciones: Whisper en el propio PC (base o small, sin tokens, con idioma fijo),
-  el modelo de transcripción de OpenAI/Foundry (p. ej. gpt-4o-mini-transcribe) o ElevenLabs Scribe; estas dos y
-  GPT-Live entienden el idioma que hables. Whisper y la API llevan un glosario con los programas abiertos.
-  La API y GPT-Live pueden usar otra conexión (endpoint y llave) que la del modelo.
-- **Respuestas habladas** (opcional): ElevenLabs v4 con etiquetas de emoción ([laughs], [warmly]…) que la voz
-  interpreta y no se ven en pantalla, o la voz de Windows. El micrófono se pausa mientras habla.
-- **Contexto**: recuerda los últimos pedidos y lo que hizo en cada uno («ahí no, en la barra»); se olvida solo
-  tras 10 minutos sin pedidos.
-- **Memoria**: con remember/forget el modelo guarda lo que aprende de ti (cómo llamas a tus cosas, qué app usas)
-  y lo usa otros días (`%APPDATA%\Colo\memory.json`; se ve y se borra en Ajustes › General).
-- **Cada turno** lleva las demás ventanas abiertas y qué campo tiene el foco y qué pestaña está activa.
-- **Caché**: instrucciones y tools van primero e iguales en cada paso, luego memoria y pedidos anteriores, y al
-  final la pantalla; con `prompt_cache_key` fijo el proveedor reutiliza el prefijo.
-- **Económico**: las acciones traen un campo `done` opcional; si con la última acción el pedido queda hecho,
-  termina sin otra llamada al modelo (una orden simple = una llamada). Tope de 40 pasos por orden; un pedido con varias partes empieza con un plan corto que se sigue en orden.
-- **Costo**: Ajustes › Costo muestra cuánto va gastando cada modelo (tokens o minutos de audio, hoy y total) y el total
-  en dólares, con los precios de lista de la documentación (oct. 2026) y un precio propio por modelo si tu contrato
-  es otro o el modelo no está. El menú de la onda muestra el de hoy y el total (`%APPDATA%\Colo\usage.json`).
-- **Plan**: un pedido con varias partes usa la tool `plan` (interna): fija las partes y marca las hechas; el plan
-  va en cada turno (✓ hecho, → ahora) y se sigue en orden.
-- **Ajustes**: página web (`src/Colo/settings.html`) dentro de WebView2, sin botón de guardar: cada cambio se guarda
-  solo (~0,4 s) y lo pesado (micrófono, MCP, atajos) se aplica al cerrar; prueba del micrófono en vivo en Voz.
-  Probar la página: `node tests/ui/settings.test.js <carpeta>` (playwright-core).
+Mantienes `Ctrl+Win`, dices lo que quieres, sueltas.
+Una onda blanca te escucha, un cursor azul se mueve solo y la tarea queda hecha.
+
+[**⬇ Descargar Colo.exe**](https://github.com/Villamediana/Own-Computer-Use/releases/latest) &nbsp;·&nbsp; [Cómo funciona](#cómo-funciona) &nbsp;·&nbsp; [Compilar](#compilar)
+
+![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows&logoColor=white)
+![.NET 8](https://img.shields.io/badge/.NET-8-512BD4?logo=dotnet&logoColor=white)
+![Azure AI Foundry](https://img.shields.io/badge/Azure%20AI%20Foundry-OpenAI-0089D6?logo=microsoftazure&logoColor=white)
+![Whisper](https://img.shields.io/badge/Whisper-local-111111)
+![MCP](https://img.shields.io/badge/MCP-tools-6E56CF)
+
+</div>
+
+---
+
+> «abre Outlook y respóndele a Ana que el jueves me queda bien»
+> «pásame este PDF a la carpeta de facturas»
+> «sube el volumen y pon la playlist de ayer»
+
+Colo es un agente de escritorio para Windows: ve la pantalla (los elementos de la interfaz, numerados), decide el siguiente paso y usa el ratón y el teclado de verdad — con un cursor azul que deja ver qué va a tocar antes de tocarlo.
+
+Un solo `.exe`, trae .NET adentro, no instala nada ni pide permisos de administrador.
+
+## Cómo funciona
+
+```mermaid
+flowchart LR
+    A[⌨️ mantienes Ctrl+Win<br/>y hablas] --> B[🎙️ transcripción<br/>Whisper local · API · Scribe]
+    B --> C[🧠 modelo<br/>Foundry / OpenAI]
+    D[🖥️ pantalla como lista<br/>UI Automation numerada] --> C
+    C -->|acción| E[🖱️ ratón y teclado reales<br/>+ cursor azul]
+    E -->|¿listo?| C
+    C -->|done| F[✅ hecho<br/>opcional: lo dice en voz alta]
+```
+
+- El micrófono **solo se abre mientras mantienes el atajo**. Nada queda escuchando.
+- La pantalla viaja como **texto** (lista de elementos con estado: foco, marcado, desplegado…). La captura de imagen va solo cuando el modelo la pide.
+- Cada acción se ejecuta **en cuanto el modelo la emite** (streaming). Una orden simple = una sola llamada.
+- Si hablas en medio de una tarea, el paso actual se corta y Colo lee lo nuevo. «Para» o «déjalo» lo detiene sin tocar nada más.
+
+## Lo que sabe hacer
+
+| | |
+|---|---|
+| 🖱️ **Ratón y teclado** | clic, arrastrar, scroll, escribir, corregir un trozo de texto sin reescribirlo, atajos |
+| 🌐 **Navegador** | ir a una página, pestañas, buscar, encontrar en la página |
+| 🪟 **Ventanas** | abrir programas, enfocar, minimizar, cerrar — y te avisa si hay dos parecidos (Outlook clásico / nuevo) |
+| 📖 **Leer** | texto de la ventana, del campo con foco, la selección, el portapapeles |
+| 📂 **Archivos** | buscar y mover archivos |
+| ✍️ **Dictar** | atajo aparte: transcribe, corrige con tu tono y escribe donde está el cursor |
+| 🧠 **Memoria** | recuerda cómo llamas a tus cosas y qué apps usas (lo ves y lo borras en Ajustes) |
+| 🔐 **Cofre** | contraseñas cifradas con DPAPI; el modelo solo ve los nombres, nunca el secreto |
+| 🔌 **MCP** | conecta servidores MCP (stdio o HTTP) y elige qué tools usa |
+| 🗣️ **GPT-Live** | opcional: conversación en vivo por voz; Colo hace lo que haya que hacer en el PC |
+
+## Uso
+
+| Atajo | Qué hace |
+|---|---|
+| mantener `Ctrl+Win` | hablarle (se cambia en Ajustes › Voz) |
+| `Ctrl+Alt+Espacio` | pausar / seguir |
+| `Ctrl+Alt+X` | detener la tarea |
+| clic en la onda | pausar / seguir · arrastrar = mover · clic derecho = menú y Ajustes |
+
+**Ajustes** es una página dentro de la app que se guarda sola. Ahí eliges el modelo (Azure AI Foundry u OpenAI), cómo transcribir (Whisper en el propio PC, sin tokens; el modelo de transcripción de la API; o ElevenLabs Scribe), la voz de las respuestas y qué grupos de herramientas usar.
+**Costo** muestra lo que va gastando cada modelo, hoy y en total.
+
+Tus llaves quedan en `%APPDATA%\Colo\settings.json`, cifradas con DPAPI: solo tu usuario, en ese PC, las abre.
+
+<details>
+<summary><b>Los detalles que lo hacen sentir rápido</b></summary>
+
+<br>
+
+- **Movimiento**: el ratón real y el cursor azul se deslizan juntos al ritmo del monitor (DwmFlush), con curva de jerk mínimo y un arco leve. Todo entra con muelle: la flecha rebota, la etiqueta se estira al texto nuevo, el clic suelta ondas y chispas.
+- **Atajos que se mantienen**: cualquier par de teclas, incluso dos letras cercanas; si no llega la segunda, la primera se reenvía tal cual. Con una tercera tecla encima (Ctrl+Win+D) es otro atajo y no transcribe.
+- **Contexto corto**: recuerda los últimos pedidos y lo que hizo en cada uno («ahí no, en la barra») y se olvida solo tras 10 minutos.
+- **Plan**: un pedido con varias partes empieza con un plan corto que se sigue en orden (✓ hecho, → ahora). Tope de 40 pasos por orden.
+- **Caché**: instrucciones y tools van primero e iguales en cada paso, la pantalla al final; con `prompt_cache_key` fijo el proveedor reutiliza el prefijo.
 - **Registro**: `%LOCALAPPDATA%\Colo\colo.log` (micrófono, frases, órdenes, errores).
-- **Cerebro**: Azure AI Foundry (`/openai/v1/responses`, nombre del deployment) u OpenAI.
-  Cada paso manda una captura con los elementos de UI Automation numerados.
-- **Herramientas**: ratón (click, drag, scroll), teclado (type_text con clic/reemplazo/Enter, edit_text para
-  corregir un trozo sin reescribirlo, press_keys),
-  navegador (go, new_tab, search, find, back, tab…), ventanas (open, window focus/list/minimize/close),
-  lectura (read_text window/focused/selection/list, clipboard), find_files, screenshot, look, wait, done, ignore.
-  Se apagan por grupo en Ajustes.
-- **Pantalla**: la lista lleva el estado de cada elemento (foco, elegido, marcada, plegado/desplegado) y, en los
-  árboles, dentro de qué nodo está (las carpetas de cada cuenta del correo); `click` con `expand` despliega o pliega
-  sin buscar la flecha. Lo que el programa abre encima como ventana aparte (menús contextuales, sugerencias del
-  «Para», desplegables del navegador) entra en la lista. `open` espera a la ventana, la trae al frente y dice qué
-  otros programas instalados se llaman parecido (Outlook clásico / nuevo). Al apretar el atajo la ventana activa ya
-  se empieza a leer, y los pasos que solo leen no vuelven a leer la pantalla.
-- **MCP**: servidores por comando (stdio) o URL (Streamable HTTP); se elige qué tools usa. Llegan como `mcp_<servidor>_<tool>`.
-- **Rápido y barato**: streaming (cada acción se ejecuta en cuanto el modelo la emite), la pantalla va como lista
-  de elementos en texto y la captura solo cuando el modelo la pide (`look`), resultados largos solo un turno.
 
-## Descargar
+</details>
 
-`Colo.exe` en Releases: un solo archivo, trae .NET dentro, no instala nada ni pide admin.
+## Compilar
 
-Uso: clic en la onda = pausar/seguir · arrastrar = mover · clic derecho = menú y Ajustes.
-Atajos: mantener `Ctrl+Win` para hablarle (se cambia en Ajustes › Voz), `Ctrl+Alt+Espacio` pausar/seguir,
-`Ctrl+Alt+X` detener la tarea.
-Ajustes en `%APPDATA%\Colo\settings.json` (las API keys van cifradas con DPAPI).
-
-## Compilar (desde Linux o Windows)
+Funciona desde Windows o Linux.
 
 ```bash
 dotnet test tests/Colo.Tests
-dotnet publish src/Colo -c Release -o dist      # dist/Colo.exe, un solo archivo, sin instalar nada
+dotnet publish src/Colo -c Release -o dist      # dist/Colo.exe — un solo archivo
 ```
 
-`tools/Preview` renderiza la onda y el cursor a PNG (`Preview shots <dir>`) y corre el bucle real
-contra un endpoint (`Preview run <endpoint> "<orden>"`); funciona también en Wine.
+```
+src/Colo.Core   el cerebro: agente, cliente del modelo, tools, memoria, voz, MCP (sin nada de Windows)
+src/Colo        la parte Windows: onda, cursor, UI Automation, atajos, ajustes (WebView2)
+tests/          unitarios, UI de ajustes (playwright-core) y e2e
+tools/Preview   renderiza la onda y el cursor a PNG y corre el bucle real contra un endpoint (también en Wine)
+installer/      instaladores Inno Setup y NSIS
+```
+
+---
+
+<div align="center">
+<sub>Hecho por <a href="https://github.com/Villamediana">Miguel Villamediana</a> · Windows, por ahora 🌊</sub>
+</div>
