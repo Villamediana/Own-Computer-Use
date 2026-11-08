@@ -52,13 +52,60 @@ static class Desktop
     {
         if (what == "selection") return await ReadSelectionAsync(ct);
         var hwnd = Native.GetForegroundWindow();
-        var work = Task.Run(() => what == "focused" ? Focused() : WindowText(hwnd));
+        var work = Task.Run(() => what switch { "focused" => Focused(), "list" => ListText(hwnd), _ => WindowText(hwnd) });
         if (await Task.WhenAny(work, Task.Delay(4000, ct)) != work) return "error: la ventana tardó demasiado en dar su texto";
         string text;
         try { text = (await work).Trim(); }
         catch (Exception ex) { return "error: no pude leer el texto (" + ex.Message + "); prueba look"; }
-        if (text.Length == 0) return "ok: (sin texto legible; prueba look)";
+        if (text.Length == 0) return what == "list" ? "ok: (no hay filas de lista a la vista; prueba read_text window)" : "ok: (sin texto legible; prueba look)";
         return "ok:\n" + (text.Length > MaxText ? text[..MaxText] + "\n…(cortado)" : text);
+    }
+
+    /// <summary>
+    /// Las filas visibles de las listas, enteras y en orden (en la lista de elementos van cortadas): los correos de
+    /// una bandeja con remitente, asunto, hora y comienzo; archivos; resultados. Una fila sin nombre junta sus celdas.
+    /// </summary>
+    static string ListText(IntPtr hwnd)
+    {
+        if (hwnd == IntPtr.Zero) return "";
+        var root = AutomationElement.FromHandle(hwnd);
+        var cr = new CacheRequest
+        {
+            TreeScope = TreeScope.Element | TreeScope.Children,
+            TreeFilter = Automation.ControlViewCondition,
+            AutomationElementMode = AutomationElementMode.None,
+        };
+        cr.Add(AutomationElement.NameProperty);
+        cr.Add(AutomationElement.BoundingRectangleProperty);
+        cr.Add(SelectionItemPattern.IsSelectedProperty);
+        var cond = new AndCondition(
+            new PropertyCondition(AutomationElement.IsOffscreenProperty, false),
+            new OrCondition(
+                new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.ListItem),
+                new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.DataItem)));
+        var rows = new List<(double Y, double X, string Text)>();
+        var seen = new HashSet<string>();
+        using (cr.Activate())
+            foreach (AutomationElement e in root.FindAll(TreeScope.Descendants, cond))
+            {
+                var name = e.Cached.Name ?? "";
+                if (name.Trim().Length == 0)
+                    try { name = string.Join(" · ", e.CachedChildren.Cast<AutomationElement>().Select(c => (c.Cached.Name ?? "").Trim()).Where(t => t.Length > 0)); }
+                    catch (InvalidOperationException) { }
+                name = string.Join(' ', name.Split((char[])['\r', '\n', '\t', ' '], StringSplitOptions.RemoveEmptyEntries));
+                if (name.Length == 0 || !seen.Add(name)) continue;
+                if (e.GetCachedPropertyValue(SelectionItemPattern.IsSelectedProperty, true) is true) name += " (elegido)";
+                var r = e.Cached.BoundingRectangle;
+                rows.Add((r.IsEmpty ? 0 : r.Top, r.IsEmpty ? 0 : r.Left, name));
+                if (rows.Count >= 120) break;
+            }
+        var sb = new StringBuilder();
+        foreach (var row in rows.OrderBy(r => Math.Round(r.Y / 8)).ThenBy(r => r.X))
+        {
+            if (sb.Length >= MaxText) break;
+            sb.Append("- ").AppendLine(row.Text);
+        }
+        return sb.ToString();
     }
 
     static string WindowText(IntPtr hwnd)
@@ -298,31 +345,65 @@ static class Desktop
         return $"«{name}» (el campo más cercano)";
     }
 
+    static (DateTime At, List<(string Name, string Id)> Apps)? _startApps;
+    static readonly object _appsLock = new();
+
     /// <summary>
-    /// Abre un programa instalado por su nombre como sale en Inicio (también los de la Store, como WhatsApp, que
-    /// no tienen un .exe que se pueda llamar por nombre). null = no hay ninguno con ese nombre.
+    /// Los programas de Inicio (también los de la Store, como WhatsApp o el Outlook nuevo, que no tienen un .exe que
+    /// se pueda llamar por nombre). Leerlos tarda: se guardan 10 minutos.
+    /// </summary>
+    public static List<(string Name, string Id)> StartApps()
+    {
+        lock (_appsLock)
+        {
+            if (_startApps is { } c && DateTime.Now - c.At < TimeSpan.FromMinutes(10)) return c.Apps;
+            List<(string, string)> apps;
+            try
+            {
+                apps = Sta(() =>
+                {
+                    var shell = Activator.CreateInstance(Type.GetTypeFromProgID("Shell.Application")!)!;
+                    dynamic folder = shell.GetType().InvokeMember("NameSpace", System.Reflection.BindingFlags.InvokeMethod, null, shell, ["shell:AppsFolder"])!;
+                    var list = new List<(string, string)>();
+                    foreach (var item in folder.Items()) list.Add(((string)item.Name, (string)item.Path));
+                    return list;
+                });
+            }
+            catch (Exception ex)
+            {
+                Log.Write("Inicio: no pude leer los programas · " + ex.Message);
+                // Se reintenta en un minuto, no en cada open.
+                _startApps = (DateTime.Now - TimeSpan.FromMinutes(9), []);
+                return [];
+            }
+            _startApps = (DateTime.Now, apps);
+            return apps;
+        }
+    }
+
+    /// <summary>
+    /// Abre un programa de Inicio por su nombre: el exacto o, si no hay, el primero que lo contiene. null = no hay
+    /// ninguno con ese nombre.
     /// </summary>
     public static string? OpenStartApp(string name)
     {
         var want = WindowsComputer.Fold(name.Trim());
         if (want.Length == 0) return null;
-        var found = Sta(() =>
-        {
-            var shell = Activator.CreateInstance(Type.GetTypeFromProgID("Shell.Application")!)!;
-            dynamic folder = shell.GetType().InvokeMember("NameSpace", System.Reflection.BindingFlags.InvokeMethod, null, shell, ["shell:AppsFolder"])!;
-            (string Name, string Id)? exact = null, partial = null;
-            foreach (var item in folder.Items())
-            {
-                string n = item.Name, id = item.Path;
-                var f = WindowsComputer.Fold(n);
-                if (f == want) { exact = (n, id); break; }
-                if (partial is null && f.Contains(want)) partial = (n, id);
-            }
-            return exact ?? partial;
-        });
+        var apps = StartApps();
+        var found = apps.Where(a => WindowsComputer.Fold(a.Name) == want).Concat(apps.Where(a => WindowsComputer.Fold(a.Name).Contains(want)))
+            .Select(a => ((string Name, string Id)?)a).FirstOrDefault();
         if (found is not { } app) return null;
         System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe", "shell:AppsFolder\\" + app.Id) { UseShellExecute = true })?.Dispose();
         return app.Name;
+    }
+
+    /// <summary>Trae esa ventana al frente sin colgarse si el programa no contesta.</summary>
+    public static bool FocusHandle(IntPtr h)
+    {
+        var ok = false;
+        var t = new Thread(() => ok = Native.Focus(h)) { IsBackground = true };
+        t.Start();
+        return t.Join(1500) && ok;
     }
 
     [System.Runtime.InteropServices.DllImport("user32.dll")] static extern uint GetClipboardSequenceNumber();

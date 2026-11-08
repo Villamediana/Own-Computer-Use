@@ -251,8 +251,9 @@ dejar lo que está haciendo? Responde solo «sí» o «no».
                         }
                         Emit(AgentEventKind.Action, label);
                         var remembers = call.Name is "remember" or "forget";
-                        // Recordar o mirar el historial no toca la pantalla: no hace falta esperar a que se asiente.
-                        if (!remembers && call.Name != "recent") acted = true;
+                        // Recordar, leer o buscar en internet no toca la pantalla: no hace falta esperar a que se
+                        // asiente ni volver a leerla.
+                        if (!Tools.Passive(call)) acted = true;
                         string result;
                         try
                         {
@@ -447,7 +448,8 @@ dejar lo que está haciendo? Responde solo «sí» o «no».
         var withImage = obs.Jpeg.Length > 0;
         sb.AppendLine().AppendLine($"Ventana activa: {obs.Window}");
         foreach (var d in obs.Details ?? []) sb.AppendLine(d);
-        if (AppHints.For(obs.App, obs.Window) is { Length: > 0 } hint) sb.AppendLine(hint.TrimEnd());
+        var url = obs.Details?.FirstOrDefault(d => d.StartsWith("URL: ", StringComparison.Ordinal))?[5..] ?? "";
+        if (AppHints.For(obs.App, obs.Window, url) is { Length: > 0 } hint) sb.AppendLine(hint.TrimEnd());
         if (obs.Others is { Count: > 0 } others) sb.AppendLine("Otras ventanas: " + string.Join(" · ", others));
         sb.AppendLine(withImage
             ? $"Captura {obs.Width}x{obs.Height} adjunta. Elementos:"
@@ -458,6 +460,7 @@ dejar lo que está haciendo? Responde solo «sí» o «no».
             if (m.Name.Length > 0) sb.Append(" «").Append(m.Name).Append('»');
             if (m.Value.Length > 0) sb.Append(" =").Append(m.Value);
             if (m.State.Length > 0) sb.Append(" (").Append(m.State).Append(')');
+            if (m.In.Length > 0) sb.Append(" en «").Append(m.In).Append('»');
             sb.AppendLine();
         }
         if (obs.Marks.Count == 0) sb.AppendLine(withImage ? "(ninguno; usa x,y)" : "(ninguno; llama look)");
@@ -519,6 +522,7 @@ dejar lo que está haciendo? Responde solo «sí» o «no».
         }
         return c.Name switch
         {
+            "click" when c.Args["expand"] is not null => (c.Bool("expand") ? "Despliega" : "Pliega") + Target(),
             "click" => (c.Bool("double") ? "Doble clic" : c.Str("button") == "right" ? "Clic derecho" : "Clic") + Target(),
             "type_text" => $"Escribe «{Trunc(c.Str("text"), 60)}»" + (c.Mark() is not null ? " en" + Target() : "")
                 + (c.Bool("submit") ? " ⏎" : ""),
@@ -557,7 +561,7 @@ dejar lo que está haciendo? Responde solo «sí» o «no».
                 "close" => "Cierra la ventana",
                 var a => a,
             },
-            "read_text" => "Lee la pantalla",
+            "read_text" => c.Str("what") == "list" ? "Lee la lista" : "Lee la pantalla",
             "find_on_screen" => $"Busca «{Trunc(c.Str("text"), 40)}»",
             "extract" => $"Saca {c.Str("kind")}" + (c.Str("near").Length > 0 ? $" de «{Trunc(c.Str("near"), 30)}»" : ""),
             "clipboard" => c.Str("action") switch

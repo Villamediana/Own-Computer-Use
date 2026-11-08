@@ -47,15 +47,46 @@ sealed class WindowsComputer : IComputer
     Rectangle _screen;
     double _scale = 1;
     Dictionary<int, Rectangle> _marks = [];
+    // El rectángulo entero de cada marca (un nodo desplegado abarca sus hijos; la marca apunta solo a su fila).
+    Dictionary<int, Rectangle> _raws = [];
     Dictionary<int, string> _names = [];
     Task? _uia;
+    // Lectura adelantada (al apretar el atajo): se usa una vez, si la ventana es la misma y no es vieja.
+    (IntPtr Hwnd, string Title, DateTime At, Task<(List<Element>, string?)> Work)? _ahead;
+    static readonly TimeSpan AheadTtl = TimeSpan.FromSeconds(5);
+    // Ventanas ya leídas hace poco: la primera lectura de una app web (Outlook nuevo, Teams, un navegador) arma
+    // su árbol de accesibilidad y tarda más; ahí se espera más antes de seguir sin marcas.
+    readonly Dictionary<IntPtr, DateTime> _seen = [];
+    const int FirstUiaBudgetMs = 3000;
 
     /// <summary>Cursor azul que muestra lo que hace Colo (opcional).</summary>
     public AiCursor? Cursor { get; set; }
 
     public string ShotsDir { get; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "Colo");
 
-    sealed record Element(string Role, string Name, string Value, Rectangle Rect, string State);
+    /// <summary>Raw: el rectángulo entero que da la app (sin recortar a la pantalla), para casar los nodos de un árbol.</summary>
+    sealed record Element(string Role, string Name, string Value, Rectangle Rect, string State, Rectangle Raw, string In = "");
+
+    /// <summary>
+    /// Empieza a leer la ventana activa ya (al apretar el atajo de hablar): mientras habla y se transcribe, UI
+    /// Automation recorre la ventana, y el primer paso no espera.
+    /// </summary>
+    public void Prefetch()
+    {
+        var hwnd = Native.GetForegroundWindow();
+        if (hwnd == IntPtr.Zero || Native.IsOwnWindow(hwnd)) return;
+        var b = Screen.FromHandle(hwnd).Bounds;
+        var title = Native.Title(hwnd);
+        // Los programas de Inicio (para open) también, si hace rato que no se leen.
+        _ = Task.Run(Desktop.StartApps);
+        lock (_lock)
+        {
+            if (_uia is { IsCompleted: false }) return;
+            var work = Task.Run(() => Collect(hwnd, b));
+            _uia = work;
+            _ahead = (hwnd, title, DateTime.Now, work);
+        }
+    }
 
     public Task<Observation> ObserveAsync(bool withImage, CancellationToken ct) => Task.Run(() =>
     {
@@ -70,13 +101,26 @@ sealed class WindowsComputer : IComputer
         List<Element> elements = [];
         string? url = null;
         Task<(List<Element>, string?)>? uia = null;
+        var title = Native.Title(hwnd);
+        int budget;
+        var ahead = false;
         lock (_lock)
         {
-            if (_uia is null || _uia.IsCompleted) _uia = uia = Task.Run(() => Collect(hwnd, b));
+            if (_ahead is { } a && a.Hwnd == hwnd && a.Title == title && DateTime.Now - a.At < AheadTtl) { uia = a.Work; ahead = true; }
+            else if (_uia is null || _uia.IsCompleted) _uia = uia = Task.Run(() => Collect(hwnd, b));
+            _ahead = null;
+            budget = _seen.TryGetValue(hwnd, out var seen) && DateTime.Now - seen < TimeSpan.FromMinutes(10) ? UiaBudgetMs : FirstUiaBudgetMs;
         }
         Bitmap? full = withImage ? Capture(b) : null;
         var uiaWatch = Stopwatch.StartNew();
-        if (uia is not null && uia.Wait(UiaBudgetMs, ct)) (elements, url) = uia.Result;
+        if (uia is not null && uia.Wait(budget, ct)) (elements, url) = uia.Result;
+        if (elements.Count > 0)
+            lock (_lock)
+            {
+                Log.Write($"UIA: {elements.Count} elementos en {uiaWatch.ElapsedMilliseconds} ms{(ahead ? " (leída al apretar el atajo)" : "")} · «{window}»");
+                _seen[hwnd] = DateTime.Now;
+                if (_seen.Count > 64) foreach (var old in _seen.Where(kv => DateTime.Now - kv.Value > TimeSpan.FromMinutes(10)).Select(kv => kv.Key).ToList()) _seen.Remove(old);
+            }
         // Sin marcas el modelo trabaja solo con la captura (más lento y menos preciso): que quede en el registro.
         if (elements.Count == 0)
             Log.Write(uia is null ? $"UIA: lectura anterior sigue colgada · «{window}»"
@@ -88,20 +132,23 @@ sealed class WindowsComputer : IComputer
         var scale = Math.Min(1.0, (double)MaxSide / Math.Max(b.Width, b.Height));
         var marks = new List<Mark>();
         var rects = new Dictionary<int, Rectangle>();
+        var raws = new Dictionary<int, Rectangle>();
         var names = new Dictionary<int, string>();
         var id = 0;
         foreach (var e in elements)
         {
             id++;
             rects[id] = e.Rect;
+            raws[id] = e.Raw;
             names[id] = e.Name;
-            marks.Add(new Mark(id, e.Role, e.Name, e.Value, e.State));
+            marks.Add(new Mark(id, e.Role, e.Name, e.Value, e.State, e.In));
         }
         lock (_lock)
         {
             _screen = b;
             _scale = scale;
             _marks = rects;
+            _raws = raws;
             _names = names;
         }
         var others = OtherWindows(hwnd);
@@ -194,75 +241,167 @@ sealed class WindowsComputer : IComputer
 
     static (List<Element>, string?) Collect(IntPtr hwnd, Rectangle screen)
     {
-        var found = new List<Element>();
-        string? url = null;
         var browser = Browsers.Contains(Native.ProcessName(hwnd).ToLowerInvariant());
         var limit = screen.Width * screen.Height / 2;
 
-        void From(IntPtr h)
+        // Cada parte es una ida a otro proceso: a la vez. Lo que el programa abrió encima (menú, sugerencias,
+        // desplegable) va primero: es lo que se va a elegir y no puede quedarse fuera por el tope de marcas.
+        (List<Element> Found, string? Url) Part(IntPtr h, string what, bool main)
         {
-            if (h == IntPtr.Zero) return;
-            var cr = new CacheRequest
-            {
-                TreeFilter = Automation.ControlViewCondition,
-                AutomationElementMode = AutomationElementMode.None,
-            };
-            cr.Add(AutomationElement.NameProperty);
-            cr.Add(AutomationElement.ControlTypeProperty);
-            cr.Add(AutomationElement.BoundingRectangleProperty);
-            cr.Add(AutomationElement.IsPasswordProperty);
-            cr.Add(ValuePattern.ValueProperty);
-            cr.Add(AutomationElement.HasKeyboardFocusProperty);
-            cr.Add(SelectionItemPattern.IsSelectedProperty);
-            cr.Add(TogglePattern.ToggleStateProperty);
-            // La raíz se pide antes de activar la caché: con AutomationElementMode.None quedaría sin
-            // referencia viva y FindAll falla («SafeHandle cannot be null»), o sea, nunca había marcas.
-            var root = AutomationElement.FromHandle(h);
-            using (cr.Activate())
-            {
-                foreach (AutomationElement e in root.FindAll(TreeScope.Descendants, Interactive))
-                {
-                    var br = e.Cached.BoundingRectangle;
-                    if (br.IsEmpty || double.IsInfinity(br.Width) || br.Width < 4 || br.Height < 4) continue;
-                    var r = Rectangle.FromLTRB((int)br.Left, (int)br.Top, (int)br.Right, (int)br.Bottom);
-                    r.Intersect(screen);
-                    if (r.Width < 4 || r.Height < 4 || r.Width * r.Height > limit) continue;
-                    var type = e.Cached.ControlType;
-                    var role = Roles.FirstOrDefault(x => x.Type == type).Role ?? "elemento";
-                    var name = (e.Cached.Name ?? "").Replace('\n', ' ').Replace('\r', ' ').Trim();
-                    if (name.Length > 60) name = name[..60] + "…";
-                    var focused = e.GetCachedPropertyValue(AutomationElement.HasKeyboardFocusProperty, true) is true;
-                    var value = "";
-                    if (type == ControlType.Edit || type == ControlType.ComboBox)
-                    {
-                        var v = e.GetCachedPropertyValue(ValuePattern.ValueProperty, true);
-                        if (v is string str && !(e.GetCachedPropertyValue(AutomationElement.IsPasswordProperty) is true))
-                        {
-                            if (browser && url is null && type == ControlType.Edit && str.Length > 0 && IsAddressBar(name)) url = str;
-                            // El campo con foco va entero: con 40 letras el modelo «mejoraba» un correo reescribiendo
-                            // solo el principio cortado (y lo borraba). Los demás, cortos y diciendo que falta texto.
-                            var max = focused ? 3000 : 40;
-                            str = str.Replace('\r', ' ').Replace('\n', ' ');
-                            value = str.Length > max ? $"{str[..max]}… [faltan {str.Length - max} letras: read_text]" : str;
-                        }
-                    }
-                    var state = focused ? "foco"
-                        : e.GetCachedPropertyValue(SelectionItemPattern.IsSelectedProperty, true) is true ? (type == ControlType.TabItem ? "activa" : "elegido")
-                        : e.GetCachedPropertyValue(TogglePattern.ToggleStateProperty, true) is ToggleState.On ? "marcada" : "";
-                    found.Add(new Element(role, name, value, r, state));
-                }
-            }
+            try { return From(h, screen, limit, browser && main, main); }
+            catch (Exception ex) { Log.Write($"UIA: falló {what} · {ex.Message}"); return ([], null); }
         }
-
-        try { From(hwnd); } catch (Exception ex) { Log.Write("UIA: falló la ventana · " + ex.Message); }
-        if (found.Count < MaxMarks)
-            try { From(Native.FindWindow("Shell_TrayWnd", null)); } catch (Exception ex) { Log.Write("UIA: falló la barra de tareas · " + ex.Message); }
+        var popups = Native.PopupsAbove(hwnd).Select(p => Task.Run(() => Part(p, "un menú", false))).ToList();
+        var window = Task.Run(() => Part(hwnd, "la ventana", true));
+        var tray = Task.Run(() => Part(Native.FindWindow("Shell_TrayWnd", null), "la barra de tareas", false));
+        var found = new List<Element>();
+        foreach (var p in popups) found.AddRange(p.Result.Found);
+        var (mine, url) = window.Result;
+        found.AddRange(mine);
+        found.AddRange(tray.Result.Found);
 
         return (found
             .GroupBy(e => e.Rect).Select(g => g.First())
             .Take(MaxMarks)
             .OrderBy(e => e.Rect.Y / 8).ThenBy(e => e.Rect.X)
             .ToList(), url);
+    }
+
+    static (List<Element>, string?) From(IntPtr h, Rectangle screen, int limit, bool browser, bool main)
+    {
+        var found = new List<Element>();
+        string? url = null;
+        if (h == IntPtr.Zero) return (found, url);
+        var cr = new CacheRequest
+        {
+            TreeFilter = Automation.ControlViewCondition,
+            AutomationElementMode = AutomationElementMode.None,
+        };
+        cr.Add(AutomationElement.NameProperty);
+        cr.Add(AutomationElement.ControlTypeProperty);
+        cr.Add(AutomationElement.BoundingRectangleProperty);
+        cr.Add(AutomationElement.IsPasswordProperty);
+        cr.Add(ValuePattern.ValueProperty);
+        cr.Add(AutomationElement.HasKeyboardFocusProperty);
+        cr.Add(SelectionItemPattern.IsSelectedProperty);
+        cr.Add(TogglePattern.ToggleStateProperty);
+        cr.Add(ExpandCollapsePattern.ExpandCollapseStateProperty);
+        // La raíz se pide antes de activar la caché: con AutomationElementMode.None quedaría sin
+        // referencia viva y FindAll falla («SafeHandle cannot be null»), o sea, nunca había marcas.
+        var root = AutomationElement.FromHandle(h);
+        var nodes = false;
+        using (cr.Activate())
+        {
+            foreach (AutomationElement e in root.FindAll(TreeScope.Descendants, Interactive))
+            {
+                var br = e.Cached.BoundingRectangle;
+                if (br.IsEmpty || double.IsInfinity(br.Width) || br.Width < 4 || br.Height < 4) continue;
+                var raw = Rectangle.FromLTRB((int)br.Left, (int)br.Top, (int)br.Right, (int)br.Bottom);
+                var r = raw;
+                r.Intersect(screen);
+                if (r.Width < 4 || r.Height < 4 || r.Width * r.Height > limit) continue;
+                var type = e.Cached.ControlType;
+                var role = Roles.FirstOrDefault(x => x.Type == type).Role ?? "elemento";
+                var name = (e.Cached.Name ?? "").Replace('\n', ' ').Replace('\r', ' ').Trim();
+                if (name.Length > 60) name = name[..60] + "…";
+                var focused = e.GetCachedPropertyValue(AutomationElement.HasKeyboardFocusProperty, true) is true;
+                var value = "";
+                if (type == ControlType.Edit || type == ControlType.ComboBox)
+                {
+                    var v = e.GetCachedPropertyValue(ValuePattern.ValueProperty, true);
+                    if (v is string str && !(e.GetCachedPropertyValue(AutomationElement.IsPasswordProperty) is true))
+                    {
+                        if (browser && url is null && type == ControlType.Edit && str.Length > 0 && IsAddressBar(name)) url = str;
+                        // El campo con foco va entero: con 40 letras el modelo «mejoraba» un correo reescribiendo
+                        // solo el principio cortado (y lo borraba). Los demás, cortos y diciendo que falta texto.
+                        var max = focused ? 3000 : 40;
+                        str = str.Replace('\r', ' ').Replace('\n', ' ');
+                        value = str.Length > max ? $"{str[..max]}… [faltan {str.Length - max} letras: read_text]" : str;
+                    }
+                }
+                var state = focused ? "foco"
+                    : e.GetCachedPropertyValue(SelectionItemPattern.IsSelectedProperty, true) is true ? (type == ControlType.TabItem ? "activa" : "elegido")
+                    : e.GetCachedPropertyValue(TogglePattern.ToggleStateProperty, true) is ToggleState.On ? "marcada" : "";
+                // Cuentas y carpetas del correo, secciones, «mostrar más», desplegables: si está abierto o cerrado.
+                var fold = e.GetCachedPropertyValue(ExpandCollapsePattern.ExpandCollapseStateProperty, true) switch
+                {
+                    ExpandCollapseState.Collapsed => "plegado",
+                    ExpandCollapseState.Expanded or ExpandCollapseState.PartiallyExpanded => "desplegado",
+                    _ => "",
+                };
+                if (fold.Length > 0) state = state.Length > 0 ? $"{state}, {fold}" : fold;
+                nodes |= type == ControlType.TreeItem;
+                found.Add(new Element(role, name, value, r, state, raw));
+            }
+        }
+        // Un nodo desplegado de una app web (Outlook nuevo) abarca a sus hijos: el centro caía en una carpeta del
+        // medio. La marca apunta a su propia fila, hasta donde empieza el primer nodo de dentro.
+        if (nodes)
+        {
+            var all = found.Where(o => o.Role == "nodo").Select(o => o.Raw).ToList();
+            for (var i = 0; i < found.Count; i++)
+            {
+                if (found[i].Role != "nodo" || TreeRows.Own(found[i].Raw, all) is not { } row) continue;
+                row.Intersect(screen);
+                if (row.Width >= 4 && row.Height >= 4) found[i] = found[i] with { Rect = row };
+            }
+        }
+        // Nodos de un árbol: cada uno dice dentro de qué nodo está (la cuenta de cada «Bandeja de entrada»).
+        Dictionary<Rectangle, string> parents = [];
+        if (main && nodes)
+            try { parents = TreeParents(root); }
+            catch (Exception ex) { Log.Write("UIA: falló el árbol · " + ex.Message); }
+        for (var i = 0; i < found.Count; i++)
+            if (found[i].Role == "nodo" && parents.TryGetValue(found[i].Raw, out var path))
+                found[i] = found[i] with { In = path };
+        return (found, url);
+    }
+
+    /// <summary>
+    /// Para cada nodo de los árboles visibles, su camino: la cuenta y la carpeta que lo contienen («cuenta ›
+    /// Bandeja de entrada»). Una sola ida por árbol: la caché trae solo los nodos, con su anidamiento.
+    /// </summary>
+    static Dictionary<Rectangle, string> TreeParents(AutomationElement root)
+    {
+        var map = new Dictionary<Rectangle, string>();
+        var trees = root.FindAll(TreeScope.Descendants, new AndCondition(
+            new PropertyCondition(AutomationElement.IsOffscreenProperty, false),
+            new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Tree)));
+        var cr = new CacheRequest
+        {
+            TreeScope = TreeScope.Element | TreeScope.Descendants,
+            TreeFilter = new OrCondition(
+                new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Tree),
+                new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.TreeItem)),
+            AutomationElementMode = AutomationElementMode.None,
+        };
+        cr.Add(AutomationElement.NameProperty);
+        cr.Add(AutomationElement.BoundingRectangleProperty);
+        cr.Add(AutomationElement.ControlTypeProperty);
+        static string Short(string s)
+        {
+            s = s.Replace('\n', ' ').Replace('\r', ' ').Trim();
+            return s.Length > 32 ? s[..32] + "…" : s;
+        }
+        void Walk(AutomationElement e, string top, string parent)
+        {
+            foreach (AutomationElement c in e.CachedChildren)
+            {
+                var br = c.Cached.BoundingRectangle;
+                if (parent.Length > 0 && !br.IsEmpty && !double.IsInfinity(br.Width))
+                    map[Rectangle.FromLTRB((int)br.Left, (int)br.Top, (int)br.Right, (int)br.Bottom)] = top == parent ? top : $"{top} › {parent}";
+                var name = Short(c.Cached.Name ?? "");
+                if (c.Cached.ControlType != ControlType.TreeItem || name.Length == 0) Walk(c, top, parent);
+                else Walk(c, top.Length > 0 ? top : name, name);
+            }
+        }
+        var n = 0;
+        foreach (AutomationElement t in trees)
+        {
+            if (n++ >= 3) break;
+            Walk(t.GetUpdatedCache(cr), "", "");
+        }
+        return map;
     }
 
     bool Target(ToolCall c, out Point p, out string error, string prefix = "")
@@ -328,6 +467,16 @@ sealed class WindowsComputer : IComputer
     {
         switch (c.Name)
         {
+            case "click" when c.Args["expand"] is System.Text.Json.Nodes.JsonValue:
+            {
+                if (!Target(c, out var p, out var err)) return err;
+                var open = c.Bool("expand");
+                Cursor?.Glide(p, (open ? "Desplegando" : "Plegando") + NameOf(c));
+                var box = MarkRect(c);
+                var r = await Task.Run(() => ExpandAt(p, box, open), ct);
+                Cursor?.Pulse();
+                return r;
+            }
             case "click":
             {
                 if (!Target(c, out var p, out var err)) return err;
@@ -447,22 +596,7 @@ sealed class WindowsComputer : IComputer
                 return "ok";
             }
             case "open":
-            {
-                var target = c.Str("target").Trim();
-                if (target.Length == 0) return "error: target vacío";
-                Cursor?.Say("Abriendo " + (target.Length > 30 ? target[..30] + "…" : target));
-                try { Process.Start(new ProcessStartInfo(target) { UseShellExecute = true })?.Dispose(); }
-                catch (System.ComponentModel.Win32Exception)
-                {
-                    // No es un archivo ni un .exe: un programa de Inicio por su nombre (los de la Store, como WhatsApp).
-                    var app = await Task.Run(() => Desktop.OpenStartApp(target), ct);
-                    if (app is null) return $"error: no encontré «{target}» ni como archivo ni entre los programas instalados";
-                    await Task.Delay(1200, ct);
-                    return $"ok: abrí «{app}»";
-                }
-                await Task.Delay(900, ct);
-                return "ok";
-            }
+                return await OpenAsync(c.Str("target").Trim(), ct);
             case "screenshot":
                 Cursor?.Say("Print");
                 return Screenshot(c.Str("area") == "window");
@@ -508,6 +642,110 @@ sealed class WindowsComputer : IComputer
             default:
                 return $"error: herramienta desconocida «{c.Name}»";
         }
+    }
+
+    /// <summary>
+    /// Abre y espera a ver qué salió: la ventana nueva (traída al frente; Windows no siempre deja que se ponga
+    /// delante sola) o la que pasó a estar activa. Con un nombre de programa, dice además los otros instalados que
+    /// se llaman parecido: el Outlook clásico que se queda en el inicio de sesión y el nuevo al lado.
+    /// </summary>
+    async Task<string> OpenAsync(string target, CancellationToken ct)
+    {
+        if (target.Length == 0) return "error: target vacío";
+        Cursor?.Say("Abriendo " + (target.Length > 30 ? target[..30] + "…" : target));
+        var before = Native.AppWindows().ToHashSet();
+        var fgBefore = Native.GetForegroundWindow();
+        var titleBefore = Native.Title(fgBefore);
+        var name = Apps.IsName(target);
+        List<string> similar = [];
+        string opened;
+        if (name)
+        {
+            var installed = await Task.Run(Desktop.StartApps, ct);
+            similar = Apps.Matching(installed.Select(a => a.Name), target);
+        }
+        // El nombre exacto de Inicio («Outlook (new)») manda; si no, lo que Windows abre con ese nombre (App Paths:
+        // chrome, winword…) y, si no hay, el primero de Inicio que encaja (los de la Store, como WhatsApp).
+        var exact = similar.FirstOrDefault(n => Extract.Fold(n) == Extract.Fold(target));
+        if (exact is not null && await Task.Run(() => Desktop.OpenStartApp(exact), ct) is { } app) opened = app;
+        else
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo(target) { UseShellExecute = true })?.Dispose();
+                opened = target;
+            }
+            catch (System.ComponentModel.Win32Exception)
+            {
+                if (similar.Count == 0 || await Task.Run(() => Desktop.OpenStartApp(similar[0]), ct) is not { } first)
+                    return $"error: no encontré «{target}» ni como archivo ni entre los programas instalados";
+                opened = first;
+            }
+        }
+        var others = similar.Where(n => n != opened).Take(4).ToList();
+        // Uno solo que encaja es el mismo programa con su nombre de Inicio («Google Chrome»): no es otra opción.
+        var also = similar.Count > 1 && others.Count > 0 ? " · otros instalados con nombre parecido: " + string.Join(", ", others.Select(o => $"«{o}»")) : "";
+        var win = await NewWindowAsync(before, fgBefore, titleBefore, name ? 6000 : 2500, ct);
+        return win == IntPtr.Zero
+            ? $"ok: abrí «{opened}»; aún no salió ventana nueva (puede tardar: wait y mira){also}"
+            : $"ok: abrí «{opened}» → delante «{Native.WindowLabel(win)}»{also}";
+    }
+
+    /// <summary>
+    /// La ventana que salió tras abrir algo (nueva, que pasó al frente, o la misma con otro título: una pestaña nueva
+    /// en el navegador que ya estaba delante), ya delante; IntPtr.Zero si no salió.
+    /// </summary>
+    static async Task<IntPtr> NewWindowAsync(HashSet<IntPtr> before, IntPtr fgBefore, string titleBefore, int timeoutMs, CancellationToken ct)
+    {
+        var sw = Stopwatch.StartNew();
+        while (sw.ElapsedMilliseconds < timeoutMs)
+        {
+            await Task.Delay(150, ct);
+            var fg = Native.GetForegroundWindow();
+            var found = fg != IntPtr.Zero && !Native.IsOwnWindow(fg) && (fg != fgBefore || Native.Title(fg) != titleBefore) ? fg
+                : Native.AppWindows().FirstOrDefault(h => !before.Contains(h));
+            if (found == IntPtr.Zero) continue;
+            if (Native.GetForegroundWindow() != found) Desktop.FocusHandle(found);
+            // Que pinte algo antes de mirarla.
+            await Task.Delay(400, ct);
+            return found;
+        }
+        return IntPtr.Zero;
+    }
+
+    /// <summary>El rectángulo entero del elemento marcado (con sus hijos si es un nodo desplegado).</summary>
+    Rectangle MarkRect(ToolCall c)
+    {
+        lock (_lock) return c.Mark() is int id && _raws.TryGetValue(id, out var r) ? r : Rectangle.Empty;
+    }
+
+    /// <summary>
+    /// Despliega o pliega lo que hay en p con su ExpandCollapsePattern (sin buscar la flecha). Sube desde el punto
+    /// solo dentro del elemento marcado: así una carpeta sin hijos no pliega la cuenta que la contiene.
+    /// </summary>
+    static string ExpandAt(Point p, Rectangle box, bool open)
+    {
+        var e = AutomationElement.FromPoint(new System.Windows.Point(p.X, p.Y));
+        var walker = TreeWalker.ControlViewWalker;
+        for (var i = 0; i < 6 && e is not null; i++, e = walker.GetParent(e))
+        {
+            var r = e.Current.BoundingRectangle;
+            var inside = box.IsEmpty
+                ? r.Height <= 80
+                : r.Left >= box.Left - 6 && r.Top >= box.Top - 6 && r.Right <= box.Right + 6 && r.Bottom <= box.Bottom + 6;
+            if (!inside) break;
+            if (!e.TryGetCurrentPattern(ExpandCollapsePattern.Pattern, out var o)) continue;
+            var ec = (ExpandCollapsePattern)o;
+            switch (ec.Current.ExpandCollapseState)
+            {
+                case ExpandCollapseState.LeafNode: return "ok: no tiene nada dentro";
+                case ExpandCollapseState.Collapsed when !open: return "ok: ya estaba plegado";
+                case ExpandCollapseState.Expanded when open: return "ok: ya estaba desplegado";
+            }
+            if (open) ec.Expand(); else ec.Collapse();
+            return "ok";
+        }
+        return "error: eso no se despliega solo; prueba click normal en él o en su flecha";
     }
 
     /// <summary>

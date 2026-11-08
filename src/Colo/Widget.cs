@@ -701,6 +701,8 @@ sealed class Widget : LayeredWindow
         }
         lock (_partsGate) _parts = [];
         _listener.BeginTake();
+        // Mientras habla y se transcribe, la ventana activa ya se va leyendo: el primer paso no la espera.
+        if (id == Talk && !_agent.Busy) _pc.Prefetch();
         Log.Write($"atajo: {(id == Talk ? "hablar" : "dictar")} apretado");
     }
 

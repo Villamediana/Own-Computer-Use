@@ -50,7 +50,14 @@ hacer clic y qué está haciendo.
 - **Herramientas**: ratón (click, drag, scroll), teclado (type_text con clic/reemplazo/Enter, edit_text para
   corregir un trozo sin reescribirlo, press_keys),
   navegador (go, new_tab, search, find, back, tab…), ventanas (open, window focus/list/minimize/close),
-  lectura (read_text, clipboard), find_files, screenshot, look, wait, done, ignore. Se apagan por grupo en Ajustes.
+  lectura (read_text window/focused/selection/list, clipboard), find_files, screenshot, look, wait, done, ignore.
+  Se apagan por grupo en Ajustes.
+- **Pantalla**: la lista lleva el estado de cada elemento (foco, elegido, marcada, plegado/desplegado) y, en los
+  árboles, dentro de qué nodo está (las carpetas de cada cuenta del correo); `click` con `expand` despliega o pliega
+  sin buscar la flecha. Lo que el programa abre encima como ventana aparte (menús contextuales, sugerencias del
+  «Para», desplegables del navegador) entra en la lista. `open` espera a la ventana, la trae al frente y dice qué
+  otros programas instalados se llaman parecido (Outlook clásico / nuevo). Al apretar el atajo la ventana activa ya
+  se empieza a leer, y los pasos que solo leen no vuelven a leer la pantalla.
 - **MCP**: servidores por comando (stdio) o URL (Streamable HTTP); se elige qué tools usa. Llegan como `mcp_<servidor>_<tool>`.
 - **Rápido y barato**: streaming (cada acción se ejecuta en cuanto el modelo la emite), la pantalla va como lista
   de elementos en texto y la captura solo cuando el modelo la pide (`look`), resultados largos solo un turno.

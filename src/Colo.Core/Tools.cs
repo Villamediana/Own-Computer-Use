@@ -48,12 +48,20 @@ Actuar
   resultado es seguro (abrir una pestaña, cambiar de ventana, escribir, una tecla). Así no hace falta otro turno.
   Si quedan pasos o no sabes cómo quedará la pantalla, déjalo vacío y mira el resultado. Cuenta solo lo hecho.
 - Apunta con mark. x,y solo si tienes la captura a la vista. Si la lista no basta, look (la captura llega en
-  el siguiente turno). Para leer contenido (correo, página, documento) usa read_text.
+  el siguiente turno). Para leer contenido (correo, página, documento) usa read_text; list da las filas enteras
+  de una lista (correos, archivos, resultados).
+- (plegado)/(desplegado): cuentas, carpetas, nodos y secciones que se abren: click con expand true/false, sin
+  buscar la flecha. Lo que se abre al clicar o escribir (menú, sugerencias, desplegable) sale en la lista del
+  turno siguiente: elige ahí.
 - Algo que no está en la lista (un nombre en un hilo de correo, un tema en una página larga): find_on_screen, no
   scroll a ciegas. Un dato (correo de alguien, teléfono, número de pedido): extract con near; si no sale, ábrelo
   (clic en el nombre, «mostrar más») y prueba otra vez. Para pasárselo: clipboard set o dilo en done.
 - Navegador: browser (go, new_tab, search, back, find, tab…) antes que clics.
-- Programas: si ya está en «Otras ventanas», window focus; si no, open.
+- Programas: si ya está en «Otras ventanas», window focus; si no, open (dice qué ventana salió y los otros
+  instalados con nombre parecido, como una versión clásica y una nueva).
+- Si algo se atasca (un inicio de sesión que no puedes completar, un error, algo que no carga), no insistas:
+  prueba otro camino (el otro programa por su nombre exacto, la versión web, otra forma) o dile qué pasa.
+  Cuando descubras qué funciona, remember.
 - Archivos: find_files (content: dentro de los documentos) y open. Renombrar, mover, copiar, carpetas, zip,
   papelera: files, no clics en el Explorador; «esto» ahí = los seleccionados. «Deshaz eso» = files undo.
   «Toma un print» = screenshot.
@@ -64,6 +72,10 @@ Actuar
 - Al dictar o pedir que redactes, escribe el texto final como lo escribiría él con calma: frases completas,
   puntuación y mayúsculas, sin muletillas («eh», «tipo», «o sea») ni sus dudas y correcciones habladas, y con
   lo que pidió (tono, a quién, idioma). Literal solo si lo pide. Un correo: saludo, cuerpo y despedida.
+- Redactar (correo, mensaje, respuesta): entiende qué quiere conseguir, para quién y con qué tono, y escribe en
+  primera persona, como él, el texto listo para mandar; nunca su orden copiada ni hablando de él («dile que
+  llego tarde» → «Hola Felipe, hoy llego un poco tarde…»). Si es una respuesta, lee antes lo que contesta.
+  Cada dato en su campo: destinatarios, asunto y cuerpo por separado.
 - Corregir lo escrito («cambia X por Y», «quita eso», «pon tilde»): edit_text en el campo con foco; si no sabes
   qué pone, read_text focused primero. Reescribir todo solo si lo pide.
 - Mejorar o reescribir lo que ya está escrito («escríbelo mejor», «mejora el correo»): es el texto del campo con
@@ -155,9 +167,9 @@ Palco
 
     const string Defs = """
 [
- {"type":"function","name":"click","description":"Clic en un elemento (mark) o en x,y de la captura.",
+ {"type":"function","name":"click","description":"Clic en un elemento (mark) o en x,y de la captura. expand: en algo plegable (cuenta, carpeta, nodo, sección) true lo despliega y false lo pliega, sin buscar la flecha.",
   "parameters":{"type":"object","properties":{"mark":{"type":"integer"},"x":{"type":"integer"},"y":{"type":"integer"},
-   "button":{"type":"string","enum":["left","right","middle"]},"double":{"type":"boolean"}}}},
+   "button":{"type":"string","enum":["left","right","middle"]},"double":{"type":"boolean"},"expand":{"type":"boolean"}}}},
  {"type":"function","name":"drag","description":"Arrastra de un punto a otro (mark o x,y).",
   "parameters":{"type":"object","properties":{"from_mark":{"type":"integer"},"from_x":{"type":"integer"},"from_y":{"type":"integer"},
    "to_mark":{"type":"integer"},"to_x":{"type":"integer"},"to_y":{"type":"integer"}}}},
@@ -177,12 +189,12 @@ Palco
  {"type":"function","name":"browser","description":"Navegador activo (Chrome, Edge, Firefox). go: URL en esta pestaña. new_tab: pestaña nueva (con url opcional). search: busca text en el buscador del navegador. find: busca text en la página. tab: ir a la pestaña n (1-9). Más: back, forward, reload, close_tab, next_tab, prev_tab.",
   "parameters":{"type":"object","properties":{"action":{"type":"string","enum":["go","new_tab","search","find","back","forward","reload","close_tab","next_tab","prev_tab","tab"]},
    "url":{"type":"string"},"text":{"type":"string"},"n":{"type":"integer"}},"required":["action"]}},
- {"type":"function","name":"open","description":"Abre una URL, un archivo/carpeta o un programa por nombre (chrome, notepad, explorer, ms-settings:…).",
+ {"type":"function","name":"open","description":"Abre una URL, un archivo/carpeta o un programa por nombre (chrome, notepad, explorer, ms-settings:…; también el nombre exacto como sale en Inicio). Espera a que salga la ventana y dice cuál salió y qué otros programas instalados se llaman parecido.",
   "parameters":{"type":"object","properties":{"target":{"type":"string"}},"required":["target"]}},
  {"type":"function","name":"window","description":"Ventanas abiertas. list: lista títulos. focus: trae al frente la que contenga name (título o programa). minimize/maximize/close: la de name o la activa.",
   "parameters":{"type":"object","properties":{"action":{"type":"string","enum":["list","focus","minimize","maximize","close"]},"name":{"type":"string"}},"required":["action"]}},
- {"type":"function","name":"read_text","description":"Devuelve texto de la pantalla. window: contenido de la ventana activa (página, correo, documento). focused: el campo con foco. selection: lo seleccionado.",
-  "parameters":{"type":"object","properties":{"what":{"type":"string","enum":["window","focused","selection"]}},"required":["what"]}},
+ {"type":"function","name":"read_text","description":"Devuelve texto de la pantalla. window: contenido de la ventana activa (página, correo, documento). focused: el campo con foco. selection: lo seleccionado. list: las filas visibles de las listas, enteras (correos con remitente, asunto, hora e inicio; archivos; resultados).",
+  "parameters":{"type":"object","properties":{"what":{"type":"string","enum":["window","focused","selection","list"]}},"required":["what"]}},
  {"type":"function","name":"find_on_screen","description":"Busca un texto en la ventana activa, también lo que no se ve (más abajo en un hilo de correo, una lista o una página larga): desplaza solo hasta encontrarlo y lo deja a la vista. n: la ocurrencia n. up: buscar hacia arriba.",
   "parameters":{"type":"object","properties":{"text":{"type":"string"},"n":{"type":"integer"},"up":{"type":"boolean"}},"required":["text"]}},
  {"type":"function","name":"extract","description":"Saca datos de toda la ventana activa (también lo que no se ve): email, phone, url, date, id (CPF, CNPJ, protocolo, pedido), money. near: solo los que están cerca de ese texto (un nombre, «factura»…).",
@@ -253,6 +265,21 @@ Palco
 
     /// <summary>Acciones que pueden cerrar el pedido en la misma llamada (campo done): ahorra un turno entero.</summary>
     public static readonly HashSet<string> Finishing = ["remember", "forget", "meeting", "stage", "agenda", "vault", "click", "type_text", "dictate", "edit_text", "press_keys", "browser", "open", "window", "scroll", "clipboard", "screenshot"];
+
+    /// <summary>
+    /// Solo lee o anota, sin tocar la pantalla: tras un paso así la pantalla es la misma y no se vuelve a leer ni a
+    /// esperar a que se asiente (leer un navegador pesado tarda). Revisar varias bandejas es leer, leer, leer.
+    /// </summary>
+    public static bool Passive(ToolCall c) => c.Name switch
+    {
+        "remember" or "forget" or "recent" or "read_text" or "extract" or "web" or "agenda" or "find_files" or "meeting" or "clipboard" => true,
+        "vault" => c.Str("action") != "type",
+        "terminal" => c.Str("action") != "wait",
+        "files" => c.Str("action") == "list",
+        "doc" => c.Str("action") is "outline" or "read",
+        "sheet" => c.Str("action") == "read",
+        _ => false,
+    };
 
     /// <summary>Herramientas activas: todas menos los grupos apagados (plan, look, wait, done, stop e ignore van siempre).</summary>
     public static JsonArray Build(IEnumerable<string>? disabledGroups)

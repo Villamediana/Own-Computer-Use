@@ -2,8 +2,12 @@ using System.Text.Json.Nodes;
 
 namespace Colo.Core;
 
-/// <summary>Elemento interactivo marcado con número en la captura. State: «foco», «activa», «marcada»… (vacío = nada).</summary>
-public sealed record Mark(int Id, string Role, string Name, string Value = "", string State = "");
+/// <summary>
+/// Elemento interactivo marcado con número en la captura. State: «foco», «activa», «marcada», «plegado»… (vacío =
+/// nada). In: el nodo que lo contiene en un árbol (la cuenta de una carpeta del correo), para distinguir las
+/// «Bandeja de entrada» de cada cuenta.
+/// </summary>
+public sealed record Mark(int Id, string Role, string Name, string Value = "", string State = "", string In = "");
 
 /// <summary>
 /// Jpeg vacío = este turno va sin captura (solo la lista de elementos).

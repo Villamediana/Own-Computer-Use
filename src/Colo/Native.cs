@@ -163,6 +163,41 @@ static class Native
         return list;
     }
 
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder sb, int max);
+
+    public static string ClassName(IntPtr h)
+    {
+        var sb = new StringBuilder(256);
+        GetClassName(h, sb, sb.Capacity);
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Lo que el programa de la ventana activa abrió encima de ella como ventana aparte: menús contextuales,
+    /// sugerencias de autocompletar (el «Para» del Outlook clásico, la barra del navegador), listas desplegables.
+    /// UI Automation no los ve dentro de la ventana activa. Los más altos primero.
+    /// </summary>
+    public static System.Collections.Generic.List<IntPtr> PopupsAbove(IntPtr front, int max = 4)
+    {
+        var list = new System.Collections.Generic.List<IntPtr>();
+        if (front == IntPtr.Zero) return list;
+        GetWindowThreadProcessId(front, out var pid);
+        EnumWindows((h, _) =>
+        {
+            // Orden de pantalla: al llegar a la ventana activa, lo que sigue está debajo.
+            if (h == front) return false;
+            if (!IsWindowVisible(h) || IsIconic(h)) return true;
+            GetWindowThreadProcessId(h, out var p);
+            if (p != pid || p == Environment.ProcessId) return true;
+            // La barra de tareas es del mismo proceso que el Explorador y siempre está encima: ya va aparte.
+            if (ClassName(h).StartsWith("Shell_", StringComparison.Ordinal)) return true;
+            if (!GetWindowRect(h, out var r) || r.Right - r.Left < 8 || r.Bottom - r.Top < 8) return true;
+            list.Add(h);
+            return list.Count < max;
+        }, IntPtr.Zero);
+        return list;
+    }
+
     /// <summary>Trae una ventana al frente aunque Windows limite el cambio de foco entre programas.</summary>
     public static bool Focus(IntPtr h)
     {
