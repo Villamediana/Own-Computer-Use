@@ -9,6 +9,8 @@ Una onda blanca te escucha, un cursor azul se mueve solo y la tarea queda hecha.
 
 [**⬇ Descargar Colo.exe**](https://github.com/Villamediana/Own-Computer-Use/releases/latest) &nbsp;·&nbsp; [Cómo funciona](#cómo-funciona) &nbsp;·&nbsp; [Compilar](#compilar)
 
+### Próximamente en Android y Linux
+
 ![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows&logoColor=white)
 ![.NET 8](https://img.shields.io/badge/.NET-8-512BD4?logo=dotnet&logoColor=white)
 ![Azure AI Foundry](https://img.shields.io/badge/Azure%20AI%20Foundry-OpenAI-0089D6?logo=microsoftazure&logoColor=white)
