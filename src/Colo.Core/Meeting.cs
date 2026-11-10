@@ -1097,7 +1097,7 @@ public sealed class MeetingWork(Meetings meetings, Settings settings, AiClient a
             var texts = await Task.WhenAll(groups.Select(async g =>
             {
                 await gate.WaitAsync(ct);
-                try { return await ai.TranscribeAsync(MeetingAudio.Wav(mono, g.Start - 0.15, g.End + 0.15), "", ct); }
+                try { return await ai.TranscribeAsync(MeetingAudio.Wav(mono, g.Start - 0.15, g.End + 0.15), ct); }
                 finally { gate.Release(); }
             }));
             Audio?.Invoke(settings.TranscribeModel.Trim(), groups.Sum(g => g.End - g.Start + 0.3));

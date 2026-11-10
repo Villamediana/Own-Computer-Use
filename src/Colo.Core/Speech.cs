@@ -231,22 +231,6 @@ public sealed class LocalStt : IDisposable
     public string Language { get; set; } = "es";
     /// <summary>Contexto de audio proporcional a la frase (más rápido). false = ventana completa de 30 s.</summary>
     public bool ShortContext { get; set; } = true;
-    /// <summary>Texto previo que orienta a Whisper hacia estas palabras (nombres de apps, «pestaña», «aba»…).</summary>
-    public string Prompt { get; set; } = "";
-
-    /// <summary>
-    /// Palabras de las órdenes (en español y portugués) más los programas abiertos. Medido con frases de
-    /// prueba: acierta «URL», «Backlog», «Comet» donde sin esto salía «wrl», «baclo», «comete».
-    /// </summary>
-    public static string PromptFor(IEnumerable<string> apps)
-    {
-        var names = apps.Where(a => a.Length > 1).Select(a => char.ToUpperInvariant(a[0]) + a[1..])
-            .Distinct(StringComparer.OrdinalIgnoreCase).Take(12);
-        // El idioma no va fijo; esto lo orienta (en frases cortas, sin pista, a veces sale inglés).
-        return "Habla español o português. Glosario: pestaña, aba, guía, navegador, barra de direcciones, endereço, URL, escribe, escreve, clic, clica, "
-            + string.Join(", ", names) + ".";
-    }
-
     public LocalStt(string modelPath) => _factory = WhisperFactory.FromPath(modelPath);
 
     /// <summary>
@@ -275,7 +259,6 @@ public sealed class LocalStt : IDisposable
                 .WithNoContext()
                 .WithAudioContextSize(ctx)
                 .WithNoSpeechThreshold(0.6f);
-            if (Prompt.Length > 0) builder = builder.WithPrompt(Prompt);
             using var processor = builder.Build();
             var text = new StringBuilder();
             foreach (var seg in processor.ProcessAsync(samples).ToBlockingEnumerable())
@@ -285,9 +268,7 @@ public sealed class LocalStt : IDisposable
                 if (seg.NoSpeechProbability > 0.6f) continue;
                 text.Append(seg.Text);
             }
-            var result = Clean(text.ToString());
-            // Con ruido Whisper puede repetir el glosario que se le dio: eso no lo dijo nadie.
-            return result.StartsWith("Glosario", StringComparison.OrdinalIgnoreCase) || result.StartsWith("Habla español", StringComparison.OrdinalIgnoreCase) ? "" : result;
+            return Clean(text.ToString());
         }
     }
 
