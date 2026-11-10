@@ -74,7 +74,23 @@ static class Input
             finally { timeEndPeriod(1); }
         }
         SetCursorPos(to.X, to.Y);
+        lock (_leftLock) _left = to;
         frame?.Invoke(to);
+    }
+
+    static readonly object _leftLock = new();
+    static Point? _left;
+
+    /// <summary>
+    /// Dónde tiene el ratón el usuario. null si sigue donde lo dejó Colo en su último gesto: ahí no lo está
+    /// señalando él (manos libres, el ratón se queda donde Colo hizo el último clic).
+    /// </summary>
+    public static Point? UserPointer()
+    {
+        if (!GetCursorPos(out var c)) return null;
+        lock (_leftLock)
+            if (_left is { } l && Math.Abs(l.X - c.x) <= 2 && Math.Abs(l.Y - c.y) <= 2) return null;
+        return new Point(c.x, c.y);
     }
 
     public static void Click(Point p, string button, bool twice)

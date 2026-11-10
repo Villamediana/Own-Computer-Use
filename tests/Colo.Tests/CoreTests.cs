@@ -722,6 +722,74 @@ public class CoreTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void Cap_keeps_focus_and_fields_that_come_last_in_the_tree()
+    {
+        // WhatsApp: conversaciones y mensajes primero en el árbol; la caja del mensaje al final.
+        static ScreenElement El(string role, string name, int y, string state = "") =>
+            new(role, name, "", new System.Drawing.Rectangle(10, y, 100, 20), state, new System.Drawing.Rectangle(10, y, 100, 20));
+        var items = new List<(ScreenElement, int)>();
+        items.Add((El("menú", "Copiar", 5), 0));
+        for (var i = 0; i < 200; i++) { var e = El("fila", "Mensaje " + i, 40 + i * 4); items.Add((e, ScreenList.Rank(e))); }
+        var search = El("campo", "Pesquisar", 30, "foco");
+        var box = El("campo", "Digite uma mensagem", 1000);
+        items.Add((search, ScreenList.Rank(search)));
+        items.Add((box, ScreenList.Rank(box)));
+        var tray = El("botón", "Inicio", 1060);
+        items.Add((tray, ScreenList.Rank(tray, tray: true)));
+
+        var list = ScreenList.Cap(items, 160, out var cut);
+        Assert.Equal(160, list.Count);
+        Assert.Equal(44, cut);
+        Assert.Contains(box, list);
+        Assert.Contains(search, list);
+        Assert.Equal("Copiar", list[0].Name);
+        Assert.DoesNotContain(tray, list);
+        // En orden de lectura, no de prioridad.
+        Assert.Equal(list.OrderBy(e => e.Rect.Y / 8).ThenBy(e => e.Rect.X), list);
+    }
+
+    [Fact]
+    public void Pointer_and_focus_join_the_list()
+    {
+        var r1 = new System.Drawing.Rectangle(0, 900, 400, 40);
+        var r2 = new System.Drawing.Rectangle(0, 20, 300, 30);
+        var list = new List<ScreenElement>
+        {
+            new("campo", "Pesquisar", "", r2, "foco", r2),
+            new("botón", "Enviar", "", new(410, 900, 30, 30), "", new(410, 900, 30, 30)),
+        };
+        // Ya estaba en la lista: suma el estado.
+        var same = ScreenList.Merge(list, [new ScreenElement("campo", "Pesquisar", "", r2, "foco, ratón", r2)]);
+        Assert.Equal(2, same.Count);
+        Assert.Equal("foco, ratón", same[0].State);
+        // No estaba (cortado o la lectura no contestó): entra en su sitio de lectura.
+        var added = ScreenList.Merge(list, [new ScreenElement("campo", "Digite uma mensagem", "", r1, "ratón", r1)]);
+        Assert.Equal(["Pesquisar", "Digite uma mensagem", "Enviar"], added.Select(e => e.Name));
+        Assert.Equal("ratón", added[1].State);
+        // Sin lista (UIA no contestó) llega igual.
+        Assert.Single(ScreenList.Merge([], [new ScreenElement("campo", "x", "", r1, "ratón", r1)]));
+        Assert.Equal("plegado, foco, ratón", ScreenList.AddState("plegado, foco", "foco, ratón"));
+    }
+
+    [Fact]
+    public void Model_sees_the_field_under_the_mouse_and_can_dictate_there()
+    {
+        var s = Azure();
+        var agent = new Agent(new AiClient(s), s, new FakeComputer());
+        var obs = new Observation([], 0, 0, "WhatsApp [WhatsApp.Root]",
+            [new Mark(1, "campo", "Pesquisar", "", "foco"), new Mark(2, "campo", "Digite uma mensagem", "", "ratón")]);
+        var body = agent.BuildRequest(["escreve aqui oi tudo bem"], [], obs);
+        var text = body["input"]![0]!["content"]![0]!["text"]!.GetValue<string>();
+        Assert.Contains("[2] campo «Digite uma mensagem» (ratón)", text);
+        var instructions = body["instructions"]!.GetValue<string>();
+        Assert.Contains("el campo (ratón)", instructions);
+        var dictate = Tools.Build(null).First(t => t!["name"]!.GetValue<string>() == "dictate")!;
+        Assert.NotNull(dictate["parameters"]!["properties"]!["mark"]);
+        var call = new ToolCall("dictate", (JsonObject)JsonNode.Parse("""{"text":"oi","mark":2}""")!);
+        Assert.Contains("en [2] «Digite uma mensagem»", Agent.Describe(call, obs));
+    }
+
+    [Fact]
     public async Task Rate_limit_is_retried()
     {
         // Visto en Windows real: Foundry contestó 429 («exceeded token rate limit») y la orden se perdía.

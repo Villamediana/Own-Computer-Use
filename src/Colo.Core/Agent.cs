@@ -526,7 +526,7 @@ dejar lo que está haciendo? Responde solo «sí» o «no».
             "click" => (c.Bool("double") ? "Doble clic" : c.Str("button") == "right" ? "Clic derecho" : "Clic") + Target(),
             "type_text" => $"Escribe «{Trunc(c.Str("text"), 60)}»" + (c.Mark() is not null ? " en" + Target() : "")
                 + (c.Bool("submit") ? " ⏎" : ""),
-            "dictate" => $"Dicta «{Trunc(c.Str("text"), 60)}»",
+            "dictate" => $"Dicta «{Trunc(c.Str("text"), 60)}»" + (c.Mark() is not null ? " en" + Target() : ""),
             "edit_text" => $"Cambia «{Trunc(c.Str("find"), 30)}» por «{Trunc(c.Str("replace"), 30)}»",
             "press_keys" => $"Teclas {c.Str("keys")}" + (c.Int("repeat") is > 1 and var n ? $" ×{n}" : ""),
             "scroll" => c.Str("to") switch
