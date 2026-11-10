@@ -251,6 +251,23 @@ static class Native
         return pid == Environment.ProcessId;
     }
 
+    [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(POINT p);
+    [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr h, uint flags);
+
+    /// <summary>La ventana de primer nivel que está bajo ese punto (la de la app, no su control hijo).</summary>
+    public static IntPtr RootAt(int x, int y)
+    {
+        var h = WindowFromPoint(new POINT { x = x, y = y });
+        return h == IntPtr.Zero ? h : GetAncestor(h, 2); // GA_ROOT
+    }
+
+    public static bool SameProcess(IntPtr a, IntPtr b)
+    {
+        GetWindowThreadProcessId(a, out var pa);
+        GetWindowThreadProcessId(b, out var pb);
+        return pa != 0 && pa == pb;
+    }
+
     /// <summary>Esquinas redondeadas de Windows 11; en Windows 10 no hace nada.</summary>
     public static void RoundCorners(IntPtr h)
     {

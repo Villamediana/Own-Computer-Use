@@ -11,6 +11,7 @@ using System.Threading.Tasks;
 using System.Windows.Automation;
 using System.Windows.Forms;
 using Colo.Core;
+using Element = Colo.Core.ScreenElement;
 
 namespace Colo;
 
@@ -64,9 +65,6 @@ sealed class WindowsComputer : IComputer
 
     public string ShotsDir { get; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "Colo");
 
-    /// <summary>Raw: el rectángulo entero que da la app (sin recortar a la pantalla), para casar los nodos de un árbol.</summary>
-    sealed record Element(string Role, string Name, string Value, Rectangle Rect, string State, Rectangle Raw, string In = "");
-
     /// <summary>
     /// Empieza a leer la ventana activa ya (al apretar el atajo de hablar): mientras habla y se transcribe, UI
     /// Automation recorre la ventana, y el primer paso no espera.
@@ -111,6 +109,11 @@ sealed class WindowsComputer : IComputer
             _ahead = null;
             budget = _seen.TryGetValue(hwnd, out var seen) && DateTime.Now - seen < TimeSpan.FromMinutes(10) ? UiaBudgetMs : FirstUiaBudgetMs;
         }
+        // Lo que está bajo el ratón del usuario y el foco, aparte: así entra aunque la lista se corte o no conteste.
+        Task<List<Element>>? pointed = null;
+        if (hwnd != IntPtr.Zero && !Native.IsOwnWindow(hwnd))
+            lock (_lock)
+                if (_pointed is null || _pointed.IsCompleted) _pointed = pointed = Task.Run(() => Pointed(hwnd, b));
         Bitmap? full = withImage ? Capture(b) : null;
         var uiaWatch = Stopwatch.StartNew();
         if (uia is not null && uia.Wait(budget, ct)) (elements, url) = uia.Result;
@@ -128,6 +131,12 @@ sealed class WindowsComputer : IComputer
                 : $"UIA: no contestó en {uiaWatch.ElapsedMilliseconds} ms · «{window}»");
         // Sin elementos legibles (juego, escritorio remoto…) la lista no sirve: va la captura.
         if (full is null && elements.Count == 0) full = Capture(b);
+        if (pointed is not null && pointed.Wait(Math.Max(300, budget - (int)uiaWatch.ElapsedMilliseconds), ct) && pointed.Result.Count > 0)
+        {
+            var extra = pointed.Result;
+            elements = ScreenList.Merge(elements, extra);
+            Log.Write("UIA: " + string.Join(" · ", extra.Select(x => $"{x.State} en {x.Role} «{x.Name}»")));
+        }
 
         var scale = Math.Min(1.0, (double)MaxSide / Math.Max(b.Width, b.Height));
         var marks = new List<Mark>();
@@ -254,17 +263,94 @@ sealed class WindowsComputer : IComputer
         var popups = Native.PopupsAbove(hwnd).Select(p => Task.Run(() => Part(p, "un menú", false))).ToList();
         var window = Task.Run(() => Part(hwnd, "la ventana", true));
         var tray = Task.Run(() => Part(Native.FindWindow("Shell_TrayWnd", null), "la barra de tareas", false));
-        var found = new List<Element>();
-        foreach (var p in popups) found.AddRange(p.Result.Found);
+        // El tope de marcas corta por el orden del árbol: en WhatsApp la caja del mensaje va al final (tras las
+        // conversaciones y los mensajes) y se quedaba fuera. Antes del corte: lo de encima, el foco y los campos.
+        var found = new List<(Element E, int Rank)>();
+        foreach (var p in popups) found.AddRange(p.Result.Found.Select(e => (e, ScreenList.Rank(e, popup: true))));
         var (mine, url) = window.Result;
-        found.AddRange(mine);
-        found.AddRange(tray.Result.Found);
+        found.AddRange(mine.Select(e => (e, ScreenList.Rank(e))));
+        found.AddRange(tray.Result.Found.Select(e => (e, ScreenList.Rank(e, tray: true))));
+        var list = ScreenList.Cap(found, MaxMarks, out var cut);
+        if (cut > 0) Log.Write($"UIA: {cut} elementos fuera del tope de {MaxMarks}");
+        return (list, url);
+    }
 
-        return (found
-            .GroupBy(e => e.Rect).Select(g => g.First())
-            .Take(MaxMarks)
-            .OrderBy(e => e.Rect.Y / 8).ThenBy(e => e.Rect.X)
-            .ToList(), url);
+    /// <summary>
+    /// Se escribe ahí: un campo que no es de solo lectura, o un editor de otro tipo (el cuerpo de un correo, un
+    /// documento) cuyo valor se puede cambiar. La página de un navegador o de una app web también tiene texto,
+    /// pero su valor es de solo lectura (o no tiene): no cuenta.
+    /// </summary>
+    static bool Editable(AutomationElement e)
+    {
+        var cur = e.Current;
+        if (!cur.IsEnabled) return false;
+        var value = e.TryGetCurrentPattern(ValuePattern.Pattern, out var vp) ? (ValuePattern)vp : null;
+        if (value is not null && value.Current.IsReadOnly) return false;
+        if (cur.ControlType == ControlType.Edit) return true;
+        return value is not null && e.TryGetCurrentPattern(TextPattern.Pattern, out _);
+    }
+
+    Task<List<Element>>? _pointed;
+
+    /// <summary>
+    /// Lo que la lista puede no traer y el usuario sí está mirando: el elemento bajo SU ratón (si lo movió él;
+    /// donde lo dejó Colo no cuenta) y el campo con foco (también un editor que no es «Edit», como el cuerpo de
+    /// un correo). Si la lectura de la ventana no contesta a tiempo, esto llega igual.
+    /// </summary>
+    static List<Element> Pointed(IntPtr hwnd, Rectangle screen)
+    {
+        var list = new List<Element>();
+        try
+        {
+            var f = AutomationElement.FocusedElement;
+            if (f is not null && Editable(f) && Describe(f, screen, "foco", true) is { } e) list.Add(e);
+        }
+        catch (Exception ex) { Log.Write("UIA: foco ilegible · " + ex.Message); }
+
+        if (Input.UserPointer() is not { } p) return list;
+        var root = Native.RootAt(p.X, p.Y);
+        // Solo la ventana activa, lo que abrió encima (mismo programa) o la barra de tareas; nunca Colo.
+        if (root == IntPtr.Zero || Native.IsOwnWindow(root)
+            || !(root == hwnd || Native.SameProcess(root, hwnd) || Native.ClassName(root).StartsWith("Shell_", StringComparison.Ordinal)))
+            return list;
+        try
+        {
+            // Lo más hondo bajo el ratón es un texto o un párrafo: se sube hasta el campo, botón o fila que lo tiene.
+            var under = AutomationElement.FromPoint(new System.Windows.Point(p.X, p.Y));
+            for (var i = 0; i < 6 && under is not null; i++, under = TreeWalker.ControlViewWalker.GetParent(under))
+            {
+                var type = under.Current.ControlType;
+                if (!Roles.Any(r => r.Type == type) && !Editable(under)) continue;
+                var focused = under.Current.HasKeyboardFocus;
+                if (Describe(under, screen, focused ? "foco, ratón" : "ratón", focused) is { } m) list.Add(m);
+                break;
+            }
+        }
+        catch (Exception ex) { Log.Write("UIA: bajo el ratón ilegible · " + ex.Message); }
+        return list;
+    }
+
+    /// <summary>Un elemento suelto con la misma forma que los de la lista (rol, nombre, valor, estado).</summary>
+    static Element? Describe(AutomationElement e, Rectangle screen, string state, bool whole)
+    {
+        var cur = e.Current;
+        var br = cur.BoundingRectangle;
+        if (br.IsEmpty || double.IsInfinity(br.Width) || br.Width < 4 || br.Height < 4) return null;
+        var raw = Rectangle.FromLTRB((int)br.Left, (int)br.Top, (int)br.Right, (int)br.Bottom);
+        var r = raw;
+        r.Intersect(screen);
+        if (r.Width < 4 || r.Height < 4) return null;
+        var role = Roles.FirstOrDefault(x => x.Type == cur.ControlType).Role ?? "campo";
+        var name = (cur.Name ?? "").Replace('\n', ' ').Replace('\r', ' ').Trim();
+        if (name.Length > 60) name = name[..60] + "…";
+        var value = "";
+        if (role == "campo" && !cur.IsPassword && e.TryGetCurrentPattern(ValuePattern.Pattern, out var vp))
+        {
+            var str = (((ValuePattern)vp).Current.Value ?? "").Replace('\r', ' ').Replace('\n', ' ');
+            var max = whole ? 3000 : 40;
+            value = str.Length > max ? $"{str[..max]}… [faltan {str.Length - max} letras: read_text]" : str;
+        }
+        return new Element(role, name, value, r, state, raw);
     }
 
     static (List<Element>, string?) From(IntPtr h, Rectangle screen, int limit, bool browser, bool main)
@@ -504,8 +590,18 @@ sealed class WindowsComputer : IComputer
             }
             case "dictate":
             {
+                // Con mark, en ese campo (el que señala con el ratón o el que nombró), como type_text.
+                var where = "el foco";
+                if (c.Mark() is not null)
+                {
+                    if (!Target(c, out var p, out var err)) return err;
+                    Cursor?.Glide(p, "Clic" + NameOf(c));
+                    Input.Click(p, "left", false);
+                    Cursor?.Pulse();
+                    await Task.Delay(60, ct);
+                }
                 // Sin un campo con foco, el que más sentido tiene (bajo el ratón o el más cercano).
-                var where = await Task.Run(Desktop.EnsureTextFocus, ct);
+                else where = await Task.Run(Desktop.EnsureTextFocus, ct);
                 Cursor?.Say("Escribiendo…");
                 Input.Type(c.Str("text"));
                 return where == "el foco" ? "ok" : "ok: escrito en " + where;
