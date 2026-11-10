@@ -1313,8 +1313,53 @@ sealed class Widget : LayeredWindow
             new("Detener lo que hace", PopMenu.Icon.Stop, () => _agent.Stop()),
             .. (_recorder is null ? Array.Empty<PopMenu.Entry>() : [new PopMenu.Entry("Parar la reunión y guardarla", PopMenu.Icon.Stop, () => Meeting(RecAction.Stop))]),
             new("Ajustes…", PopMenu.Icon.Settings, OpenSettings, GapBefore: true),
+            new(_updating ? "Actualizando…" : "Buscar actualización", PopMenu.Icon.Update, CheckUpdate),
             new("Salir", PopMenu.Icon.Power, Close, Danger: true),
         ]);
+    }
+
+    bool _updating;
+
+    /// <summary>
+    /// Menú › Buscar actualización: mira el último release del repo y, si es más nuevo, baja su Colo.exe, lo pone
+    /// en el lugar de este y lo abre; este se cierra (guarda como al salir) y el nuevo arranca cuando terminó.
+    /// </summary>
+    async void CheckUpdate()
+    {
+        if (_updating) return;
+        // Cerrar para actualizar cortaría la grabación.
+        if (_recorder is not null) { Say("Termina la reunión antes de actualizar", Theme.Muted, 3500); return; }
+        _updating = true;
+        try
+        {
+            Say("Buscando actualización…", Theme.Muted, 20_000);
+            using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromMinutes(15) };
+            var current = Version.Parse(Application.ProductVersion.Split('+')[0]);
+            var release = await Updater.LatestAsync(http, CancellationToken.None);
+            if (release is null) { Say("El último release no trae Colo.exe", Theme.Danger, 5000); return; }
+            var v = release.Version.ToString(3);
+            if (!Updater.IsNewer(release, current)) { Say($"Ya tienes la última ({current.ToString(3)})", Theme.Blue, 3500); return; }
+            var exe = Environment.ProcessPath ?? throw new InvalidOperationException("no sé dónde está el Colo.exe");
+            var fresh = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(exe)!, "Colo.new.exe");
+            Log.Write($"actualización: {current.ToString(3)} → {v} · {release.Url}");
+            await Updater.DownloadAsync(http, release, fresh,
+                p => Post(() => Say($"Descargando Colo {v} · {p:P0}", Theme.Muted, 20_000)), CancellationToken.None);
+            Updater.Swap(exe, fresh);
+            Log.Write($"actualización: Colo {v} en su sitio, lo abro");
+            Say($"Abriendo Colo {v}…", Theme.Blue, 5000);
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exe, $"--after {Environment.ProcessId}")
+            {
+                UseShellExecute = false,
+                WorkingDirectory = System.IO.Path.GetDirectoryName(exe)!,
+            })?.Dispose();
+            Close();
+        }
+        catch (Exception ex)
+        {
+            Log.Write("actualización: falló · " + ex);
+            Say("No pude actualizar: " + ex.Message, Theme.Danger, 6000);
+        }
+        finally { _updating = false; }
     }
 
     // ───────────────────────── ratón
