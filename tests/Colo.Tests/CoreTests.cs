@@ -123,16 +123,16 @@ public class CoreTests(ITestOutputHelper output)
     {
         var h = new FakeHandler((_, _) => (HttpStatusCode.OK, """{"text":" abre chrome "}"""));
         var wav = Wav.Encode(new float[1600]);
-        Assert.Equal("abre chrome", await new AiClient(Azure(), new HttpClient(h)).TranscribeAsync(wav, "Glosario: Comet.", default));
+        Assert.Equal("abre chrome", await new AiClient(Azure(), new HttpClient(h)).TranscribeAsync(wav, default));
         Assert.Equal("https://latam.openai.azure.com/openai/deployments/gpt-4o-mini-transcribe/audio/transcriptions?api-version=2025-03-01-preview",
             h.Seen[0].Req.RequestUri!.ToString());
         Assert.Contains("name=model", h.Seen[0].Body);
-        // Glosario sí; idioma no: entiende el que hables.
+        // Ni idioma ni prompt: entiende el que hables (el glosario hacía errar).
         Assert.DoesNotContain("name=language", h.Seen[0].Body);
-        Assert.Contains("Glosario: Comet.", h.Seen[0].Body);
+        Assert.DoesNotContain("name=prompt", h.Seen[0].Body);
 
         var o = new Settings { Provider = Provider.OpenAI, ApiKey = "sk", TranscribeModel = "gpt-4o-mini-transcribe" };
-        await new AiClient(o, new HttpClient(h)).TranscribeAsync(wav, "", default);
+        await new AiClient(o, new HttpClient(h)).TranscribeAsync(wav, default);
         Assert.Equal("https://api.openai.com/v1/audio/transcriptions", h.Seen[1].Req.RequestUri!.ToString());
 
         // Conexión propia para la voz: otro recurso y otra llave que el modelo.
@@ -141,7 +141,7 @@ public class CoreTests(ITestOutputHelper output)
         own.VoiceProvider = Provider.Azure;
         own.VoiceEndpoint = "https://voz.openai.azure.com/";
         own.VoiceKey = "k-voz";
-        await new AiClient(own, new HttpClient(h)).TranscribeAsync(wav, "", default);
+        await new AiClient(own, new HttpClient(h)).TranscribeAsync(wav, default);
         Assert.StartsWith("https://voz.openai.azure.com/openai/deployments/", h.Seen[2].Req.RequestUri!.ToString());
         Assert.Equal("k-voz", h.Seen[2].Req.Headers.GetValues("api-key").Single());
     }

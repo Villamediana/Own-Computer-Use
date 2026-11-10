@@ -237,19 +237,18 @@ public sealed class AiClient
         finally { Count(null); }
     }
 
-    /// <param name="prompt">Glosario que orienta al modelo (nombres de programas, palabras de las órdenes).</param>
-    public async Task<string> TranscribeAsync(byte[] wav, string prompt, CancellationToken ct)
+    public async Task<string> TranscribeAsync(byte[] wav, CancellationToken ct)
     {
-        try { return await TranscribeOnceAsync(wav, prompt, ct); }
+        try { return await TranscribeOnceAsync(wav, ct); }
         catch (HttpRequestException) when (!ct.IsCancellationRequested)
         {
             // Un fallo suelto de red (DNS, Wi-Fi que vuelve): un reintento antes de dar error.
             await Task.Delay(400, ct);
-            return await TranscribeOnceAsync(wav, prompt, ct);
+            return await TranscribeOnceAsync(wav, ct);
         }
     }
 
-    async Task<string> TranscribeOnceAsync(byte[] wav, string prompt, CancellationToken ct)
+    async Task<string> TranscribeOnceAsync(byte[] wav, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(_s.TranscribeModel)) throw new AiException("Elige el modelo de voz.");
         var c = VoiceConnection(_s);
@@ -262,8 +261,7 @@ public sealed class AiClient
         file.Headers.ContentType = new("audio/wav");
         form.Add(file, "file", "voz.wav");
         form.Add(new StringContent(_s.TranscribeModel), "model");
-        // Sin idioma fijo: entiende el que hables. El glosario orienta en nombres de programas y órdenes.
-        if (prompt.Length > 0) form.Add(new StringContent(prompt), "prompt");
+        // Sin idioma ni prompt: entiende el que hables. Medido con habla real: cualquier prompt empeoraba.
         r.Content = form;
         var j = await Send(r, ct);
         return j["text"]?.GetValue<string>()?.Trim() ?? "";

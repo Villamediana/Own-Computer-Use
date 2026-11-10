@@ -775,16 +775,14 @@ sealed class Widget : LayeredWindow
         if (_s.SpeechEngine == SpeechEngine.Local)
         {
             var stt = _stt ?? throw new InvalidOperationException("Whisper no está cargado");
-            stt.Prompt = Glossary();
             text = stt.Transcribe(samples);
         }
         else
         {
             var wav = Wav.Encode(samples);
-            var glossary = Glossary();
             text = await Hedged(ct => _s.SpeechEngine == SpeechEngine.ElevenLabs
                 ? _eleven.TranscribeAsync(wav, ct)
-                : _ai.TranscribeAsync(wav, glossary, ct));
+                : _ai.TranscribeAsync(wav, ct));
         }
         Log.Write($"voz: {samples.Length / 16000.0:0.0} s → «{text}» ({sw.ElapsedMilliseconds} ms)");
         _tokens.AddAudio(_s.SpeechEngine switch
@@ -1007,8 +1005,6 @@ sealed class Widget : LayeredWindow
 
     void VoiceStatus(string text) => _settingsWindow?.VoiceStatus(text);
 
-    /// <summary>Glosario para la transcripción: palabras de las órdenes y los programas abiertos.</summary>
-    static string Glossary() => LocalStt.PromptFor(Native.AppWindows().Select(Native.ProcessName));
 
     /// <summary>
     /// Atajo de dictar: el modelo lo deja escrito con tu tono y va donde está el cursor. Se escribe a medida que
