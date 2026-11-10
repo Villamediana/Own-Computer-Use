@@ -16,7 +16,7 @@ namespace Colo;
 /// </summary>
 sealed class PopMenu : LayeredWindow
 {
-    public enum Icon { Pause, Play, Stop, Settings, Power }
+    public enum Icon { Pause, Play, Stop, Settings, Power, Update }
     public sealed record Entry(string Text, Icon Glyph, Action Run, bool Danger = false, bool GapBefore = false);
 
     const float Pad = 18, Radius = 12, ItemH = 32, HeadH = 50, Gap = 7, MinW = 190, MaxW = 300;
@@ -270,6 +270,23 @@ sealed class PopMenu : LayeredWindow
                 g.DrawArc(pen, c.X - 6, c.Y - 5.5f, 12, 12, -50, 280);
                 g.DrawLine(pen, c.X, c.Y - 7, c.X, c.Y - 0.5f);
                 break;
+            case Icon.Update:
+            {
+                // Flecha en círculo: el arco abierto arriba y la punta al final, en el sentido del giro.
+                const float R = 5.5f;
+                g.DrawArc(pen, c.X - R, c.Y - R, 2 * R, 2 * R, -50, 290);
+                var a = 240 * Math.PI / 180;
+                var end = new PointF(c.X + R * (float)Math.Cos(a), c.Y + R * (float)Math.Sin(a));
+                var (tx, ty) = (-(float)Math.Sin(a), (float)Math.Cos(a));
+                var (nx, ny) = (-ty, tx);
+                g.FillPolygon(brush,
+                [
+                    new PointF(end.X + tx * 3f, end.Y + ty * 3f),
+                    new PointF(end.X - tx * 1.2f + nx * 2.6f, end.Y - ty * 1.2f + ny * 2.6f),
+                    new PointF(end.X - tx * 1.2f - nx * 2.6f, end.Y - ty * 1.2f - ny * 2.6f),
+                ]);
+                break;
+            }
         }
     }
 
